@@ -1,0 +1,3 @@
+RegisterHotKey
+UnregisterHotKey
+CallWindowProc

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Window
+
+    x:Class="WinTools.QuickSettingsPopupWindow"
+
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+
+    Title="快捷设置">
+
+
+
+    <Grid x:Name="ShellRoot" Background="Transparent" Padding="1">
+        <Border x:Name="PopupSurface"
+                Background="{ThemeResource CodexSurfaceBrush}"
+                BorderBrush="{ThemeResource CodexBorderBrush}"
+                BorderThickness="1" CornerRadius="12" Padding="16,12">
+            <StackPanel x:Name="FeatureListPanel" Orientation="Horizontal" Spacing="12"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+    </Grid>
+
+</Window>
+
+

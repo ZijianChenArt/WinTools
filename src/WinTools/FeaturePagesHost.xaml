@@ -1,0 +1,669 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    功能子页面集合。
+    间距 / 圆角 / 字号一律取自 Styles/PageStyles.xaml，本文件里不要写死这些值，也不要写 MaxWidth。
+
+    每个子页面都是同一套骨架：
+      Grid  PageRootStyle          行 0 Auto = 固定表头，行 1 * = 主体
+        Grid PageHeaderStyle       大标题 + 副标题 +（可选）右侧总开关
+        主体二选一：
+          ScrollViewer PageBodyScrollStyle → 卡片堆（设置型）
+          Grid         PageBodyGridStyle   → 工具条 + 撑满高度的列表（列表型）
+-->
+<UserControl
+    x:Class="WinTools.FeaturePagesHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinTools"
+    xmlns:tk="using:CommunityToolkit.WinUI.Controls"
+    HorizontalContentAlignment="Stretch"
+    VerticalContentAlignment="Stretch">
+
+    <!--
+        内容列宽度统一在这里收口：内容列 = min(可用宽度, 1000)，窗口更宽时靠左侧留白居中。
+        左侧留白由代码在 SizeChanged 里算（见 FeaturePagesHost.xaml.cs）——
+        不能用页面上的 MaxWidth + HorizontalAlignment，WinUI 的 Stretch + MaxWidth
+        会按内容宽度算居中偏移，导致每页左边距都不一样。
+    -->
+    <Grid x:Name="PageColumns" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+          SizeChanged="PageColumns_SizeChanged">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="ContentLeadingColumn" Width="0"/>
+            <ColumnDefinition Width="*" MaxWidth="1000"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ============ 快捷设置 ============ -->
+        <Grid x:Name="ContentQuickSettings" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="快捷设置" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="按快捷键呼出悬浮面板，快速开关常用功能。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="QuickSettingsToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="QuickSettingsToggle_Toggled"/>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="面板快捷键" Description="呼出快捷设置面板的全局快捷键">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE765;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <TextBox x:Name="HotkeyQuickPanelBox" PlaceholderText="例如 Ctrl+Win+W" Width="200" VerticalAlignment="Center"/>
+                                <Button Content="测试" Click="QuickSettings_TestPanel_Click" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
+
+                        <tk:SettingsExpander Header="面板留白" Description="面板内容距面板边缘的距离">
+                            <tk:SettingsExpander.HeaderIcon>
+                                <FontIcon Glyph="&#xE799;"/>
+                            </tk:SettingsExpander.HeaderIcon>
+                            <tk:SettingsExpander.Items>
+                                <tk:SettingsCard Header="水平">
+                                    <NumberBox x:Name="QuickPanelPaddingHorizontalBox" Minimum="0" Maximum="100" SmallChange="2" Width="150" ValueChanged="QuickPanelPadding_ValueChanged"/>
+                                </tk:SettingsCard>
+                                <tk:SettingsCard Header="垂直">
+                                    <NumberBox x:Name="QuickPanelPaddingVerticalBox" Minimum="0" Maximum="100" SmallChange="2" Width="150" ValueChanged="QuickPanelPadding_ValueChanged"/>
+                                </tk:SettingsCard>
+                            </tk:SettingsExpander.Items>
+                        </tk:SettingsExpander>
+                    </StackPanel>
+
+                    <TextBlock Text="功能快捷键" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel x:Name="QuickFeaturesList" Style="{StaticResource PageCardStackStyle}"/>
+                    <StackPanel Style="{StaticResource PageActionsStackStyle}">
+                        <Button Content="保存快捷键" Style="{ThemeResource AccentButtonStyle}" Click="QuickSettings_Save_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ 三指拖拽 ============ -->
+        <Grid x:Name="ContentThreeFingerDrag" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="三指拖拽" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="三指按住触控板即可拖动窗口和文件。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="ThreeFingerDragToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="ThreeFingerDragToggle_Toggled"/>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel Style="{StaticResource PageCardStackStyle}">
+                    <tk:SettingsCard Header="精确触控板"
+                                     Description="需要 Windows 精确触控板。与系统三指手势冲突时，请先关掉系统手势。">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xEDA4;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <Button Content="打开系统设置" Click="OpenTouchpadSettings_Click"/>
+                    </tk:SettingsCard>
+
+                    <tk:SettingsCard Header="速度校准">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE9E9;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <tk:SettingsCard.Description>
+                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                <ProgressBar x:Name="ThreeFingerCalibrationProgress" Minimum="0" Maximum="3" Value="0" Visibility="Collapsed" Width="180" HorizontalAlignment="Left"/>
+                                <TextBlock x:Name="ThreeFingerCalibrationStatusText" Text="尚未校准，当前用默认速度曲线" Style="{StaticResource PageDescriptionTextStyle}"/>
+                            </StackPanel>
+                        </tk:SettingsCard.Description>
+                        <Button x:Name="ThreeFingerCalibrateButton" Content="开始校准" Click="ThreeFingerCalibrate_Click"/>
+                    </tk:SettingsCard>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ 悬浮暂存 ============ -->
+        <Grid x:Name="ContentDragStash" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="悬浮暂存" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="把文件拖到屏幕边缘临时存放，之后再拖到任意位置。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="DragStashToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="DragStashToggle_Toggled"/>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel Style="{StaticResource PageCardStackStyle}">
+                    <tk:SettingsCard Header="暂存窗口" Description="看看它出现时是什么样子">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE7C4;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <Button Content="预览" Click="DragStash_Show_Click"/>
+                    </tk:SettingsCard>
+
+                    <tk:SettingsExpander Header="出现位置" Description="暂存窗口距屏幕边缘的距离">
+                        <tk:SettingsExpander.HeaderIcon>
+                            <FontIcon Glyph="&#xE8B9;"/>
+                        </tk:SettingsExpander.HeaderIcon>
+                        <tk:SettingsExpander.Items>
+                            <tk:SettingsCard Header="水平">
+                                <NumberBox x:Name="StashOffsetXBox" Minimum="0" SmallChange="5" Width="150" ValueChanged="PositionOffset_ValueChanged"/>
+                            </tk:SettingsCard>
+                            <tk:SettingsCard Header="垂直">
+                                <NumberBox x:Name="StashOffsetYBox" Minimum="0" SmallChange="5" Width="150" ValueChanged="PositionOffset_ValueChanged"/>
+                            </tk:SettingsCard>
+                        </tk:SettingsExpander.Items>
+                    </tk:SettingsExpander>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ 设置 ============ -->
+        <Grid x:Name="ContentAppSettings" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <StackPanel Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="设置" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="WinTools 自身的外观与启动方式。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel Style="{StaticResource PageCardStackStyle}">
+                    <tk:SettingsCard Header="主题" Description="跟随系统，或固定为浅色 / 深色">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE771;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <RadioButtons x:Name="ThemeRadioButtons" SelectionChanged="ThemeRadioButtons_SelectionChanged" MaxColumns="3">
+                            <RadioButton x:Name="ThemeRadioSystem" Content="跟随系统" Tag="system"/>
+                            <RadioButton x:Name="ThemeRadioLight" Content="浅色" Tag="light"/>
+                            <RadioButton x:Name="ThemeRadioDark" Content="深色" Tag="dark"/>
+                        </RadioButtons>
+                    </tk:SettingsCard>
+
+                    <tk:SettingsCard Header="开机启动" Description="登录 Windows 后在后台运行">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE7E8;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <ToggleSwitch x:Name="AutoStartToggle" Toggled="AutoStartToggle_Toggled" OnContent="已启用" OffContent="已禁用"/>
+                    </tk:SettingsCard>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ 输入法切换 ============ -->
+        <Grid x:Name="ContentPerAppIme" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="输入法切换" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="切换到指定应用时，自动切换到它的默认输入语言。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="PerAppImeToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="PerAppImeToggle_Toggled"/>
+            </Grid>
+
+            <Grid Grid.Row="1" Style="{StaticResource PageBodyGridStyle}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Style="{StaticResource PageToolbarFirstStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Style="{StaticResource PageInlineControlsStyle}">
+                        <TextBlock Text="规则" Style="{StaticResource PageSubtitleTextStyle}"/>
+                        <TextBlock x:Name="ImeCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
+                    </StackPanel>
+                    <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
+                        <AppBarButton Icon="Add" Label="添加" Click="Ime_Add_Click"/>
+                        <AppBarButton Icon="Delete" Label="删除" Click="Ime_Delete_Click"/>
+                        <AppBarButton Icon="Refresh" Label="刷新" Click="Ime_RefreshApps_Click"/>
+                        <AppBarButton Icon="Undo" Label="恢复预设" Click="Ime_RestoreDefaults_Click"/>
+                    </CommandBar>
+                </Grid>
+
+                <Grid Grid.Row="1" Style="{StaticResource PageWorkAreaStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition x:Name="ImeEditColumn" Width="0"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource PageListPanelStyle}">
+                        <Grid>
+                            <ListView x:Name="ImeRulesListView" SelectionMode="Single">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:ImeRuleEntry">
+                                        <Grid ColumnSpacing="12" Padding="8,10" MinHeight="48">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="{x:Bind DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{x:Bind ProcessName}" Style="{StaticResource PageCaptionTextStyle}"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Click="ImeModeChip_Click" Content="{x:Bind ModeLabel}" Tag="{x:Bind}"
+                                                    Padding="10,4" MinHeight="0" MinWidth="56"
+                                                    CornerRadius="{StaticResource PageInnerCornerRadius}" VerticalAlignment="Center" FontSize="13"
+                                                    Background="{ThemeResource AccentFillColorDefaultBrush}" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                    BorderThickness="0" ToolTipService.ToolTip="切换默认输入语言"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <TextBlock x:Name="ImeEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
+                                       Text="还没有规则。点「添加」为正在运行的应用指定输入语言。"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" x:Name="ImeEditPanel" Visibility="Collapsed" Style="{StaticResource PageEditPanelStyle}">
+                        <StackPanel Style="{StaticResource PageFormStackStyle}">
+                            <TextBlock Text="新建规则" Style="{StaticResource PageSubtitleTextStyle}"/>
+                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                <TextBlock Text="应用"/>
+                                <ComboBox x:Name="ImeAppComboBox" PlaceholderText="从正在运行的应用中选择" HorizontalAlignment="Stretch">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="local:RunningAppInfo">
+                                            <TextBlock Text="{x:Bind DisplayName}" TextTrimming="CharacterEllipsis"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                <TextBlock Text="切到这个应用时使用"/>
+                                <ComboBox x:Name="ImeModeComboBox" HorizontalAlignment="Stretch" SelectedIndex="0">
+                                    <ComboBoxItem Content="中文"/>
+                                    <ComboBoxItem Content="英文"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource PageActionsStackStyle}">
+                                <Button Content="确定" Style="{ThemeResource AccentButtonStyle}" Click="Ime_Confirm_Click"/>
+                                <Button Content="取消" Click="Ime_Cancel_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- ============ 程序关联 ============ -->
+        <Grid x:Name="ContentProgramAssociation" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="程序关联" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="指定文件类型用哪个程序打开，拖放文件时也用这份清单。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="ProgramAssocToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="ProgramAssocToggle_Toggled"/>
+            </Grid>
+
+            <Grid Grid.Row="1" Style="{StaticResource PageBodyGridStyle}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Style="{StaticResource PageToolbarFirstStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Style="{StaticResource PageInlineControlsStyle}">
+                        <TextBlock Text="关联" Style="{StaticResource PageSubtitleTextStyle}"/>
+                        <TextBlock x:Name="AssocCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
+                    </StackPanel>
+                    <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
+                        <AppBarButton Icon="Add" Label="新建" Click="Assoc_New_Click"/>
+                        <AppBarButton Icon="Edit" Label="编辑" Click="Assoc_Edit_Click"/>
+                        <AppBarButton Icon="Delete" Label="删除" Click="Assoc_Delete_Click"/>
+                        <AppBarSeparator/>
+                        <AppBarButton Icon="OpenFile" Label="导入" Click="Assoc_Import_Click"/>
+                        <AppBarButton Icon="Save" Label="导出" Click="Assoc_Export_Click"/>
+                    </CommandBar>
+                </Grid>
+
+                <Grid Grid.Row="1" Style="{StaticResource PageWorkAreaStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition x:Name="AssocEditColumn" Width="0"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource PageListPanelStyle}">
+                        <Grid>
+                            <ListView x:Name="AssocListView" SelectionMode="Single">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:ConfigEntry">
+                                        <Grid ColumnSpacing="12" Padding="8,10" MinHeight="48">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="72"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Padding="8,4" CornerRadius="{StaticResource PageInnerCornerRadius}"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center" BorderThickness="0"
+                                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                                <TextBlock Text="{x:Bind Ext}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="13"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{x:Bind Path}" Style="{StaticResource PageCaptionTextStyle}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <TextBlock x:Name="AssocEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
+                                       Text="还没有关联。点「新建」把一种文件类型指向某个程序。"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" x:Name="AssocEditPanel" Visibility="Collapsed" Style="{StaticResource PageEditPanelStyle}">
+                        <StackPanel Style="{StaticResource PageFormStackStyle}">
+                            <TextBlock x:Name="AssocEditTitle" Text="新建关联" Style="{StaticResource PageSubtitleTextStyle}"/>
+                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                <TextBlock Text="文件类型"/>
+                                <TextBox x:Name="AssocExtBox" PlaceholderText=".c4d"/>
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                <TextBlock Text="显示名称"/>
+                                <TextBox x:Name="AssocNameBox" PlaceholderText="例如 Cinema 4D"/>
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                <TextBlock Text="程序位置"/>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0" x:Name="AssocPathBox" PlaceholderText="C:\…\程序.exe"/>
+                                    <Button Grid.Column="1" Content="浏览…" Click="Assoc_Browse_Click"/>
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel Style="{StaticResource PageActionsStackStyle}">
+                                <Button Content="确定" Style="{ThemeResource AccentButtonStyle}" Click="Assoc_Confirm_Click"/>
+                                <Button Content="取消" Click="Assoc_Cancel_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+
+        <!-- ============ 点击桌面 ============ -->
+        <Grid x:Name="ContentDesktopClick" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="点击桌面" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="单击桌面空白处显示桌面，再单击一次恢复窗口。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="DesktopClickToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="DesktopClickToggle_Toggled"/>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel Style="{StaticResource PageCardStackStyle}">
+                    <tk:SettingsCard Header="不会触发的情况"
+                                     Description="点在桌面图标或任务栏上、以及任何拖动操作，都不会被当成单击。">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE7F4;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                    </tk:SettingsCard>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ 桌面分区 ============ -->
+        <Grid x:Name="ContentDesktopOrganize" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="桌面分区" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="把桌面图标收进分区卡片，卡片常驻壁纸上，桌面保持干净。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="DesktopCardToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="DesktopCardToggle_Toggled"/>
+            </Grid>
+
+            <Grid Grid.Row="1" Style="{StaticResource PageBodyGridStyle}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Style="{StaticResource PageCardStackStyle}">
+                    <!-- 快捷键始终留在最外层，不折叠进任何面板 -->
+                    <tk:SettingsCard Header="呼出快捷键" Description="把被窗口盖住的卡片抬回最前面，不抢焦点">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE765;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                            <TextBox x:Name="HotkeyDesktopCardBox" PlaceholderText="例如 Ctrl+Alt+D" Width="170" VerticalAlignment="Center"/>
+                            <Button Content="应用" Click="DesktopCard_ApplyHotkey_Click" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </tk:SettingsCard>
+
+                    <tk:SettingsExpander Header="卡片布局" Description="卡片在桌面上的位置与大小">
+                        <tk:SettingsExpander.HeaderIcon>
+                            <FontIcon Glyph="&#xE80A;"/>
+                        </tk:SettingsExpander.HeaderIcon>
+                        <tk:SettingsExpander.Items>
+                            <tk:SettingsCard Header="离屏幕边缘" Description="左、右、顶三边统一">
+                                <NumberBox x:Name="DesktopCardMarginBox" Minimum="0" Maximum="600" SmallChange="4" Width="150" ValueChanged="DesktopCardGap_ValueChanged"/>
+                            </tk:SettingsCard>
+                            <tk:SettingsCard Header="卡片之间">
+                                <NumberBox x:Name="DesktopCardGapBox" Minimum="0" Maximum="200" SmallChange="4" Width="150" ValueChanged="DesktopCardGap_ValueChanged"/>
+                            </tk:SettingsCard>
+                            <tk:SettingsCard Header="每行图标数" Description="决定卡片宽度">
+                                <NumberBox x:Name="DesktopCardMaxColumnsBox" Minimum="1" Maximum="5" SmallChange="1" LargeChange="1" SpinButtonPlacementMode="Inline" Width="150" ValueChanged="DesktopCardMaxColumns_ValueChanged"/>
+                            </tk:SettingsCard>
+                        </tk:SettingsExpander.Items>
+                    </tk:SettingsExpander>
+                </StackPanel>
+
+                <Grid Grid.Row="1" Style="{StaticResource PageToolbarStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Style="{StaticResource PageInlineControlsStyle}">
+                        <TextBlock Text="分区" Style="{StaticResource PageSubtitleTextStyle}"/>
+                        <TextBlock x:Name="ZoneCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
+                        <TextBlock x:Name="CollectStatusText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
+                    </StackPanel>
+                    <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
+                        <AppBarButton Icon="Add" Label="新建" Click="Zone_New_Click"/>
+                        <AppBarButton Icon="Edit" Label="编辑" Click="Zone_Edit_Click"/>
+                        <AppBarButton Icon="Delete" Label="删除" Click="Zone_Delete_Click"/>
+                        <AppBarSeparator/>
+                        <AppBarButton Icon="Save" Label="保存到预设" Click="Zone_PresetExport_Click"/>
+                        <AppBarButton Icon="OpenFile" Label="从预设恢复" Click="Zone_PresetImport_Click"/>
+                        <AppBarSeparator/>
+                        <AppBarButton Icon="Sync" Label="同步桌面" Click="Zone_Reapply_Click"/>
+                        <AppBarButton Icon="Undo" Label="恢复默认分区" Click="Zone_ResetDefaults_Click"/>
+                        <AppBarButton Icon="Back" Label="还原到桌面" Click="DesktopRestore_Click"/>
+                    </CommandBar>
+                </Grid>
+
+                <Grid Grid.Row="2" Style="{StaticResource PageWorkAreaStyle}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition x:Name="ZoneEditColumn" Width="0"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Style="{StaticResource PageListPanelStyle}">
+                        <Grid>
+                            <ListView x:Name="ZonesListView" SelectionMode="Single" CanReorderItems="True" CanDragItems="True" AllowDrop="True"
+                                      DragItemsCompleted="Zones_DragItemsCompleted" DoubleTapped="Zones_DoubleTapped">
+                                <ListView.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <ItemsWrapGrid Orientation="Horizontal" ItemWidth="248" ItemHeight="124"/>
+                                    </ItemsPanelTemplate>
+                                </ListView.ItemsPanel>
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="Width" Value="236"/>
+                                        <Setter Property="Height" Value="112"/>
+                                        <Setter Property="Margin" Value="6"/>
+                                        <Setter Property="Padding" Value="0"/>
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                        <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="local:DesktopZone">
+                                        <Border Style="{StaticResource PageTileStyle}">
+                                            <Grid RowSpacing="8">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <FontIcon Glyph="&#xE8B7;" FontSize="16" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="15"
+                                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                                                </StackPanel>
+                                                <TextBlock Grid.Row="1" Text="{x:Bind KeywordsSummary}" FontSize="12"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <TextBlock x:Name="ZoneEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
+                                       Text="还没有分区。点「新建」自己建，或用「恢复默认分区」载入预设分类。"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="1" x:Name="ZoneEditPanel" Visibility="Collapsed" Style="{StaticResource PageEditPanelHostStyle}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled"
+                                          HorizontalContentAlignment="Stretch" Padding="20,20,20,12">
+                                <StackPanel Style="{StaticResource PageFormStackStyle}">
+                                    <TextBlock x:Name="ZoneEditTitle" Text="新建分区" Style="{StaticResource PageSubtitleTextStyle}"/>
+                                    <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                        <TextBlock Text="名称"/>
+                                        <TextBox x:Name="ZoneNameBox" PlaceholderText="例如 办公、素材、游戏"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                        <TextBlock Text="固定放入这个分区的文件"/>
+                                        <TextBox x:Name="ZoneFilesSearchBox" PlaceholderText="搜索文件名…" TextChanged="ZoneFilesSearch_TextChanged"/>
+                                        <Border x:Name="ZoneFilesDropArea" Style="{StaticResource PageDropAreaStyle}"
+                                                AllowDrop="True" DragOver="ZoneFiles_DragOver" Drop="ZoneFiles_Drop">
+                                            <Grid AllowDrop="True" DragOver="ZoneFiles_DragOver" Drop="ZoneFiles_Drop" Background="Transparent">
+                                                <ListView x:Name="ZoneFilesListView" SelectionMode="Multiple" MaxHeight="150"
+                                                          AllowDrop="True" DragOver="ZoneFiles_DragOver" Drop="ZoneFiles_Drop"
+                                                          CanReorderItems="False" CanDragItems="False" SelectionChanged="ZoneFiles_SelectionChanged">
+                                                    <ListView.ItemTemplate>
+                                                        <DataTemplate x:DataType="x:String">
+                                                            <TextBlock Text="{x:Bind}" TextTrimming="CharacterEllipsis" Padding="2,4"/>
+                                                        </DataTemplate>
+                                                    </ListView.ItemTemplate>
+                                                </ListView>
+                                                <TextBlock x:Name="ZoneFilesDropHint" Text="把桌面图标拖到这里"
+                                                           Style="{StaticResource PageEmptyHintTextStyle}"/>
+                                            </Grid>
+                                        </Border>
+                                        <TextBlock x:Name="ZoneFilesHint" Text="" Style="{StaticResource PageDescriptionTextStyle}"/>
+                                    </StackPanel>
+                                    <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                        <TextBlock Text="匹配关键词" ToolTipService.ToolTip="每行一条；以点开头视为扩展名"/>
+                                        <TextBox x:Name="ZoneKeywordsBox" AcceptsReturn="True" TextWrapping="Wrap" Height="90" PlaceholderText=".docx&#x0a;.xlsx&#x0a;Word&#x0a;文件夹"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <Border Grid.Row="1" Style="{StaticResource PagePanelFooterStyle}">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button Content="确定" Style="{ThemeResource AccentButtonStyle}" Click="Zone_Confirm_Click"/>
+                                    <Button Content="取消" Click="Zone_Cancel_Click"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+
+    </Grid>
+</UserControl>

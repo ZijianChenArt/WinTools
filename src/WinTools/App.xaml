@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="WinTools.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinTools">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- 全局 UI 规范：所有子页面的间距 / 圆角 / 排版令牌都在这里，见 README.md 第 5 节 -->
+                <ResourceDictionary Source="ms-appx:///Styles/PageStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <!-- 弹窗在自身代码应用主题色之前需要可解析的基础画刷。主窗口使用自己的动态画刷。 -->
+            <SolidColorBrush x:Key="CodexSurfaceBrush" Color="#242424"/>
+            <SolidColorBrush x:Key="CodexBorderBrush" Color="#383838"/>
+            <!--
+                导航项模板里的 LayoutRoot 自带 Margin="4,2"，这 4px 会把收起态的图标整体推右
+                （实测：面板中心 24 / 32，图标中心 27.5 / 35.5，恒定偏右 ~4）。
+                这里清掉水平部分，图标就正好落在面板正中；药丸的左右内缩改由 MainWindow 里
+                NavigationViewItem 样式的 Margin 提供（那个 Margin 不影响图标位置）。
+            -->
+            <Thickness x:Key="NavigationViewItemButtonMargin">0,2</Thickness>
+            <!-- 全局圆角令牌：普通控件 10px，面板与浮层 12px。 -->
+            <CornerRadius x:Key="ControlCornerRadius">10</CornerRadius>
+            <CornerRadius x:Key="OverlayCornerRadius">12</CornerRadius>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

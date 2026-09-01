@@ -1,0 +1,18 @@
+.vs/
+**/bin/
+**/obj/
+artifacts/
+*.user
+*.log
+scripts/logs/
+scripts/backups/
+
+# 参考用的第三方项目副本（DeskBox 源码），不随本仓库版本管理。
+# 需要一起归档的话，把下面这行删掉即可。
+DeskBox-main/
+
+# 其它 AI 代理留下的备份目录 / 临时重命名的旧产物
+_diff_backup/
+*_zbak/
+*_bak_*/
+*.old/

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="WinTools.ProgramDropWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="选择打开方式">
+
+    <Grid x:Name="ShellRoot" MinWidth="220" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 统一透明标题栏（与 MainWindow 一致） -->
+        <Grid x:Name="AppTitleBar" Height="48" Grid.Row="0"
+              Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftPaddingColumn" Width="0"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition x:Name="RightPaddingColumn" Width="0"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="1" Text="打开方式" VerticalAlignment="Center" Margin="16,0,0,0"
+                       FontSize="15" FontWeight="SemiBold"/>
+        </Grid>
+
+        <Grid x:Name="ContentArea" Grid.Row="1" Padding="12,4,12,14"
+              AllowDrop="True" DragEnter="ContentArea_DragEnter" DragOver="ContentArea_DragOver">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="ProgramPanel" Spacing="8"/>
+            </ScrollViewer>
+            <TextBlock x:Name="EmptyHint" Text="尚未配置程序"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Grid>
+    </Grid>
+</Window>

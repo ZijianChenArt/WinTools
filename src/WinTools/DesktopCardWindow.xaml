@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="WinTools.DesktopCardWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WinTools"
+    Title="桌面卡片">
+
+    <!-- 内容边框直接贴合 HWND 圆角；移除外层 1px 透明间隙，避免与 DWM 圆角形成双层轮廓。 -->
+    <Grid x:Name="ShellRoot" Background="Transparent" Padding="0">
+        <Border x:Name="CardSurface"
+                Background="{ThemeResource CodexSurfaceBrush}"
+                BorderBrush="{ThemeResource CodexBorderBrush}"
+                BorderThickness="1" CornerRadius="12">
+            <Grid Padding="8,8,8,10">
+                    <TextBlock x:Name="EmptyHint" Text="这个分区还没有文件。"
+                               Opacity="0.5" FontSize="12" TextWrapping="Wrap"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="Collapsed"/>
+                    <GridView x:Name="ItemsGrid" SelectionMode="None" IsItemClickEnabled="True"
+                              ItemClick="Items_ItemClick"
+                              CanDragItems="True" AllowDrop="True"
+                              DragItemsStarting="ItemsGrid_DragItemsStarting"
+                              DragOver="ItemsGrid_DragOver"
+                              Drop="ItemsGrid_Drop"
+                              DragItemsCompleted="ItemsGrid_DragItemsCompleted"
+                              ScrollViewer.HorizontalScrollMode="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                              Padding="0">
+                        <GridView.ItemContainerStyle>
+                            <!-- 关键：清掉 WinUI 3 默认 GridViewItem 的内边距 + 默认 Center 内容对齐，
+                                 让所有 item 紧贴 GridView 左边缘开始排，单图标固定在卡片最左。
+                                 之前设的 HorizontalContentAlignment="Center" 会让单图标居中，
+                                 跟"固定宽度靠左"的卡片风格不符。 -->
+                            <Style TargetType="GridViewItem">
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                                <Setter Property="MinWidth" Value="0"/>
+                                <Setter Property="MinHeight" Value="0"/>
+                            </Style>
+                        </GridView.ItemContainerStyle>
+                        <GridView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <!-- WrapGrid 默认按可用宽度换行；卡片宽度由 MaxColumns 算好固定值，
+                                     全部内容靠左排（单图标在卡片最左，多图标也整体靠左不居中）。
+                                     ItemsWrapGrid 不再 HorizontalAlignment="Center"。 -->
+                                <ItemsWrapGrid Orientation="Horizontal"
+                                               HorizontalAlignment="Left"/>
+                            </ItemsPanelTemplate>
+                        </GridView.ItemsPanel>
+                        <GridView.ItemTemplate>
+                            <DataTemplate x:DataType="local:CardItem">
+                                <StackPanel Width="76" Height="86" Spacing="4" Padding="4,8"
+                                            ToolTipService.ToolTip="{x:Bind DisplayName}">
+                                    <StackPanel.ContextFlyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem Text="打开" Click="ItemMenu_Open_Click" Tag="{x:Bind}">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon Glyph="&#xE8A7;"/>
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="删除到回收站" Click="ItemMenu_Delete_Click" Tag="{x:Bind}">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon Glyph="&#xE74D;"/>
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                        </MenuFlyout>
+                                    </StackPanel.ContextFlyout>
+                                    <!-- 不再用 FontIcon 作 fallback：SHGetFileInfo 已经能
+                                         稳定拿真实图标，fallback 反而让用户觉得"图标覆盖"在
+                                         原线框文件图标上。Image 直接撑满容器。 -->
+                                    <Image Source="{x:Bind Icon, Mode=OneWay}" Width="36" Height="36"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Stretch="Uniform"/>
+                                    <TextBlock Text="{x:Bind DisplayName}" FontSize="11"
+                                               TextAlignment="Center" TextWrapping="Wrap"
+                                               MaxLines="2" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </GridView.ItemTemplate>
+                    </GridView>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
