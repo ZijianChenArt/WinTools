@@ -142,6 +142,33 @@
         <Setter Property="DefaultLabelPosition" Value="Right"/>
         <Setter Property="IsDynamicOverflowEnabled" Value="True"/>
     </Style>
+    <!-- CommandBar 会给命令项套用自己的默认样式；显式指定页面样式，确保悬浮、按下底框
+         始终从控件的 CornerRadius 取 10px，而不是退回系统模板的近方形外观。 -->
+    <Style x:Key="PageAppBarButtonStyle"
+           TargetType="AppBarButton"
+           BasedOn="{StaticResource DefaultAppBarButtonStyle}">
+        <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}"/>
+    </Style>
+    <!-- 简洁工具栏按钮：不用 CommandBar 内部的 MoreButton，避免其直角且顶部对齐的系统模板。 -->
+    <Style x:Key="PageToolbarButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="PageToolbarIconButtonStyle"
+           TargetType="Button"
+           BasedOn="{StaticResource PageToolbarButtonStyle}">
+        <Setter Property="Width" Value="40"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
     <!-- 列表 + 编辑面板的双栏工作区：高度由所在行给定，不写死 -->
     <Style x:Key="PageWorkAreaStyle" TargetType="Grid">
         <Setter Property="HorizontalAlignment" Value="Stretch"/>

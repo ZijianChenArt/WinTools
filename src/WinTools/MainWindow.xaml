@@ -28,7 +28,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- 48px 加高标题栏：左侧应用标识 + 侧栏开关，居中全局搜索框（与参考设置页一致）。 -->
+        <!-- 48px 加高标题栏：只保留应用标识与侧栏开关。 -->
         <Grid x:Name="AppTitleBar" Height="48" Grid.Row="0" Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="LeftPaddingColumn" Width="0"/>
@@ -36,18 +36,8 @@
                 <ColumnDefinition x:Name="RightPaddingColumn" Width="0"/>
             </Grid.ColumnDefinitions>
 
-            <!--
-                标题栏内容分两栏：左侧标识固定宽度，搜索框占剩余空间。
-                窄窗口下搜索框会先缩小、再由 MainWindow 的 SizeChanged 整块隐藏，
-                否则它会和左侧标识、窗口按钮叠在一起。
-            -->
-            <Grid Grid.Column="1" ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8"
+            <Grid Grid.Column="1">
+                <StackPanel Orientation="Horizontal" Spacing="8"
                             Margin="4,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left">
                     <Button Width="36" Height="32"
                             Background="Transparent" BorderThickness="0" CornerRadius="10"
@@ -57,35 +47,8 @@
                         <FontIcon Glyph="&#xE700;" FontSize="15"/>
                     </Button>
                     <Image Source="Assets/logo.png" Width="18" Height="18" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="AppTitleText" Text="WinTools" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock Text="WinTools" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 </StackPanel>
-
-                <!-- 窄窗口下搜索框收成一个放大镜按钮，点一下再展开成输入框 -->
-                <Button x:Name="ShellSearchButton" Grid.Column="1" Width="36" Height="32"
-                        Background="Transparent" BorderThickness="0" CornerRadius="10"
-                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"
-                        Visibility="Collapsed" Click="ShellSearchButton_Click"
-                        ToolTipService.ToolTip="搜索功能与设置">
-                    <FontIcon Glyph="&#xE721;" FontSize="15"/>
-                </Button>
-
-                <Grid x:Name="ShellSearchHost" Grid.Column="1" MinWidth="160" MaxWidth="480" Height="32"
-                      Margin="0,0,12,0" HorizontalAlignment="Stretch" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xE721;" FontSize="13" HorizontalAlignment="Right"
-                              Margin="0,0,12,0" VerticalAlignment="Center"
-                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                              IsHitTestVisible="False" Canvas.ZIndex="1"/>
-                    <AutoSuggestBox x:Name="ShellSearchBox"
-                                    PlaceholderText="搜索功能与设置"
-                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
-                                    VerticalContentAlignment="Center"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                    BorderThickness="1" CornerRadius="16" Padding="14,0,34,0"
-                                    TextChanged="ShellSearch_TextChanged"
-                                    QuerySubmitted="ShellSearch_QuerySubmitted"
-                                    SuggestionChosen="ShellSearch_SuggestionChosen"/>
-                </Grid>
             </Grid>
         </Grid>
 
@@ -126,21 +89,6 @@
             </NavigationView.Resources>
 
             <NavigationView.MenuItems>
-                <NavigationViewItem x:Name="NavItemQuickSettings" Tag="QuickSettings">
-                    <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Setting"/>
-                    </NavigationViewItem.Icon>
-                    <NavigationViewItem.Content>
-                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="快捷设置" Style="{StaticResource NavigationLabelStyle}"/>
-                            <Ellipse x:Name="NavDotQuickSettings" Grid.Column="1" Width="10" Height="10" Margin="0,0,2,0" VerticalAlignment="Center"/>
-                        </Grid>
-                    </NavigationViewItem.Content>
-                </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemThreeFingerDrag" Tag="ThreeFingerDrag">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="TouchPointer"/>

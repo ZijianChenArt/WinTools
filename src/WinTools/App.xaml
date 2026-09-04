@@ -24,6 +24,30 @@
             <!-- 全局圆角令牌：普通控件 10px，面板与浮层 12px。 -->
             <CornerRadius x:Key="ControlCornerRadius">10</CornerRadius>
             <CornerRadius x:Key="OverlayCornerRadius">12</CornerRadius>
+            <!-- 可点击列表/网格项是卡片内部层级，悬浮与按下底框统一为 8px。 -->
+            <CornerRadius x:Key="ListViewItemCornerRadius">8</CornerRadius>
+            <CornerRadius x:Key="GridViewItemCornerRadius">8</CornerRadius>
+            <CornerRadius x:Key="ComboBoxItemCornerRadius">8</CornerRadius>
+            <CornerRadius x:Key="ComboBoxDropDownButtonBackgroundCornerRadius">10</CornerRadius>
+            <CornerRadius x:Key="HyperlinkFocusRectCornerRadius">10</CornerRadius>
+            <CornerRadius x:Key="InfoBarActionButtonCornerRadius">10</CornerRadius>
+            <!-- AppBarButton 等模板不会全部自动采用 ControlCornerRadius；直接设置控件圆角，
+                 让默认、悬浮与按下背景使用同一个 10px 小圆角。 -->
+            <Style TargetType="Button">
+                <Setter Property="CornerRadius" Value="10"/>
+            </Style>
+            <Style TargetType="AppBarButton">
+                <Setter Property="CornerRadius" Value="10"/>
+            </Style>
+            <Style TargetType="ToggleButton">
+                <Setter Property="CornerRadius" Value="10"/>
+            </Style>
+            <Style TargetType="DropDownButton">
+                <Setter Property="CornerRadius" Value="10"/>
+            </Style>
+            <Style TargetType="RepeatButton">
+                <Setter Property="CornerRadius" Value="10"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

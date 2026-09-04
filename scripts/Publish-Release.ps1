@@ -44,8 +44,8 @@ if ($LASTEXITCODE -ne 0) {
 dotnet publish $project `
     -c Release `
     -r $Runtime `
-    -p:SelfContained=false `
-    -p:WindowsAppSDKSelfContained=false `
+    -p:SelfContained=true `
+    -p:WindowsAppSDKSelfContained=true `
     -p:Platform=$platform `
     -p:WindowsPackageType=None `
     -p:DebugType=None `

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,7 +7,7 @@ namespace WinTools;
 
 /// <summary>
 /// 分区匹配规则：判断一个桌面项应归入哪个 <see cref="DesktopZone"/>。
-/// 规则与 <see cref="DesktopOrganizeService"/> 中的排列逻辑保持一致，供收纳（移动文件）复用。
+/// 桌面分区卡片的收纳（物理移动文件）与还原都走这一套规则。
 /// </summary>
 public static class DesktopZoneMatcher
 {

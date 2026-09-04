@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -120,6 +120,20 @@ public static class WindowHelper
         catch { /* 旧版系统忽略 */ }
     }
 
+    /// <summary>让 DWM 圆角边缘使用与窗口表面一致的颜色，避免透明边框在圆角端点产生亮点。</summary>
+    public static void MatchSystemWindowBorder(Window window, Color surfaceColor)
+    {
+        try
+        {
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            var color = ToColorRef(surfaceColor);
+            _ = DwmSetWindowAttribute(hwnd, DwmwaBorderColor, ref color, sizeof(uint));
+            var round = DwmwcpRound;
+            _ = DwmSetWindowAttribute(hwnd, DwmwaWindowCornerPreference, ref round, sizeof(int));
+        }
+        catch { /* 旧版系统忽略 */ }
+    }
+
     /// <summary>设置窗口 Mica 背景材质。</summary>
     public static void ApplyWindowBackdrop(Window window)
     {
@@ -143,7 +157,7 @@ public static class WindowHelper
     public static SolidColorBrush GetCodexShellBrush(ElementTheme theme, bool isMica)
     {
         var c = GetCodexSidebarBrush(theme).Color;
-        return new SolidColorBrush(Color.FromArgb(isMica ? ShellMicaAlpha : (byte)255, c.R, c.G, c.B));
+        return new SolidColorBrush(Color.FromArgb(isMica ? (byte)235 : (byte)255, c.R, c.G, c.B));
     }
 
     /// <summary>
@@ -154,20 +168,18 @@ public static class WindowHelper
     /// </summary>
     public static SolidColorBrush GetCodexContentBrush(ElementTheme theme, bool isMica)
     {
-        _ = isMica;
+        if (!isMica) return GetCodexSurfaceBrush(theme);
         return new SolidColorBrush(theme == ElementTheme.Dark
-            ? Color.FromArgb(ContentOverlayDarkAlpha, 0, 0, 0)
-            : Color.FromArgb(ContentOverlayLightAlpha, 255, 255, 255));
+            ? Color.FromArgb(ContentDepthAlpha(32, 150), 0, 0, 0)
+            : Color.FromArgb(ContentDepthAlpha(45, 220), 255, 255, 255));
     }
 
     /// <summary>外壳层不透明度：越小 Mica 越明显。</summary>
-    private const byte ShellMicaAlpha = 235;
-
-    /// <summary>深色下内容区压暗的强度（0-255，越大越深）。</summary>
-    private const byte ContentOverlayDarkAlpha = 92;
-
-    /// <summary>浅色下内容区提亮的强度。</summary>
-    private const byte ContentOverlayLightAlpha = 92;
+    private static byte ContentDepthAlpha(int shallowAlpha, int deepAlpha)
+    {
+        var t = UiStyleService.ContentBackgroundDepth / 100d;
+        return (byte)Math.Clamp((int)Math.Round(shallowAlpha + (deepAlpha - shallowAlpha) * t), 0, 255);
+    }
 
 
     public static SolidColorBrush GetCodexSidebarBrush(ElementTheme theme) =>
@@ -191,37 +203,16 @@ public static class WindowHelper
             : (elevated ? Color.FromArgb(205, 255, 255, 255) : Color.FromArgb(174, 250, 250, 250)));
     }
 
+    public static SolidColorBrush GetDesktopCardBrush(ElementTheme theme) =>
+        new(theme == ElementTheme.Dark
+            ? Color.FromArgb(90, 30, 31, 34)
+            : Color.FromArgb(225, 255, 255, 255));
+
     public static SolidColorBrush GetCodexBorderBrush(ElementTheme theme) =>
         new(theme == ElementTheme.Dark
             ? Color.FromArgb(255, 56, 56, 56)
             : Color.FromArgb(255, 218, 218, 218));
 
-    /// <summary>内容区描边（两种风格一致，均使用系统主题卡片描边）。</summary>
-    public static Brush GetFrameBorderBrush() =>
-        Application.Current.Resources["CardStrokeColorDefaultBrush"] as Brush
-        ?? Application.Current.Resources["SystemControlForegroundBaseLowBrush"] as Brush
-        ?? new SolidColorBrush(Color.FromArgb(255, 128, 128, 128));
-
-    /// <summary>内容区填充（两种风格一致，均使用系统主题卡片底色）。</summary>
-    public static Brush GetContentFillBrush() =>
-        Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] as Brush
-        ?? new SolidColorBrush(Colors.Transparent);
-
-    public static CornerRadius GetContentCornerRadius() => new(12);
-
-    public static void ApplyBorderlessPopupChrome(Window window)
-    {
-        try
-        {
-            var hwnd = WindowNative.GetWindowHandle(window);
-            var borderColor = ResolveBaseBackgroundColorRef(window);
-            _ = DwmSetWindowAttribute(hwnd, DwmwaBorderColor, ref borderColor, sizeof(uint));
-
-            var round = DwmwcpRound;
-            _ = DwmSetWindowAttribute(hwnd, DwmwaWindowCornerPreference, ref round, sizeof(int));
-        }
-        catch { /* ignore */ }
-    }
 
     private static uint ResolveBaseBackgroundColorRef(Window window)
     {
@@ -270,7 +261,7 @@ public static class WindowHelper
         if (window.AppWindow.TitleBar is not { } tb) return;
 
         tb.ExtendsContentIntoTitleBar = true;
-        // 48px「加高」标题栏，容纳应用标识与居中搜索框（与参考设置页一致）。
+        // 48px「加高」标题栏，容纳应用标识与侧栏开关。
         try { tb.PreferredHeightOption = Microsoft.UI.Windowing.TitleBarHeightOption.Tall; } catch { /* 旧版系统忽略 */ }
         tb.BackgroundColor = Colors.Transparent;
         tb.InactiveBackgroundColor = Colors.Transparent;
@@ -323,7 +314,7 @@ public static class WindowHelper
         };
     }
 
-    public static void UpdateTitleBarPadding(
+    private static void UpdateTitleBarPadding(
         AppWindow appWindow,
         FrameworkElement titleBar,
         ColumnDefinition leftPadding,
@@ -364,41 +355,4 @@ public static class WindowHelper
         };
     }
 
-    public static void SizeToContent(Window window, int minWidth = 640, int minHeight = 380)
-    {
-        try
-        {
-            if (window.Content is not FrameworkElement root) return;
-            root.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-            var desiredW = (int)Math.Ceiling(root.DesiredSize.Width) + 24;
-            var desiredH = (int)Math.Ceiling(root.DesiredSize.Height) + 48;
-            var scale = root.XamlRoot?.RasterizationScale ?? 1.0;
-            var w = (int)(Math.Max(minWidth, desiredW) * scale);
-            var h = (int)(Math.Max(minHeight, desiredH) * scale);
-            window.AppWindow.Resize(new SizeInt32(w, h));
-        }
-        catch { /* ignore */ }
-    }
-
-    public static void CenterOnScreen(Window window)
-    {
-        try
-        {
-            var display = DisplayArea.GetFromWindowId(window.AppWindow.Id, DisplayAreaFallback.Nearest);
-            var work = display.WorkArea;
-            var w = window.AppWindow.Size.Width;
-            var h = window.AppWindow.Size.Height;
-            var x = work.X + (work.Width - w) / 2;
-            var y = work.Y + (work.Height - h) / 2;
-            window.AppWindow.Move(new PointInt32(x, y));
-        }
-        catch { /* ignore */ }
-    }
-
-    public static void PlayShowAnimation(Window window, float offsetY = 16f, int durationMs = 250)
-    {
-        _ = window;
-        _ = offsetY;
-        _ = durationMs;
-    }
 }

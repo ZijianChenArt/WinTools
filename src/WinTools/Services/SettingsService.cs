@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -27,12 +27,11 @@ public sealed class SettingsService
         _saveTimer = dispatcherQueue.CreateTimer();
         _saveTimer.Interval = TimeSpan.FromMilliseconds(400);
         _saveTimer.IsRepeating = false;
-        _saveTimer.Tick += (_, _) =>
-        {
-            if (!_pendingSave) return;
-            _pendingSave = false;
-            FlushNow();
-        };
+        // 直接调 FlushNow：由它自己检查并清 _pendingSave。
+        // 曾经在这里先把 _pendingSave 置 false 再调 FlushNow，结果 FlushNow 一进门就
+        // 因为"没有待保存变更"返回——防抖保存**一次都没真正写过盘**，配置只能靠退出
+        // 路径上的 ConfigService.Save 兜底，进程被强杀就全丢了。
+        _saveTimer.Tick += (_, _) => FlushNow();
         Current.PropertyChanged += OnCurrentPropertyChanged;
     }
 
@@ -81,14 +80,7 @@ public sealed class SettingsService
     {
         var defaults = ConfigService.GetDefault();
         Current.Entries = defaults.Entries;
-        Current.QuickSettingsHotkeys = defaults.QuickSettingsHotkeys;
-        Current.EnableQuickSettings = defaults.EnableQuickSettings;
-        Current.EnableQuickMute = defaults.EnableQuickMute;
-        Current.EnableQuickPanel = defaults.EnableQuickPanel;
-        Current.QuickPanelPaddingTop = defaults.QuickPanelPaddingTop;
-        Current.QuickPanelPaddingBottom = defaults.QuickPanelPaddingBottom;
-        Current.QuickPanelPaddingLeft = defaults.QuickPanelPaddingLeft;
-        Current.QuickPanelPaddingRight = defaults.QuickPanelPaddingRight;
+        Current.Hotkeys = defaults.Hotkeys;
         Current.EnableDragStash = defaults.EnableDragStash;
         Current.EnableProgramAssoc = defaults.EnableProgramAssoc;
         Current.EnableThreeFingerDrag = defaults.EnableThreeFingerDrag;
@@ -108,18 +100,13 @@ public sealed class SettingsService
         Current.ProgramOffsetY = defaults.ProgramOffsetY;
         Current.WindowGap = defaults.WindowGap;
         Current.EnablePerAppIme = defaults.EnablePerAppIme;
-        Current.EnableDesktopOrganize = defaults.EnableDesktopOrganize;
         Current.EnableDesktopClickToShow = defaults.EnableDesktopClickToShow;
         Current.DesktopZones = defaults.DesktopZones;
         Current.DesktopZoneSchemaVersion = defaults.DesktopZoneSchemaVersion;
-        Current.DesktopOrganizeFromRight = defaults.DesktopOrganizeFromRight;
-        Current.DesktopZoneGap = defaults.DesktopZoneGap;
         Current.EnableDesktopCard = defaults.EnableDesktopCard;
         Current.DesktopCardGap = defaults.DesktopCardGap;
         Current.DesktopCardMargin = defaults.DesktopCardMargin;
         Current.DesktopCardMaxColumns = defaults.DesktopCardMaxColumns;
-        Current.DesktopIconSpacingXAdjustment = defaults.DesktopIconSpacingXAdjustment;
-        Current.DesktopIconSpacingYAdjustment = defaults.DesktopIconSpacingYAdjustment;
         Current.PerAppImeRules = defaults.PerAppImeRules;
         Current.ImeCategoryDefaultsInitialized = defaults.ImeCategoryDefaultsInitialized;
     }

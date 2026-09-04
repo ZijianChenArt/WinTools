@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using WinTools.Services;
 
 namespace WinTools;
 
@@ -64,12 +65,37 @@ public static class DesktopCollectService
     /// <summary>卡片只显示已进入托管分区的项目，避免与桌面原生图标重复。</summary>
     public static List<string> ListCardItems(string zoneName) => ListZoneItems(zoneName);
 
-    /// <summary>桌面上按当前分区规则「将会被收纳」的项数量（供确认对话框预览）。</summary>
-    public static int PreviewCount(out List<string> samples)
+    /// <summary>重命名分区的托管目录，并同步收纳日志中的路径与分区名。</summary>
+    public static bool RenameZone(string oldName, string newName)
     {
-        var plan = BuildPlan();
-        samples = plan.Take(8).Select(p => Path.GetFileName(p.Source)).ToList();
-        return plan.Count;
+        lock (Gate)
+        {
+            try
+            {
+                var source = ZoneFolder(oldName);
+                var destination = ZoneFolder(newName);
+                if (string.Equals(source, destination, StringComparison.OrdinalIgnoreCase)) return true;
+                if (Directory.Exists(destination)) return false;
+
+                if (Directory.Exists(source)) Directory.Move(source, destination);
+
+                var prefix = source.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var journal = LoadJournal();
+                foreach (var entry in journal)
+                {
+                    if (string.Equals(entry.Zone, oldName, StringComparison.Ordinal)) entry.Zone = newName;
+                    if (entry.Destination.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        entry.Destination = Path.Combine(destination, entry.Destination[prefix.Length..]);
+                }
+                SaveJournal(journal);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ErrorReporter.Log("DesktopCollectService.RenameZone", ex);
+                return false;
+            }
+        }
     }
 
     /// <summary>执行收纳。返回成功移动的条数；失败项跳过并计入 <paramref name="failed"/>。</summary>
@@ -281,7 +307,12 @@ public static class DesktopCollectService
                     if (!File.Exists(entry.Destination) && !Directory.Exists(entry.Destination))
                         continue; // 已被用户手动移走：从日志里丢弃，不报错
 
-                    var back = ResolveCollision(entry.Source);
+                    // 公共桌面通常需要管理员权限才能写入。WinTools 正式版以普通用户运行时，
+                    // 直接按日志写回 C:\Users\Public\Desktop 会让这一整批项目全部失败。
+                    // “还原到桌面”的用户预期是重新出现在自己的桌面，因此公共桌面来源
+                    // 安全地落到当前用户桌面；用户桌面及其它旧版来源仍恢复到原路径。
+                    var restoreTarget = GetRestoreTarget(entry.Source);
+                    var back = ResolveCollision(restoreTarget);
                     Directory.CreateDirectory(Path.GetDirectoryName(back)!);
                     if (Directory.Exists(entry.Destination))
                         Directory.Move(entry.Destination, back);
@@ -646,6 +677,23 @@ public static class DesktopCollectService
                 return candidate;
         }
         return Path.Combine(dir, $"{stem} ({Guid.NewGuid():N}){ext}");
+    }
+
+    private static string GetRestoreTarget(string originalSource)
+    {
+        try
+        {
+            var commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+            if (!string.IsNullOrWhiteSpace(commonDesktop) && IsSamePathOrAncestor(commonDesktop, originalSource))
+            {
+                var userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                if (!string.IsNullOrWhiteSpace(userDesktop))
+                    return Path.Combine(userDesktop, Path.GetFileName(originalSource));
+            }
+        }
+        catch { /* 路径识别失败时沿用日志中的原路径 */ }
+
+        return originalSource;
     }
 
     private static bool IsJournalOrSystem(string path)

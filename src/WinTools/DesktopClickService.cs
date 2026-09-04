@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -27,6 +27,7 @@ public sealed class DesktopClickService : IDisposable
     private const uint MEM_RESERVE = 0x2000;
     private const uint MEM_RELEASE = 0x8000;
     private const uint PAGE_READWRITE = 0x04;
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
 
     private readonly object _sync = new();
     private readonly object _desktopStateSync = new();
@@ -98,6 +99,12 @@ public sealed class DesktopClickService : IDisposable
         _hookProc = null;
     }
 
+    /// <summary>
+    /// WH_MOUSE_LL 的回调是**全系统同步**的：这里每多花 1ms，所有应用的每一次点击就慢 1ms；
+    /// 超过 <c>LowLevelHooksTimeout</c>（默认 300ms）Windows 还会直接丢弃这个钩子的事件。
+    /// 所以回调里只记坐标，"是不是点在桌面空白处"这种要跨进程 OpenProcess /
+    /// WriteProcessMemory / SendMessage 到 Explorer 的判定，一律扔到线程池里做。
+    /// </summary>
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0)
@@ -108,15 +115,24 @@ public sealed class DesktopClickService : IDisposable
             if (message == WM_LBUTTONDOWN)
             {
                 _downPoint = info.pt;
-                _candidateClick = IsDesktopBlankArea(info.pt);
+                _candidateClick = true;
             }
             else if (message == WM_LBUTTONUP && _candidateClick)
             {
                 _candidateClick = false;
                 var dx = Math.Abs(info.pt.X - _downPoint.X);
                 var dy = Math.Abs(info.pt.Y - _downPoint.Y);
-                if (dx < _dragThresholdX && dy < _dragThresholdY && IsDesktopBlankArea(info.pt))
-                    ThreadPool.QueueUserWorkItem(_ => ToggleDesktopWindows());
+                if (dx < _dragThresholdX && dy < _dragThresholdY)
+                {
+                    var down = _downPoint;
+                    var up = info.pt;
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        // 按下和抬起都必须落在桌面空白处，避免把图标上的点击也当成"显示桌面"。
+                        if (IsDesktopBlankArea(down) && IsDesktopBlankArea(up))
+                            ToggleDesktopWindows();
+                    });
+                }
             }
         }
 
@@ -158,7 +174,11 @@ public sealed class DesktopClickService : IDisposable
             Marshal.StructureToPtr(hit, local, false);
             if (!WriteProcessMemory(process, remote, local, (nuint)size, out _)) return int.MinValue;
 
-            SendMessage(listView, LVM_HITTEST, IntPtr.Zero, remote);
+            // 必须用带超时的版本：Explorer 卡住时 SendMessage 会无限期阻塞，
+            // 而这条链路以前跑在鼠标钩子线程上，等于整个系统的鼠标输入一起卡死。
+            if (SendMessageTimeout(listView, LVM_HITTEST, IntPtr.Zero, remote,
+                    SMTO_ABORTIFHUNG, 300, out _) == IntPtr.Zero)
+                return int.MinValue;
             if (!ReadProcessMemory(process, remote, local, (nuint)size, out _)) return int.MinValue;
             return Marshal.PtrToStructure<LVHITTESTINFO>(local).iItem;
         }
@@ -269,6 +289,9 @@ public sealed class DesktopClickService : IDisposable
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
     [DllImport("kernel32.dll", SetLastError = true)]

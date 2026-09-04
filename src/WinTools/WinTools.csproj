@@ -16,8 +16,8 @@
     <AppxPackage Condition="'$(AppxPackage)' == ''">false</AppxPackage>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
-    <!-- 使用已安装的 Windows App Runtime，避免把完整原生运行时重复打进应用。 -->
-    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <!-- 发布包携带 Windows App Runtime，目标电脑无需另外安装运行时。 -->
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <Nullable>enable</Nullable>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>

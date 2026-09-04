@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Microsoft.UI.Xaml;
 
@@ -10,10 +10,12 @@ public static class UiStyleService
     private static readonly HashSet<Window> Windows = new();
     private static readonly HashSet<IUiStyleShell> Shells = new();
     private static string _preference = UiStylePreference.Mica;
+    private const int FixedContentBackgroundDepth = 40;
 
     public static string Preference => _preference;
 
     public static bool IsMica => UiStylePreference.IsMica(_preference);
+    public static int ContentBackgroundDepth => FixedContentBackgroundDepth;
 
     public static event EventHandler? StyleChanged;
 
@@ -44,6 +46,20 @@ public static class UiStyleService
         if (window is IUiStyleShell shell)
             Shells.Remove(shell);
     }
+
+    /// <summary>
+    /// 只订阅"风格变化时刷新表面"，**不**让本服务替它设置窗口背景。
+    /// 桌面卡片用的是显式 <c>MicaController</c>（系统默认的 MicaBackdrop 在窗口失焦后会变灰，
+    /// 而卡片永远不激活），一旦走 <see cref="ApplyToWindow"/> 给它塞一个普通 MicaBackdrop，
+    /// WinUI 会把显式控制器的合成目标抢走，卡片的 Mica 直接消失。自己管背景的窗口用这个。
+    /// </summary>
+    public static void RegisterShell(IUiStyleShell shell)
+    {
+        if (!Shells.Add(shell)) return;
+        shell.ApplyUiStyleSurfaces();
+    }
+
+    public static void UnregisterShell(IUiStyleShell shell) => Shells.Remove(shell);
 
     private static void ApplyToAllWindows()
     {

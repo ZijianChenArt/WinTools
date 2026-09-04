@@ -64,10 +64,15 @@ public static class ThemeService
             ApplyToWindow(window);
     }
 
-    private static void ApplyToWindow(Window window)
+    private static void ApplyToWindow(Window window)
     {
         if (window.Content is not FrameworkElement root) return;
-        root.RequestedTheme = EffectiveTheme;
+        root.RequestedTheme = EffectiveTheme;
+
+        // RequestedTheme 只会替换 ThemeResource；桌面卡片的 Mica Tint 与半透明表面
+        // 是代码生成的画刷，必须显式重算，否则从深色切到浅色仍会保留深色卡片。
+        if (window is IUiStyleShell shell)
+            shell.ApplyUiStyleSurfaces();
     }
 
     private static ElementTheme ResolveEffective(string preference) => preference switch
@@ -104,4 +109,4 @@ public static class ThemeService
         EffectiveThemeChanged?.Invoke(null, EventArgs.Empty);
     }
 }
-
+

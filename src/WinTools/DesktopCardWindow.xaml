@@ -6,12 +6,11 @@
     xmlns:local="using:WinTools"
     Title="桌面卡片">
 
-    <!-- 内容边框直接贴合 HWND 圆角；移除外层 1px 透明间隙，避免与 DWM 圆角形成双层轮廓。 -->
+    <!-- 外轮廓只由 DWM 的 12px 窗口圆角负责；XAML 表面不再重复画圆角或描边。 -->
     <Grid x:Name="ShellRoot" Background="Transparent" Padding="0">
         <Border x:Name="CardSurface"
                 Background="{ThemeResource CodexSurfaceBrush}"
-                BorderBrush="{ThemeResource CodexBorderBrush}"
-                BorderThickness="1" CornerRadius="12">
+                BorderThickness="0" CornerRadius="0">
             <Grid Padding="8,8,8,10">
                     <TextBlock x:Name="EmptyHint" Text="这个分区还没有文件。"
                                Opacity="0.5" FontSize="12" TextWrapping="Wrap"

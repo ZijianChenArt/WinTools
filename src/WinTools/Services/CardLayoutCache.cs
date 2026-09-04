@@ -32,18 +32,16 @@ internal sealed class CardPlacement
 /// </summary>
 internal static class TopologyKey
 {
-    /// <summary>从主窗口所在的 DisplayArea 拼出稳定字符串。
+    /// <summary>从 Windows 主显示器的 DisplayArea 拼出稳定字符串。
     /// 不调 <c>DisplayArea.FindAll()</c>——部分 CsWinRT 版本的 <c>IReadOnlyList&lt;DisplayArea&gt;</c>
     /// projection 在 LINQ <c>ToList()</c> 时会抛 InvalidCastException（与 dispatcher 上下文相关）。
-    /// 主显示器 + OuterBounds 已能区分"单屏 / 副屏挂上"等常见场景。
+    /// 主显示器 + OuterBounds 已能区分主屏分辨率 / DPI 的常见变化。
     /// 拔插 / DPI 变化后 OuterBounds 必变，自然落到不同条目。</summary>
     public static string Get()
     {
         try
         {
-            var appWindow = App.MainAppWindow;
-            if (appWindow == null) return "empty";
-            var area = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest);
+            var area = DisplayArea.Primary;
             var b = area.OuterBounds;
             var sb = new StringBuilder();
             sb.Append("P=").Append(area.IsPrimary ? '1' : '0')

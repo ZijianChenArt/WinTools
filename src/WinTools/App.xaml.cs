@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
@@ -12,8 +12,28 @@ public partial class App : Application, IWindowRegistry
 {
     private static readonly string StartupTracePath = Path.Combine(Path.GetTempPath(), "WinTools-startup-trace.txt");
 
+    /// <summary>
+    /// 启动埋点默认**关闭**：它是同步 <see cref="File.AppendAllText"/>，每次调用都要开关一次文件；
+    /// 打开时连图标加载这种每项目多次的热路径都会写盘，日志还会无限增长（实测 1.6MB / 13000 行）。
+    /// 需要排查启动问题时设环境变量 <c>WINTOOLS_TRACE=1</c>，或在 %TEMP% 放一个
+    /// <c>WinTools-trace.on</c> 空文件即可打开。
+    /// </summary>
+    private static readonly bool StartupTraceEnabled = IsStartupTraceEnabled();
+
+    private static bool IsStartupTraceEnabled()
+    {
+        try
+        {
+            if (string.Equals(Environment.GetEnvironmentVariable("WINTOOLS_TRACE"), "1", StringComparison.Ordinal))
+                return true;
+            return File.Exists(Path.Combine(Path.GetTempPath(), "WinTools-trace.on"));
+        }
+        catch { return false; }
+    }
+
     internal static void TraceStartup(string message)
     {
+        if (!StartupTraceEnabled) return;
         try { File.AppendAllText(StartupTracePath, $"{DateTime.Now:O} {message}{Environment.NewLine}"); } catch { }
     }
     private const string SingleInstanceKey = "WinTools";
@@ -95,6 +115,11 @@ public partial class App : Application, IWindowRegistry
             return;
         }
 
+        // 默认分类可能随版本调整（例如“开发与效率”升级为“开发与 AI”并新增 AI 规则）。
+        // 卡片创建前同步整理托管目录，避免配置名称已更新、旧项目却仍停在原分区。
+        try { DesktopCollectService.ReclassifyManagedItems(out _); }
+        catch (Exception ex) { ErrorReporter.Log("App.ReclassifyManagedItems", ex); }
+
         instance.Activated += OnAppInstanceActivated;
         TraceStartup("OnLaunchedCore: before MainWindow");
         var mainWindow = new MainWindow(startupConfig);
@@ -136,8 +161,6 @@ public partial class App : Application, IWindowRegistry
             // 旧“桌面整理”已并入桌面分区卡片，清理此前可能注册的右键菜单。
             try { DesktopContextMenuService.SetEnabled(false); }
             catch (Exception ex) { ErrorReporter.Log("App.DisableLegacyDesktopContextMenu", ex); }
-            if (startupConfig.EnableQuickMute)
-                _ = WarmUpAudioStateAsync();
             TraceStartup("OnLaunchedCore: background init done");
         });
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(() =>
@@ -154,12 +177,6 @@ public partial class App : Application, IWindowRegistry
     private void OnAppInstanceActivated(object? sender, AppActivationArguments args)
     {
         _window?.DispatcherQueue.TryEnqueue(BringWindowToForeground);
-    }
-
-    private static async System.Threading.Tasks.Task WarmUpAudioStateAsync()
-    {
-        await System.Threading.Tasks.Task.Delay(800);
-        _ = AudioToggleService.QueryIsMuted();
     }
 
     #endregion

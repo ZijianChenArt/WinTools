@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
     功能子页面集合。
     间距 / 圆角 / 字号一律取自 Styles/PageStyles.xaml，本文件里不要写死这些值，也不要写 MaxWidth。
@@ -32,64 +32,6 @@
             <ColumnDefinition Width="*" MaxWidth="1000"/>
             <ColumnDefinition Width="Auto"/>
         </Grid.ColumnDefinitions>
-
-        <!-- ============ 快捷设置 ============ -->
-        <Grid x:Name="ContentQuickSettings" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
-                    <TextBlock Text="快捷设置" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="按快捷键呼出悬浮面板，快速开关常用功能。"
-                               Style="{StaticResource PageDescriptionTextStyle}"/>
-                </StackPanel>
-                <ToggleSwitch x:Name="QuickSettingsToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
-                              VerticalAlignment="Center" Toggled="QuickSettingsToggle_Toggled"/>
-            </Grid>
-
-            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel>
-                    <StackPanel Style="{StaticResource PageCardStackStyle}">
-                        <tk:SettingsCard Header="面板快捷键" Description="呼出快捷设置面板的全局快捷键">
-                            <tk:SettingsCard.HeaderIcon>
-                                <FontIcon Glyph="&#xE765;"/>
-                            </tk:SettingsCard.HeaderIcon>
-                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                                <TextBox x:Name="HotkeyQuickPanelBox" PlaceholderText="例如 Ctrl+Win+W" Width="200" VerticalAlignment="Center"/>
-                                <Button Content="测试" Click="QuickSettings_TestPanel_Click" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </tk:SettingsCard>
-
-                        <tk:SettingsExpander Header="面板留白" Description="面板内容距面板边缘的距离">
-                            <tk:SettingsExpander.HeaderIcon>
-                                <FontIcon Glyph="&#xE799;"/>
-                            </tk:SettingsExpander.HeaderIcon>
-                            <tk:SettingsExpander.Items>
-                                <tk:SettingsCard Header="水平">
-                                    <NumberBox x:Name="QuickPanelPaddingHorizontalBox" Minimum="0" Maximum="100" SmallChange="2" Width="150" ValueChanged="QuickPanelPadding_ValueChanged"/>
-                                </tk:SettingsCard>
-                                <tk:SettingsCard Header="垂直">
-                                    <NumberBox x:Name="QuickPanelPaddingVerticalBox" Minimum="0" Maximum="100" SmallChange="2" Width="150" ValueChanged="QuickPanelPadding_ValueChanged"/>
-                                </tk:SettingsCard>
-                            </tk:SettingsExpander.Items>
-                        </tk:SettingsExpander>
-                    </StackPanel>
-
-                    <TextBlock Text="功能快捷键" Style="{StaticResource PageSectionHeaderTextStyle}"/>
-                    <StackPanel x:Name="QuickFeaturesList" Style="{StaticResource PageCardStackStyle}"/>
-                    <StackPanel Style="{StaticResource PageActionsStackStyle}">
-                        <Button Content="保存快捷键" Style="{ThemeResource AccentButtonStyle}" Click="QuickSettings_Save_Click"/>
-                    </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
-        </Grid>
 
         <!-- ============ 三指拖拽 ============ -->
         <Grid x:Name="ContentThreeFingerDrag" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
@@ -260,10 +202,10 @@
                         <TextBlock x:Name="ImeCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                     </StackPanel>
                     <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
-                        <AppBarButton Icon="Add" Label="添加" Click="Ime_Add_Click"/>
-                        <AppBarButton Icon="Delete" Label="删除" Click="Ime_Delete_Click"/>
-                        <AppBarButton Icon="Refresh" Label="刷新" Click="Ime_RefreshApps_Click"/>
-                        <AppBarButton Icon="Undo" Label="恢复预设" Click="Ime_RestoreDefaults_Click"/>
+                        <AppBarButton Icon="Add" Label="添加" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_Add_Click"/>
+                        <AppBarButton Icon="Delete" Label="删除" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_Delete_Click"/>
+                        <AppBarButton Icon="Refresh" Label="刷新" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RefreshApps_Click"/>
+                        <AppBarButton Icon="Undo" Label="恢复预设" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RestoreDefaults_Click"/>
                     </CommandBar>
                 </Grid>
 
@@ -368,12 +310,12 @@
                         <TextBlock x:Name="AssocCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                     </StackPanel>
                     <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
-                        <AppBarButton Icon="Add" Label="新建" Click="Assoc_New_Click"/>
-                        <AppBarButton Icon="Edit" Label="编辑" Click="Assoc_Edit_Click"/>
-                        <AppBarButton Icon="Delete" Label="删除" Click="Assoc_Delete_Click"/>
+                        <AppBarButton Icon="Add" Label="新建" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_New_Click"/>
+                        <AppBarButton Icon="Edit" Label="编辑" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Edit_Click"/>
+                        <AppBarButton Icon="Delete" Label="删除" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Delete_Click"/>
                         <AppBarSeparator/>
-                        <AppBarButton Icon="OpenFile" Label="导入" Click="Assoc_Import_Click"/>
-                        <AppBarButton Icon="Save" Label="导出" Click="Assoc_Export_Click"/>
+                        <AppBarButton Icon="OpenFile" Label="导入" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Import_Click"/>
+                        <AppBarButton Icon="Save" Label="导出" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Export_Click"/>
                     </CommandBar>
                 </Grid>
 
@@ -512,7 +454,7 @@
                             <FontIcon Glyph="&#xE765;"/>
                         </tk:SettingsCard.HeaderIcon>
                         <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                            <TextBox x:Name="HotkeyDesktopCardBox" PlaceholderText="例如 Ctrl+Alt+D" Width="170" VerticalAlignment="Center"/>
+                            <TextBox x:Name="HotkeyDesktopCardBox" PlaceholderText="例如 Ctrl+Alt+Shift+F12" Width="200" VerticalAlignment="Center"/>
                             <Button Content="应用" Click="DesktopCard_ApplyHotkey_Click" VerticalAlignment="Center"/>
                         </StackPanel>
                     </tk:SettingsCard>
@@ -545,30 +487,36 @@
                         <TextBlock x:Name="ZoneCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                         <TextBlock x:Name="CollectStatusText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                     </StackPanel>
-                    <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
-                        <AppBarButton Icon="Add" Label="新建" Click="Zone_New_Click"/>
-                        <AppBarButton Icon="Edit" Label="编辑" Click="Zone_Edit_Click"/>
-                        <AppBarButton Icon="Delete" Label="删除" Click="Zone_Delete_Click"/>
-                        <AppBarSeparator/>
-                        <AppBarButton Icon="Save" Label="保存到预设" Click="Zone_PresetExport_Click"/>
-                        <AppBarButton Icon="OpenFile" Label="从预设恢复" Click="Zone_PresetImport_Click"/>
-                        <AppBarSeparator/>
-                        <AppBarButton Icon="Sync" Label="同步桌面" Click="Zone_Reapply_Click"/>
-                        <AppBarButton Icon="Undo" Label="恢复默认分区" Click="Zone_ResetDefaults_Click"/>
-                        <AppBarButton Icon="Back" Label="还原到桌面" Click="DesktopRestore_Click"/>
-                    </CommandBar>
+                    <StackPanel Grid.Column="1" Style="{StaticResource PageInlineControlsStyle}">
+                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Zone_New_Click">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <FontIcon Glyph="&#xE710;"/>
+                                <TextBlock Text="新建"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PageToolbarIconButtonStyle}"
+                                ToolTipService.ToolTip="查看更多">
+                            <FontIcon Glyph="&#xE712;"/>
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Icon="Save" Text="保存到预设" Click="Zone_PresetExport_Click"/>
+                                    <MenuFlyoutItem Icon="OpenFile" Text="从预设恢复" Click="Zone_PresetImport_Click"/>
+                                    <MenuFlyoutSeparator/>
+                                    <MenuFlyoutItem Icon="Sync" Text="重新同步桌面" Click="Zone_Reapply_Click"/>
+                                    <MenuFlyoutItem Icon="Undo" Text="恢复默认分区" Click="Zone_ResetDefaults_Click"/>
+                                    <MenuFlyoutItem Icon="Back" Text="全部还原到桌面" Click="DesktopRestore_Click"/>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
                 <Grid Grid.Row="2" Style="{StaticResource PageWorkAreaStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition x:Name="ZoneEditColumn" Width="0"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Border Grid.Column="0" Style="{StaticResource PageListPanelStyle}">
+                    <Border Style="{StaticResource PageListPanelStyle}">
                         <Grid>
                             <ListView x:Name="ZonesListView" SelectionMode="Single" CanReorderItems="True" CanDragItems="True" AllowDrop="True"
-                                      DragItemsCompleted="Zones_DragItemsCompleted" DoubleTapped="Zones_DoubleTapped">
+                                      DragItemsCompleted="Zones_DragItemsCompleted" RightTapped="Zones_RightTapped"
+                                      SizeChanged="Zones_SizeChanged">
                                 <ListView.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <ItemsWrapGrid Orientation="Horizontal" ItemWidth="248" ItemHeight="124"/>
@@ -576,12 +524,19 @@
                                 </ListView.ItemsPanel>
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem">
-                                        <Setter Property="Width" Value="236"/>
                                         <Setter Property="Height" Value="112"/>
                                         <Setter Property="Margin" Value="6"/>
                                         <Setter Property="Padding" Value="0"/>
                                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                         <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+                                        <Setter Property="ContextFlyout">
+                                            <Setter.Value>
+                                                <MenuFlyout>
+                                                    <MenuFlyoutItem Text="重命名" Icon="Rename" Tag="{Binding}" Click="Zone_Rename_Click"/>
+                                                    <MenuFlyoutItem Text="删除" Icon="Delete" Tag="{Binding}" Click="Zone_Delete_Click"/>
+                                                </MenuFlyout>
+                                            </Setter.Value>
+                                        </Setter>
                                     </Style>
                                 </ListView.ItemContainerStyle>
                                 <ListView.ItemTemplate>
@@ -606,59 +561,7 @@
                                 </ListView.ItemTemplate>
                             </ListView>
                             <TextBlock x:Name="ZoneEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
-                                       Text="还没有分区。点「新建」自己建，或用「恢复默认分区」载入预设分类。"/>
-                        </Grid>
-                    </Border>
-
-                    <Border Grid.Column="1" x:Name="ZoneEditPanel" Visibility="Collapsed" Style="{StaticResource PageEditPanelHostStyle}">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-
-                            <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled"
-                                          HorizontalContentAlignment="Stretch" Padding="20,20,20,12">
-                                <StackPanel Style="{StaticResource PageFormStackStyle}">
-                                    <TextBlock x:Name="ZoneEditTitle" Text="新建分区" Style="{StaticResource PageSubtitleTextStyle}"/>
-                                    <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                        <TextBlock Text="名称"/>
-                                        <TextBox x:Name="ZoneNameBox" PlaceholderText="例如 办公、素材、游戏"/>
-                                    </StackPanel>
-                                    <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                        <TextBlock Text="固定放入这个分区的文件"/>
-                                        <TextBox x:Name="ZoneFilesSearchBox" PlaceholderText="搜索文件名…" TextChanged="ZoneFilesSearch_TextChanged"/>
-                                        <Border x:Name="ZoneFilesDropArea" Style="{StaticResource PageDropAreaStyle}"
-                                                AllowDrop="True" DragOver="ZoneFiles_DragOver" Drop="ZoneFiles_Drop">
-                                            <Grid AllowDrop="True" DragOver="ZoneFiles_DragOver" Drop="ZoneFiles_Drop" Background="Transparent">
-                                                <ListView x:Name="ZoneFilesListView" SelectionMode="Multiple" MaxHeight="150"
-                                                          AllowDrop="True" DragOver="ZoneFiles_DragOver" Drop="ZoneFiles_Drop"
-                                                          CanReorderItems="False" CanDragItems="False" SelectionChanged="ZoneFiles_SelectionChanged">
-                                                    <ListView.ItemTemplate>
-                                                        <DataTemplate x:DataType="x:String">
-                                                            <TextBlock Text="{x:Bind}" TextTrimming="CharacterEllipsis" Padding="2,4"/>
-                                                        </DataTemplate>
-                                                    </ListView.ItemTemplate>
-                                                </ListView>
-                                                <TextBlock x:Name="ZoneFilesDropHint" Text="把桌面图标拖到这里"
-                                                           Style="{StaticResource PageEmptyHintTextStyle}"/>
-                                            </Grid>
-                                        </Border>
-                                        <TextBlock x:Name="ZoneFilesHint" Text="" Style="{StaticResource PageDescriptionTextStyle}"/>
-                                    </StackPanel>
-                                    <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                        <TextBlock Text="匹配关键词" ToolTipService.ToolTip="每行一条；以点开头视为扩展名"/>
-                                        <TextBox x:Name="ZoneKeywordsBox" AcceptsReturn="True" TextWrapping="Wrap" Height="90" PlaceholderText=".docx&#x0a;.xlsx&#x0a;Word&#x0a;文件夹"/>
-                                    </StackPanel>
-                                </StackPanel>
-                            </ScrollViewer>
-
-                            <Border Grid.Row="1" Style="{StaticResource PagePanelFooterStyle}">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <Button Content="确定" Style="{ThemeResource AccentButtonStyle}" Click="Zone_Confirm_Click"/>
-                                    <Button Content="取消" Click="Zone_Cancel_Click"/>
-                                </StackPanel>
-                            </Border>
+                                       Text="还没有分区。点「新建」自己建，或从「更多」中恢复默认分区。"/>
                         </Grid>
                     </Border>
                 </Grid>

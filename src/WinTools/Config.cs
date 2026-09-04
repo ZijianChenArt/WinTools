@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -114,6 +114,7 @@ public class DesktopZone
     /// v6: "系统工具类"并入"其他"（"系统工具类"分类下的内容实际为杂项，不配单独成类）；
     ///     "功能与娱乐" 改名为 "影音与娱乐"（关键词是浏览器/网盘/音乐/媒体文件，影音更精确）；
     ///     "网络" 改名为 "网络与远程"（主要内容是 VPN 和远程桌面）。
+    /// v8: "开发与效率"改名为"开发与 AI"，并补齐常见 AI 软件关键词。
     /// 9 个分区。
     /// </remarks>
     public static List<DesktopZone> CreateDefaults() => new()
@@ -121,8 +122,8 @@ public class DesktopZone
         new DesktopZone { Name = "文件夹与文件", Keywords = new() { "此电脑", "这台电脑", "我的电脑", "计算机", "回收站", "网络", "控制面板", "This PC", "Computer", "Recycle Bin", "Network", "Control Panel", "文件夹", "DeskBox Files", "编程", "Programming", "Projects", "源码", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf", ".txt", ".md", ".rtf", ".csv", ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".svg", ".ico", ".heic", ".zip", ".rar", ".7z", ".tar", ".gz", ".iso", ".cab" } },
         new DesktopZone { Name = "设计与创作", Keywords = new() { "Adobe", "Premiere", "After Effects", "Photoshop", "Illustrator", "InDesign", "Lightroom", "Media Encoder", "Audition", "Animate", "Acrobat", "DaVinci Resolve", "达芬奇", "剪映", "CapCut", "Final Cut", "VEGAS", "Avid Media Composer", "Nuke", "Fusion", "OBS Studio", "Topaz Video", "Video2X", "Particle Illusion", "格式工厂", "小丸工具箱", "Figma", "CorelDRAW", "Affinity", "Eagle" } },
         new DesktopZone { Name = "三维与引擎", Keywords = new() { "Blender", "铁锅炖启动器", "Cinema 4D", "C4D", "3ds Max", "Maya", "Houdini", "ZBrush", "Substance 3D", "Unreal Engine", "Unity", "Unity Hub", "Rhino", "RizomUV", "KeyShot", "Marvelous Designer", "SketchUp", "TouchDesigner" } },
-        new DesktopZone { Name = "办公与沟通", Keywords = new() { "WPS Office", "Microsoft 365", "Microsoft Office", "Word", "Excel", "PowerPoint", "Outlook", "OneNote", "Access", "Publisher", "钉钉", "腾讯会议", "飞书", "微信", "企业微信", "WeChat", "Teams", "Zoom", "豆包" } },
-        new DesktopZone { Name = "开发与效率", Keywords = new() { "Cursor", "cursor-pool", "MiniMax Code", "Visual Studio", "Visual Studio Installer", "Git Bash", "Git CMD", "Git GUI", "Python", "IDLE", "DeskBox", "Snipaste" } },
+        new DesktopZone { Name = "办公与沟通", Keywords = new() { "WPS Office", "Microsoft 365", "Microsoft Office", "Word", "Excel", "PowerPoint", "Outlook", "OneNote", "Access", "Publisher", "钉钉", "腾讯会议", "飞书", "微信", "企业微信", "WeChat", "Teams", "Zoom" } },
+        new DesktopZone { Name = "开发与 AI", Keywords = new() { "Cursor", "cursor-pool", "MiniMax Code", "Visual Studio", "Visual Studio Installer", "Git Bash", "Git CMD", "Git GUI", "Python", "IDLE", "DeskBox", "Snipaste", "ChatGPT", "OpenAI", "Claude", "Gemini", "Copilot", "Microsoft Copilot", "GitHub Copilot", "Perplexity", "Poe", "DeepSeek", "Kimi", "豆包", "通义", "Qwen", "腾讯元宝", "文心一言", "Ollama", "LM Studio", "AnythingLLM", "Cherry Studio", "Chatbox", "Monica", "Windsurf", "Trae", "CodeBuddy", "ACE Studio" } },
         new DesktopZone { Name = "影音与娱乐", Keywords = new() { "Google Chrome", "Microsoft Edge", "Chrome", "Edge", "夸克", "网易云音乐", "CloudMusic", "Windows Media Player", "百度网盘", "OneDrive", "PikPak", "极空间", ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma" } },
         new DesktopZone { Name = "网络与远程", Keywords = new() { "星链云", "LetsVPN", "VPN", "ToDesk", "向日葵", "UU远程", "RayLink", "Relink", "Sunshine", "AnyDesk", "TeamViewer", "SDKDNS", "SDK DNS", "DNSPPN", "WinSCP", "root@" } },
         // "其他" 同时承担兜底：原"系统工具类"分区（杂项：火绒、PotPlayer、WinRAR、外设驱动、银行U盾等）
@@ -141,37 +142,9 @@ public class Config : ObservableObject
     [JsonPropertyName("entries")]
     public List<ConfigEntry> Entries { get => _entries; set => SetProperty(ref _entries, value); }
 
-    private Dictionary<string, string> _quickSettingsHotkeys = new();
-    [JsonPropertyName("quickSettingsHotkeys")]
-    public Dictionary<string, string> QuickSettingsHotkeys { get => _quickSettingsHotkeys; set => SetProperty(ref _quickSettingsHotkeys, value); }
-
-    private bool _enableQuickSettings;
-    [JsonPropertyName("enableQuickSettings")]
-    public bool EnableQuickSettings { get => _enableQuickSettings; set => SetProperty(ref _enableQuickSettings, value); }
-
-    private bool _enableQuickMute;
-    [JsonPropertyName("enableQuickMute")]
-    public bool EnableQuickMute { get => _enableQuickMute; set => SetProperty(ref _enableQuickMute, value); }
-
-    private bool _enableQuickPanel;
-    [JsonPropertyName("enableQuickPanel")]
-    public bool EnableQuickPanel { get => _enableQuickPanel; set => SetProperty(ref _enableQuickPanel, value); }
-
-    private int _quickPanelPaddingTop = 12;
-    [JsonPropertyName("quickPanelPaddingTop")]
-    public int QuickPanelPaddingTop { get => _quickPanelPaddingTop; set => SetProperty(ref _quickPanelPaddingTop, value); }
-
-    private int _quickPanelPaddingBottom = 12;
-    [JsonPropertyName("quickPanelPaddingBottom")]
-    public int QuickPanelPaddingBottom { get => _quickPanelPaddingBottom; set => SetProperty(ref _quickPanelPaddingBottom, value); }
-
-    private int _quickPanelPaddingLeft = 16;
-    [JsonPropertyName("quickPanelPaddingLeft")]
-    public int QuickPanelPaddingLeft { get => _quickPanelPaddingLeft; set => SetProperty(ref _quickPanelPaddingLeft, value); }
-
-    private int _quickPanelPaddingRight = 16;
-    [JsonPropertyName("quickPanelPaddingRight")]
-    public int QuickPanelPaddingRight { get => _quickPanelPaddingRight; set => SetProperty(ref _quickPanelPaddingRight, value); }
+    private Dictionary<string, string> _hotkeys = new();
+    [JsonPropertyName("hotkeys")]
+    public Dictionary<string, string> Hotkeys { get => _hotkeys; set => SetProperty(ref _hotkeys, value); }
 
     private bool _enableDragStash;
     [JsonPropertyName("enableDragStash")]
@@ -249,10 +222,6 @@ public class Config : ObservableObject
     [JsonPropertyName("enablePerAppIme")]
     public bool EnablePerAppIme { get => _enablePerAppIme; set => SetProperty(ref _enablePerAppIme, value); }
 
-    private bool _enableDesktopOrganize;
-    [JsonPropertyName("enableDesktopOrganize")]
-    public bool EnableDesktopOrganize { get => _enableDesktopOrganize; set => SetProperty(ref _enableDesktopOrganize, value); }
-
     private bool _enableDesktopClickToShow;
     [JsonPropertyName("enableDesktopClickToShow")]
     public bool EnableDesktopClickToShow { get => _enableDesktopClickToShow; set => SetProperty(ref _enableDesktopClickToShow, value); }
@@ -266,14 +235,6 @@ public class Config : ObservableObject
     private int _desktopZoneSchemaVersion;
     [JsonPropertyName("desktopZoneSchemaVersion")]
     public int DesktopZoneSchemaVersion { get => _desktopZoneSchemaVersion; set => SetProperty(ref _desktopZoneSchemaVersion, value); }
-
-    private bool _desktopOrganizeFromRight;
-    [JsonPropertyName("desktopOrganizeFromRight")]
-    public bool DesktopOrganizeFromRight { get => _desktopOrganizeFromRight; set => SetProperty(ref _desktopOrganizeFromRight, value); }
-
-    private int _desktopZoneGap = 80;
-    [JsonPropertyName("desktopZoneGap")]
-    public int DesktopZoneGap { get => _desktopZoneGap; set => SetProperty(ref _desktopZoneGap, value); }
 
     private bool _enableDesktopCard = true;
     /// <summary>桌面卡片悬浮窗：常驻桌面、可拖动，按全局快捷键呼出/收起。</summary>
@@ -302,14 +263,6 @@ public class Config : ObservableObject
     /// 用户无需在设置里分别调 3 个 margin。字段缺失时回退到 16。</summary>
     [JsonPropertyName("desktopCardMargin")]
     public int DesktopCardMargin { get => _desktopCardMargin; set => SetProperty(ref _desktopCardMargin, Math.Max(0, value)); }
-
-    private int _desktopIconSpacingXAdjustment;
-    [JsonPropertyName("desktopIconSpacingXAdjustment")]
-    public int DesktopIconSpacingXAdjustment { get => _desktopIconSpacingXAdjustment; set => SetProperty(ref _desktopIconSpacingXAdjustment, value); }
-
-    private int _desktopIconSpacingYAdjustment;
-    [JsonPropertyName("desktopIconSpacingYAdjustment")]
-    public int DesktopIconSpacingYAdjustment { get => _desktopIconSpacingYAdjustment; set => SetProperty(ref _desktopIconSpacingYAdjustment, value); }
 
     private List<ImeRuleEntry> _perAppImeRules = new();
     [JsonPropertyName("perAppImeRules")]
@@ -460,11 +413,30 @@ public static class ConfigService
                 SaveCore(config);
             return config;
         }
-        catch
+        catch (Exception ex)
         {
+            // 解析失败通常意味着文件损坏。直接返回默认值的话，下一次 Save 就会把默认配置
+            // 覆盖上去，用户再也拿不回原来的分区与规则；所以先把坏文件留一份副本。
+            BackupCorruptConfig(ex);
             return GetDefault();
         }
     }
+
+    private static void BackupCorruptConfig(Exception ex)
+    {
+        try
+        {
+            var path = ConfigPath;
+            if (File.Exists(path))
+                File.Copy(path, $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}", overwrite: true);
+        }
+        catch { /* 备份失败不能再抛 */ }
+        Services.ErrorReporter.Log("ConfigService.Load", ex);
+    }
+
+    // 每次 Save 都 new 一个 JsonSerializerOptions 会让 System.Text.Json 的类型元数据缓存
+    // 失效（缓存是挂在 options 实例上的），等于每次保存都重新构建一遍序列化器。
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
     private static void SaveCore(Config config)
     {
@@ -474,14 +446,27 @@ public static class ConfigService
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
 
-        var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        var json = JsonSerializer.Serialize(config, WriteOptions);
+
+        // 直接 WriteAllText 不是原子操作：写到一半断电 / 被杀进程就会留下半截 JSON，
+        // 下次 Load 解析失败直接退回默认配置，用户的分区和规则全没了。
+        // 先写临时文件再替换，和 card-layout-cache 的做法保持一致。
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, json);
+        if (File.Exists(path))
+            File.Replace(temp, path, null);
+        else
+            File.Move(temp, path);
     }
 
     private static Config NormalizeConfig(Config config)
     {
         config.Entries ??= new List<ConfigEntry>();
-        config.QuickSettingsHotkeys ??= new Dictionary<string, string>();
+        config.Hotkeys ??= new Dictionary<string, string>();
+        // 旧版桌面分区默认键容易与其它软件冲突；只迁移旧默认值，不覆盖用户自定义值。
+        if (config.Hotkeys.TryGetValue("DesktopCard", out var desktopCardHotkey) &&
+            string.Equals(desktopCardHotkey, "Ctrl+Alt+D", StringComparison.OrdinalIgnoreCase))
+            config.Hotkeys["DesktopCard"] = "Ctrl+Alt+Shift+F12";
         config.PerAppImeRules ??= new List<ImeRuleEntry>();
         if (!config.ImeCategoryDefaultsInitialized)
         {
@@ -521,18 +506,31 @@ public static class ConfigService
     ///        keywords 残留为空。
     ///   v7: 修复——不再清空"其他"分区的 keywords；为 v6 升 v7 的"其他"分区
     ///        补上 v6 默认 keywords（火绒、PotPlayer、WinRAR、外设驱动、银行U盾等）。
+    ///   v8: "开发与效率"改名为"开发与 AI"，并统一补齐 AI 软件分类规则。
     /// </summary>
     private static void UpgradeDesktopZoneTaxonomy(Config config)
     {
-        const int currentSchema = 7;
+        const int currentSchema = 8;
         if (config.DesktopZoneSchemaVersion >= currentSchema) return;
+
+        if (config.DesktopZoneSchemaVersion < 8)
+        {
+            var oldDevelopmentZone = config.DesktopZones.FirstOrDefault(zone =>
+                string.Equals(zone.Name, "开发与效率", StringComparison.OrdinalIgnoreCase));
+            if (oldDevelopmentZone != null)
+            {
+                // 同步托管目录与 collected.json，避免改名后原分区卡片突然变空。
+                DesktopCollectService.RenameZone("开发与效率", "开发与 AI");
+                oldDevelopmentZone.Name = "开发与 AI";
+            }
+        }
 
         // 包含 v5 及更早的全部历史名字；用于识别"用户没改过分区名"的情况并走整盘重置。
         var legacyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "系统文件", "系统与文件夹", "剪辑软件", "三维软件", "办公与沟通",
             "网络与远程", "网络与云服务", "常用程序与杂项", "常用与杂项", "杂项", "游戏",
-            "文件与资料", "文件夹与文件", "设计与创作", "三维与引擎", "开发与效率",
+            "文件与资料", "文件夹与文件", "设计与创作", "三维与引擎", "开发与效率", "开发与 AI",
             "系统与设备", "系统工具类", "影音与娱乐", "功能与娱乐", "远程与连接", "网络", "其他"
         };
         var looksLikeLegacyLayout = config.DesktopZones.Count > 0

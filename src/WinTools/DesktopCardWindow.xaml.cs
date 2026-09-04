@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Composition;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -117,7 +118,6 @@ public sealed class CardItem : INotifyPropertyChanged
     /// <summary>优先读取资源管理器使用的真实图标，失败时再取系统缩略图。</summary>
     public async System.Threading.Tasks.Task LoadIconAsync()
     {
-        App.TraceStartup($"CardItem.LoadIconAsync start: {Path}");
         try
         {
             var extension = System.IO.Path.GetExtension(Path);
@@ -125,7 +125,6 @@ public sealed class CardItem : INotifyPropertyChanged
             var shellIcon = await LoadShellIconAsync(Path);
             var iconPath = shellIcon.ResolvedPath;
             var iconBytes = shellIcon.Bytes;
-            App.TraceStartup($"CardItem.LoadIconAsync SHGetFileInfo: {iconPath} -> {iconBytes?.Length ?? 0} bytes");
             if (iconBytes is { Length: > 0 })
             {
                 // 关键：DataWriter 拥有 stream 的所有权，Dispose writer 时会连带 dispose
@@ -146,7 +145,6 @@ public sealed class CardItem : INotifyPropertyChanged
                     var shellBitmap = new BitmapImage();
                     await shellBitmap.SetSourceAsync(stream);
                     Icon = shellBitmap;
-                    App.TraceStartup($"CardItem.LoadIconAsync shell icon set: {Path}");
                 }
                 finally
                 {
@@ -177,25 +175,21 @@ public sealed class CardItem : INotifyPropertyChanged
                 if (thumb == null || thumb.Size == 0)
                     thumb = await file.GetThumbnailAsync(ThumbnailMode.DocumentsView, 64);
             }
-            App.TraceStartup($"CardItem.LoadIconAsync thumb: {Path} -> {(thumb?.Size ?? 0)} bytes");
 
             if (thumb != null && thumb.Size > 0)
             {
                 var bmp = new BitmapImage();
                 await bmp.SetSourceAsync(thumb);
                 Icon = bmp;
-                App.TraceStartup($"CardItem.LoadIconAsync thumb icon set: {Path}");
             }
             else
             {
-                App.TraceStartup($"CardItem.LoadIconAsync no icon available: {Path}");
             }
         }
         catch (Exception ex)
         {
             // 图标加载失败是常见情况（无扩展名关联、Shell 图标读取超时等），
             // 之前 catch 直接吞掉让用户看不到任何线索；现在落盘便于排错。
-            App.TraceStartup($"CardItem.LoadIconAsync EXCEPTION: {Path} -> {ex.GetType().Name}: {ex.Message}");
             ErrorReporter.Log($"CardItem.LoadIconAsync({Path})", ex);
         }
     }
@@ -209,12 +203,35 @@ public sealed class CardItem : INotifyPropertyChanged
         return completion.Task;
     }
 
+    // 进程内图标缓存：键是路径，值带一份最后写入时间。同一个 .lnk 在一次会话里
+    // 会被反复解析（切换分区开关、重建卡片、跨卡片拖放），而 WScript.Shell 解析 +
+    // Shell 图标提取是这条链路上最慢的一步，缓存后重复请求直接返回。
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, CachedIcon> IconCache
+        = new(StringComparer.OrdinalIgnoreCase);
+
+    private const int IconCacheCapacity = 512;
+
+    private readonly record struct CachedIcon(DateTime Stamp, IconLoadResult Result);
+
+    private static DateTime IconStamp(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch { return DateTime.MinValue; }
+    }
+
     private static void ProcessIconLoadQueue()
     {
         foreach (var request in IconLoadQueue.GetConsumingEnumerable())
         {
             try
             {
+                var stamp = IconStamp(request.Path);
+                if (IconCache.TryGetValue(request.Path, out var cached) && cached.Stamp == stamp)
+                {
+                    request.Completion.TrySetResult(cached.Result);
+                    continue;
+                }
+
                 var shortcut = ResolveShortcutIcon(request.Path);
                 var resolvedPath = !string.IsNullOrWhiteSpace(shortcut.TargetPath)
                     ? shortcut.TargetPath
@@ -225,8 +242,10 @@ public sealed class CardItem : INotifyPropertyChanged
                 bytes ??= ReadShellIconPng(resolvedPath);
                 if (bytes == null && !string.Equals(resolvedPath, request.Path, StringComparison.OrdinalIgnoreCase))
                     bytes = ReadShellIconPng(request.Path);
-                request.Completion.TrySetResult(
-                    new IconLoadResult(resolvedPath, bytes));
+                var result = new IconLoadResult(resolvedPath, bytes);
+                if (IconCache.Count >= IconCacheCapacity) IconCache.Clear();
+                IconCache[request.Path] = new CachedIcon(stamp, result);
+                request.Completion.TrySetResult(result);
             }
             catch (Exception ex)
             {
@@ -376,7 +395,30 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
-    private static readonly IntPtr HWND_TOP = IntPtr.Zero;
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint colorKey, byte alpha, uint flags);
+
+    private const long WS_EX_LAYERED = 0x00080000;
+    private const uint LWA_ALPHA = 0x00000002;
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+    private const int GWL_EXSTYLE = -20;
+    private const long WS_EX_TOPMOST = 0x00000008;
+
+    private static readonly IntPtr HWND_TOPMOST = new(-1);
+    private static readonly IntPtr HWND_NOTOPMOST = new(-2);
+    private static readonly IntPtr HWND_BOTTOM = new(1);
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_NOACTIVATE = 0x0010;
@@ -412,6 +454,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     private ICompositionSupportsSystemBackdrop? _backdropTarget;
     private bool _micaAttached;
     private bool _hasPresentedFirstFrame;
+    private readonly TaskCompletionSource _layoutReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<Task> _iconTasks = new();
     // 用字段持有 AppWindow.Closing 订阅，Cleanup 时才能精确解订阅再让 Window 真正关闭。
     private TypedEventHandler<AppWindow, AppWindowClosingEventArgs>? _closingHandler;
@@ -432,6 +475,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         InitializeComponent();
         _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         ItemsGrid.ItemsSource = _items;
+        ShellRoot.Loaded += (_, _) => _layoutReady.TrySetResult();
         ConfigureWindow();
         // 每张桌面分区都是独立 HWND。启动时批量创建窗口，如果未完成首帧就 Show，
         // DWM 会先画出多个黑色/纯色矩形。先 Cloak，布局、Mica 和内容仍可正常合成，
@@ -446,6 +490,27 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     public event EventHandler<CardItemMovedEventArgs>? ItemMovedIn;
 
     public bool HasItems => _items.Count > 0;
+
+    /// <summary>等待窗口完成首次 XAML 加载，确保多显示器 DPI 缩放值可用。</summary>
+    public async Task WaitForLayoutReadyAsync()
+    {
+        if (!ShellRoot.IsLoaded)
+            await Task.WhenAny(_layoutReady.Task, Task.Delay(1500));
+        await Task.Yield();
+    }
+
+    /// <summary>按当前显示器的真实缩放重新应用已计算好的 DIP 尺寸。</summary>
+    public void ApplyScaleAwareSize()
+    {
+        try
+        {
+            var scale = ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
+            AppWindow.Resize(new SizeInt32(
+                (int)(DipWidth * scale),
+                (int)(DipHeight * scale)));
+        }
+        catch { /* ignore */ }
+    }
 
     private void ConfigureWindow()
     {
@@ -494,16 +559,20 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         try
         {
             var scale = ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
-            var a = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+            // 分区卡片固定归属于 Windows 设置中的主显示器。新建 WinUI 窗口的
+            // 初始位置并不稳定，多屏环境下可能先落到副屏；若按窗口位置取
+            // DisplayArea，随后布局就会错误地把所有卡片留在副屏。
+            var a = DisplayArea.Primary.WorkArea;
             var dip = new RectInt32(
                 (int)(a.X / scale), (int)(a.Y / scale),
                 (int)(a.Width / scale), (int)(a.Height / scale));
-            App.TraceStartup($"DesktopCard GetWorkAreaDip: phys=({a.X},{a.Y},{a.Width},{a.Height}) scale={scale:F2} dip={dip.X},{dip.Y},{dip.Width},{dip.Height}");
             return dip;
         }
         catch (Exception ex)
         {
-            App.TraceStartup($"DesktopCard GetWorkAreaDip EXCEPTION: {ex.Message}");
+            // 取不到主显示器工作区就退回一个安全默认值，但要留痕：这会让所有卡片挤到
+            // 左上角 1280x720 的假想屏幕里，不记日志根本查不出来。
+            Services.ErrorReporter.Log("DesktopCard.GetWorkAreaDip", ex);
             return new RectInt32(0, 0, 1280, 720);
         }
     }
@@ -512,7 +581,6 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     public void PlaceAt(int dipX, int dipY)
     {
         DipLeft = dipX;
-        App.TraceStartup($"DesktopCard PlaceAt: {(_zoneName ?? "?")} -> ({dipX},{dipY}) {DipWidth}x{DipHeight}");
         DipTop = dipY;
         try
         {
@@ -539,16 +607,8 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         // ItemMarginDip 同时给左右，所以乘 2。GridViewItem 容器本身已 Padding=0，不另算外边距。
         DipWidth = cols * TileWidth + cols * ItemMarginDip * 2 + GridPadding * 2;
         DipHeight = HeaderHeight + rows * TileHeight + GridPadding + 10;
-        App.TraceStartup($"ApplyAutoSize: items={itemCount} cols={cols} rows={rows} -> {DipWidth}x{DipHeight}");
 
-        try
-        {
-            var scale = ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
-            AppWindow.Resize(new SizeInt32(
-                (int)(DipWidth * scale),
-                (int)(DipHeight * scale)));
-        }
-        catch { /* ignore */ }
+        ApplyScaleAwareSize();
     }
 
     public void ShowCard()
@@ -574,6 +634,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         {
             if (_hasPresentedFirstFrame)
             {
+                // 已经创建过、随后因关闭分区功能而隐藏的卡片，也必须先变为全透明再 Show。
+                // 否则重新开启时会先闪出完整卡片，之后才开始淡入。
+                PrepareFadeIn();
                 AppWindow.Show();
                 return;
             }
@@ -585,23 +648,32 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         catch { /* ignore */ }
     }
 
-    /// <summary>等图标加载完（最多 timeoutMs 毫秒）再解除 Cloak，并淡入出现。</summary>
+    /// <summary>后台等待图标资源完成，单个慢速 Shell 图标最多阻塞指定时间。</summary>
+    public async Task WaitUntilReadyAsync(int timeoutMs = 1500)
+    {
+        try
+        {
+            var pending = _iconTasks.Where(t => !t.IsCompleted).ToArray();
+            if (pending.Length > 0)
+                await Task.WhenAny(Task.WhenAll(pending), Task.Delay(timeoutMs));
+        }
+        catch { /* 图标失败不影响呈现 */ }
+    }
+
+    /// <summary>等图标加载完再解除 Cloak，并以 Win11 风格出现。</summary>
     public async Task RevealAsync(int delayMs = 0, int timeoutMs = 1500)
     {
         if (_hasPresentedFirstFrame)
         {
-            ShowCard();
+            // PresentCloaked 已经让复用窗口以 alpha=0 在后台出现；这里与首次启动、
+            // 快捷键呼出共用完全相同的整窗渐显动画。
+            PlayRevealAnimation();
             return;
         }
 
         try
         {
-            var pending = _iconTasks.Where(t => !t.IsCompleted).ToArray();
-            if (pending.Length > 0)
-            {
-                // 单个图标卡住（网络快捷方式等）不能拖住整批卡片。
-                await Task.WhenAny(Task.WhenAll(pending), Task.Delay(timeoutMs));
-            }
+            await WaitUntilReadyAsync(timeoutMs);
         }
         catch { /* 图标失败不影响呈现 */ }
 
@@ -613,47 +685,108 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         try
         {
             _hasPresentedFirstFrame = true;
+            PrepareFadeIn();
             AppWindow.Show();
             WindowHelper.UncloakWhenRendered(this, PlayRevealAnimation);
         }
         catch { /* ignore */ }
     }
 
-    /// <summary>出现动效：淡入 + 轻微放大，180ms。</summary>
+    /// <summary>
+    /// Win11 节奏的出现动效：整窗淡入，减速曲线。
+    /// **必须做窗口级透明度**（WS_EX_LAYERED + SetLayeredWindowAttributes），不能只动
+    /// `ShellRoot.Opacity`：卡片屏幕上的可见外观主要由窗口的 Mica 背景画出来，它在 XAML
+    /// 内容之下，XAML 透明度对它完全无效——把 ShellRoot 淡到 0 也只是内容消失、Mica 矩形
+    /// 照常显示，肉眼看起来就是"动画没生效"。同理也不要用缩放：缩的只有 XAML 内容，
+    /// Mica 外框尺寸不动，看上去是卡片在固定边框里往里缩。
+    /// </summary>
     private void PlayRevealAnimation()
+    {
+        ShellRoot.Opacity = 1;
+        ShellRoot.RenderTransform = null;
+        FadeWindow(0, 255, OpenDurationMs, EaseOut, null);
+    }
+
+    // Win11 节奏：打开 300ms 减速曲线，关闭 200ms 加速曲线。
+    private const int OpenDurationMs = 300;
+    private const int CloseDurationMs = 200;
+
+    /// <summary>decelerate：起步最快、末尾极缓，对应 cubic-bezier(0, 0, 0, 1) 的手感。</summary>
+    private static double EaseOut(double t) => 1 - Math.Pow(1 - t, 3);
+
+    /// <summary>accelerate：起步缓、越到后面越快，用于收起。</summary>
+    private static double EaseIn(double t) => t * t * t;
+
+    private DispatcherQueueTimer? _fadeTimer;
+
+    /// <summary>
+    /// 用分层窗口 alpha 做整窗淡入淡出。动画结束后立刻摘掉 WS_EX_LAYERED，
+    /// 平时保持普通窗口，避免分层状态影响 Mica 合成与命中测试。
+    /// </summary>
+    private void FadeWindow(byte from, byte to, int durationMs, Func<double, double> ease, Action? completed)
     {
         try
         {
-            var scale = new ScaleTransform { ScaleX = 0.96, ScaleY = 0.96 };
-            ShellRoot.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
-            ShellRoot.RenderTransform = scale;
-            ShellRoot.Opacity = 0;
+            _fadeTimer?.Stop();
+            // 分层样式只在动画期间存在：WS_EX_LAYERED 与 Mica 不能共存，常驻分层会让
+            // 卡片彻底失去材质（实测：整窗一直是纯色）。动画一结束立刻摘掉。
+            SetLayered(true);
+            SetWindowAlpha(from);
 
-            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-            var duration = new Duration(TimeSpan.FromMilliseconds(180));
-            var board = new Storyboard();
-
-            var fade = new DoubleAnimation { From = 0, To = 1, Duration = duration, EasingFunction = ease };
-            Storyboard.SetTarget(fade, ShellRoot);
-            Storyboard.SetTargetProperty(fade, "Opacity");
-            board.Children.Add(fade);
-
-            foreach (var axis in new[] { "ScaleX", "ScaleY" })
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var timer = DispatcherQueue.CreateTimer();
+            _fadeTimer = timer;
+            timer.Interval = TimeSpan.FromMilliseconds(16);
+            timer.IsRepeating = true;
+            timer.Tick += (s, _) =>
             {
-                var grow = new DoubleAnimation { From = 0.96, To = 1, Duration = duration, EasingFunction = ease };
-                Storyboard.SetTarget(grow, scale);
-                Storyboard.SetTargetProperty(grow, axis);
-                board.Children.Add(grow);
-            }
+                var progress = Math.Clamp(clock.Elapsed.TotalMilliseconds / durationMs, 0, 1);
+                SetWindowAlpha((byte)Math.Round(from + (to - from) * ease(progress)));
+                if (progress < 1) return;
 
-            board.Completed += (_, _) => ShellRoot.RenderTransform = null;
-            board.Begin();
+                s.Stop();
+                if (ReferenceEquals(_fadeTimer, s)) _fadeTimer = null;
+                // 终点不透明就立刻摘掉分层样式，把 Mica 还回来；终点全透明的收起流程
+                // 由 LowerAnimatedAsync 在降 Z 序之后再摘，避免摘掉的瞬间闪一下实体卡片。
+                if (to == 255) SetLayered(false);
+                completed?.Invoke();
+            };
+            timer.Start();
         }
-        catch
+        catch (Exception ex)
         {
-            try { ShellRoot.Opacity = 1; } catch { /* ignore */ }
+            Services.ErrorReporter.Log("DesktopCard.FadeWindow", ex);
+            SetWindowAlpha(255);
+            SetLayered(false);
+            completed?.Invoke();
         }
     }
+
+    /// <summary>在窗口露面之前先把整窗透明度压到 0，避免解除 Cloak / 置顶时闪一帧实体窗口。</summary>
+    private void PrepareFadeIn()
+    {
+        try
+        {
+            _fadeTimer?.Stop();
+            _fadeTimer = null;
+            SetLayered(true);
+            SetWindowAlpha(0);
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("DesktopCard.PrepareFadeIn", ex);
+        }
+    }
+
+    private void SetLayered(bool layered)
+    {
+        var style = GetWindowLongPtr(_hwnd, GWL_EXSTYLE).ToInt64();
+        var updated = layered ? style | WS_EX_LAYERED : style & ~WS_EX_LAYERED;
+        if (updated == style) return;
+        SetWindowLongPtr(_hwnd, GWL_EXSTYLE, new IntPtr(updated));
+    }
+
+    private void SetWindowAlpha(byte alpha) => SetLayeredWindowAttributes(_hwnd, 0, alpha, LWA_ALPHA);
 
     public void HideCard()
     {
@@ -661,16 +794,132 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         catch { /* ignore */ }
     }
 
-    /// <summary>把卡片抬到普通窗口之上（快捷键「呼出」），不抢焦点。</summary>
+    /// <summary>关闭分区功能时先整窗渐隐，动画完成后才真正隐藏窗口。</summary>
+    public async Task HideAnimatedAsync(Func<bool>? shouldHide = null)
+    {
+        try
+        {
+            var completion = new TaskCompletionSource();
+            FadeWindow(255, 0, CloseDurationMs, EaseIn, () => completion.TrySetResult());
+            await completion.Task;
+            if (shouldHide?.Invoke() != false)
+                AppWindow.Hide();
+            SetWindowAlpha(255);
+            SetLayered(false);
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("DesktopCard.HideAnimated", ex);
+            SetWindowAlpha(255);
+            SetLayered(false);
+            HideCard();
+        }
+    }
+
+    /// <summary>
+    /// 把卡片可靠地抬到当前前台窗口之上（快捷键「呼出」），但不抢焦点。
+    /// 保持 TOPMOST 直到用户再次按下快捷键；若同一次调用里立即取消置顶，Windows
+    /// 可能马上让当前前台窗口重新盖住卡片，看起来就像快捷键完全没有响应。
+    /// </summary>
     public void RaiseToFront()
     {
         try
         {
             ShowCard();
-            SetWindowPos(_hwnd, HWND_TOP, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            var flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW;
+            SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
+            if (IsTopmost()) return;
+
+            // 长时间运行后，个别卡片窗口会进入"设不上 WS_EX_TOPMOST"的状态：
+            // SetWindowPos 返回成功，扩展样式却纹丝不动，于是这张卡片永远压在别的
+            // 窗口下面，用户看到的就是"有一个分区一直不出现"。先显式退回 NOTOPMOST
+            // 再重设，必要时隐藏 / 重新显示一次窗口，能把这个状态复位。
+            SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+            SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
+            if (IsTopmost()) return;
+
+            AppWindow.Hide();
+            AppWindow.Show();
+            SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
+            if (!IsTopmost())
+            {
+                Services.ErrorReporter.Log("DesktopCard.RaiseToFront", new InvalidOperationException(
+                    $"分区「{_zoneName}」的窗口拒绝置顶，本次呼出会被其它窗口盖住。"));
+            }
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("DesktopCard.RaiseToFront", ex);
+        }
+    }
+
+    /// <summary>这个 HWND 是不是本卡片自己的窗口。前台切到卡片自身时不能当成"用户点到别处"。</summary>
+    public bool OwnsHandle(IntPtr hwnd) => hwnd == _hwnd;
+
+    /// <summary>屏幕坐标（物理像素）是否落在这张卡片窗口内。用于「点到别处就收起」的判定。</summary>
+    public bool ContainsScreenPoint(int x, int y)
+    {
+        try
+        {
+            if (!GetWindowRect(_hwnd, out var rect)) return false;
+            return x >= rect.Left && x < rect.Right && y >= rect.Top && y < rect.Bottom;
+        }
+        catch { return false; }
+    }
+
+    private bool IsTopmost()
+    {
+        try { return (GetWindowLongPtr(_hwnd, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0; }
+        catch { return true; }
+    }
+
+    public async Task RaiseAnimatedAsync(int delayMs = 0)
+    {
+        await WaitUntilReadyAsync();
+        if (delayMs > 0) await Task.Delay(delayMs);
+        try
+        {
+            // 顺序不能反：先把整窗透明度压到 0，再抬到最前。反过来的话窗口会以完全
+            // 不透明的状态露出一帧，用户看到的就是"按下快捷键先闪一下，然后才慢慢淡入"。
+            PrepareFadeIn();
+            RaiseToFront();
+            PlayRevealAnimation();
+        }
+        catch { RaiseToFront(); }
+    }
+
+    /// <summary>把快捷键临时呼出的卡片降回其它应用之后，不关闭桌面卡片。</summary>
+    public void LowerFromFront()
+    {
+        try
+        {
+            var flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW;
+            SetWindowPos(_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+            SetWindowPos(_hwnd, HWND_BOTTOM, 0, 0, 0, 0, flags);
         }
         catch { /* ignore */ }
+    }
+
+    public async Task LowerAnimatedAsync(int delayMs = 0)
+    {
+        if (delayMs > 0) await Task.Delay(delayMs);
+        try
+        {
+            var completion = new TaskCompletionSource();
+            FadeWindow(255, 0, CloseDurationMs, EaseIn, () => completion.TrySetResult());
+            await completion.Task;
+            // 先降 Z 序再恢复不透明：顺序反了会在动画末尾闪一下完整卡片。
+            LowerFromFront();
+            SetWindowAlpha(255);
+            SetLayered(false);
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("DesktopCard.LowerAnimated", ex);
+            SetWindowAlpha(255);
+            SetLayered(false);
+            LowerFromFront();
+        }
     }
 
     /// <summary>重新读取托管文件夹内容。</summary>
@@ -679,11 +928,24 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         try
         {
             var paths = knownPaths ?? DesktopCollectService.ListCardItems(_zoneName);
+
+            // 路径没变的项目**直接复用旧对象**，连带保留已经加载好的图标。
+            // 每次刷新都 new 一遍的话，托管目录里动一个文件就要把整张卡片的图标重新走一遍
+            // Shell / WScript.Shell 解析（单个 .lnk 几十毫秒），拖放和收纳时尤其明显。
+            var reusable = new Dictionary<string, CardItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in _items) reusable.TryAdd(item.Path, item);
+
             _items.Clear();
             // 图标任务留一份句柄：首次呈现前要等它们跑完，否则卡片会先露出一批空占位。
             _iconTasks.Clear();
             foreach (var path in paths)
             {
+                if (reusable.TryGetValue(path, out var existing))
+                {
+                    _items.Add(existing);
+                    continue;
+                }
+
                 var item = new CardItem(path);
                 _items.Add(item);
                 _iconTasks.Add(item.LoadIconAsync());
@@ -877,11 +1139,14 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     {
         var theme = ThemeService.EffectiveTheme;
         ShellRoot.RequestedTheme = theme;
-        CardSurface.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-            theme == ElementTheme.Dark
-                ? Windows.UI.Color.FromArgb(68, 30, 31, 34)
-                : Windows.UI.Color.FromArgb(78, 250, 250, 252));
+        var cardBrush = WindowHelper.GetDesktopCardBrush(theme);
+        var surfaceColor = cardBrush.Color;
+        CardSurface.Background = cardBrush;
         CardSurface.BorderBrush = WindowHelper.GetCodexBorderBrush(theme);
+        // DWMWA_COLOR_NONE 在部分多屏/DPI 组合下会在圆角两端留下亮点。
+        // DWM 仍独占外圆角，但边缘颜色与卡片底色一致，视觉上不再出现白点。
+        WindowHelper.MatchSystemWindowBorder(this, Windows.UI.Color.FromArgb(
+            255, surfaceColor.R, surfaceColor.G, surfaceColor.B));
         ApplyPersistentMica(theme);
     }
 
@@ -893,8 +1158,6 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     {
         try
         {
-            // UiStyleService 或标题栏初始化可能放入普通 MicaBackdrop；显式控制器必须独占目标。
-            SystemBackdrop = null;
             if (!MicaController.IsSupported())
             {
                 WindowHelper.ApplyWindowBackdrop(this);
@@ -903,6 +1166,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
             if (_micaController == null)
             {
+                // 只在首次接管合成目标时清掉普通 SystemBackdrop。已连接后再次清空会让
+                // MicaController 的目标失效，主题切换后透明卡片便会露出黑色底层。
+                SystemBackdrop = null;
                 _backdropTarget ??= this.As<ICompositionSupportsSystemBackdrop>();
                 _backdropConfiguration ??= new SystemBackdropConfiguration();
                 _micaController = new MicaController { Kind = MicaKind.Base };
@@ -935,6 +1201,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     public void Cleanup()
     {
         try { _watcher?.Dispose(); _watcher = null; } catch { /* ignore */ }
+        try { _fadeTimer?.Stop(); _fadeTimer = null; } catch { /* ignore */ }
         try
         {
             if (_micaController != null)
@@ -949,7 +1216,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         _backdropConfiguration = null;
         _backdropTarget = null;
         ThemeService.Unregister(this);
-        UiStyleService.Unregister(this);
+        UiStyleService.UnregisterShell(this);
 
         // 先解订阅再关闭，否则 Closing 仍会被 e.Cancel = true 拦下，
         // Window 永远停在隐藏态、HWND 也不会被 WinUI 真正回收。

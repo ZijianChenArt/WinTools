@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -21,7 +22,29 @@ public sealed class DesktopCardManager : IDisposable
     private bool _syncing;
     private readonly DispatcherQueue _dispatcherQueue;
     private readonly DispatcherQueueTimer _desktopChangeTimer;
+    private readonly DispatcherQueueTimer _cardChangeTimer;
+    private readonly DispatcherQueueTimer _foregroundWatchTimer;
     private FileSystemWatcher? _desktopWatcher;
+    private bool _raisedByHotkey;
+    private bool _hotkeyAnimating;
+    private IntPtr _raisedFromForeground;
+    private bool _animateAllCardsOnNextSync;
+    private int _enabledTransitionVersion;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    private const int VK_LBUTTON = 0x01;
+    private const int VK_RBUTTON = 0x02;
 
     public DesktopCardManager(Action<Window> registerWindow)
     {
@@ -30,7 +53,21 @@ public sealed class DesktopCardManager : IDisposable
         _desktopChangeTimer = _dispatcherQueue.CreateTimer();
         _desktopChangeTimer.Interval = TimeSpan.FromMilliseconds(650);
         _desktopChangeTimer.IsRepeating = false;
-        _desktopChangeTimer.Tick += (_, _) => SyncContent();
+        // 桌面出现新文件必须走**完整同步**（物理搬入托管分区），只刷卡片内容是搬不动文件的。
+        // 收纳有磁盘 I/O，放后台线程，别卡 UI。
+        _desktopChangeTimer.Tick += (_, _) => _ = SyncAsync();
+        // 托管目录自身的增删只需要刷新卡片内容；而且一次拖放会连着触发
+        // Created / Renamed / Deleted 多个事件，必须防抖，否则每个事件都跑一遍全量同步。
+        _cardChangeTimer = _dispatcherQueue.CreateTimer();
+        _cardChangeTimer.Interval = TimeSpan.FromMilliseconds(250);
+        _cardChangeTimer.IsRepeating = false;
+        _cardChangeTimer.Tick += (_, _) => SyncContent();
+        _foregroundWatchTimer = _dispatcherQueue.CreateTimer();
+        // 60ms：GetAsyncKeyState 的"自上次查询以来按下过"标志要靠轮询捕获，
+        // 120ms 会漏掉快速点击。
+        _foregroundWatchTimer.Interval = TimeSpan.FromMilliseconds(60);
+        _foregroundWatchTimer.IsRepeating = true;
+        _foregroundWatchTimer.Tick += ForegroundWatchTimer_Tick;
         StartDesktopWatcher();
     }
 
@@ -42,11 +79,21 @@ public sealed class DesktopCardManager : IDisposable
     /// <summary>开启 / 关闭桌面卡片。开启时按当前分区建卡片，关闭时全部收起。</summary>
     public void SetEnabled(bool enabled)
     {
+        var transitionVersion = ++_enabledTransitionVersion;
         _enabled = enabled;
         if (enabled)
-            Sync();
+        {
+            // 复用窗口和新建窗口统一加入 pendingReveal：先在透明/Cloak 状态完成同步，
+            // 再由 FinalizeInitialLayoutAndRevealAsync 同时播放与快捷键呼出相同的渐显。
+            _animateAllCardsOnNextSync = true;
+            try { Sync(); }
+            finally { _animateAllCardsOnNextSync = false; }
+        }
         else
-            HideAll();
+        {
+            ClearRaisedState();
+            _ = HideAllAnimatedAsync(transitionVersion);
+        }
     }
 
     /// <summary>
@@ -89,6 +136,33 @@ public sealed class DesktopCardManager : IDisposable
             DesktopCollectService.ReclassifyManagedItems(out _);
             DesktopCollectService.CollectAll(out _);
             SyncCards();
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    /// <summary>和 <see cref="Sync"/> 相同，但把磁盘 I/O 放到后台线程，只有建卡片回 UI 线程。
+    /// 监视器触发的自动同步一律走这个版本，避免用户拖一个文件到桌面就卡一下界面。</summary>
+    public async Task SyncAsync()
+    {
+        if (!_enabled || _syncing) return;
+
+        _syncing = true;
+        try
+        {
+            await Task.Run(() =>
+            {
+                DesktopCollectService.ImportLegacyDeskBoxItems(out _);
+                DesktopCollectService.ReclassifyManagedItems(out _);
+                DesktopCollectService.CollectAll(out _);
+            });
+            if (_enabled) SyncCards();
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("DesktopCardManager.SyncAsync", ex);
         }
         finally
         {
@@ -140,12 +214,25 @@ public sealed class DesktopCardManager : IDisposable
             {
                 existing.RefreshContent(entry.Items);
                 if (existing.HasItems)
-                    existing.ShowCard();
+                {
+                    if (_animateAllCardsOnNextSync)
+                    {
+                        existing.PresentCloaked();
+                        pendingReveal.Add(existing);
+                    }
+                    else
+                    {
+                        existing.ShowCard();
+                    }
+                }
                 continue;
             }
 
             var card = new DesktopCardWindow();
             ThemeService.Register(card);
+            // 只注册为 shell：卡片自己维护显式 MicaController，不能让 UiStyleService
+            // 给它设置窗口背景（会抢走合成目标，Mica 直接没了）。
+            UiStyleService.RegisterShell(card);
             card.ApplyUiStyleSurfaces();
             _registerWindow(card);
             card.ContentChanged += Card_ContentChanged;
@@ -160,13 +247,28 @@ public sealed class DesktopCardManager : IDisposable
             _cards[zone.Name] = card;
         }
 
-        Layout(visibleZones.Select(entry => entry.Zone).ToList());
+        var zonesForLayout = visibleZones.Select(entry => entry.Zone).ToList();
+        Layout(zonesForLayout);
 
-        // 卡片按顺序错开 40ms 淡入，形成一次整体出现，而不是逐个跳出来。
-        for (var i = 0; i < pendingReveal.Count; i++)
-        {
-            _ = pendingReveal[i].RevealAsync(i * 40);
-        }
+        // 新建 WinUI 窗口刚 Show 时 XamlRoot/DPI 可能仍未就绪。此时用默认 1.0
+        // 缩放排版，在高 DPI 多屏环境中会让卡片重叠；手动“同步桌面”之所以能
+        // 修好，正是因为第二次布局时缩放值已经可用。首次显示前等待 Loaded，
+        // 重新应用尺寸并排版一次，从根源上消除启动后必须手动同步的问题。
+        _ = FinalizeInitialLayoutAndRevealAsync(pendingReveal, zonesForLayout);
+    }
+
+    private async Task FinalizeInitialLayoutAndRevealAsync(
+        List<DesktopCardWindow> pendingReveal,
+        List<DesktopZone> zones)
+    {
+        if (pendingReveal.Count == 0) return;
+        await Task.WhenAll(pendingReveal.Select(card => card.WaitForLayoutReadyAsync()));
+        await Task.WhenAll(pendingReveal.Select(card => card.WaitUntilReadyAsync()));
+        foreach (var card in pendingReveal) card.ApplyScaleAwareSize();
+        Layout(zones);
+
+        // 所有卡片同时揭示：Win11 开窗动画是一次性的，逐张错开会显得像旧版的"逐个加载"。
+        await Task.WhenAll(pendingReveal.Select(card => card.RevealAsync()));
     }
 
     /// <summary>彻底释放单张卡片：解订阅 → 资源回收 → 真正关闭窗口。</summary>
@@ -214,7 +316,11 @@ public sealed class DesktopCardManager : IDisposable
         });
     }
 
-    private void Card_ContentChanged(object? sender, EventArgs e) => Sync();
+    private void Card_ContentChanged(object? sender, EventArgs e)
+    {
+        _cardChangeTimer.Stop();
+        _cardChangeTimer.Start();
+    }
 
     /// <summary>
     /// 拖放换区后把归属固化到配置：从所有分区的显式清单里摘掉这个名字，再加进目标分区。
@@ -361,28 +467,155 @@ public sealed class DesktopCardManager : IDisposable
             $"{work.X},{work.Y},{work.Width},{work.Height}");
     }
 
-    /// <summary>快捷键「呼出」：把所有卡片抬到普通窗口之上（不抢焦点）。若尚未开启则先开启。</summary>
-    public void RaiseAll()
+    /// <summary>
+    /// 无论当前是否在桌面，第一次按下都呼到最前，第二次按下降回后台。
+    /// </summary>
+    public async void RaiseAll()
     {
-        if (!_enabled)
+        if (_hotkeyAnimating) return;
+        _hotkeyAnimating = true;
+        try
         {
-            SetEnabled(true);
+            if (!_enabled)
+            {
+                SetEnabled(true);
+                await AnimateRaiseAllAsync();
+                MarkRaisedFromCurrentForeground();
+                return;
+            }
+
+            if (_raisedByHotkey)
+            {
+                await AnimateLowerAllAsync();
+                ClearRaisedState();
+                return;
+            }
+
+            var foreground = GetForegroundWindow();
+            await AnimateRaiseAllAsync();
+            _raisedFromForeground = foreground;
+            _raisedByHotkey = true;
+            // 先把呼出之前遗留的点击标志读掉，否则第一个 tick 就会把刚呼出的卡片收回去。
+            _ = ClickedOutsideCards();
+            _foregroundWatchTimer.Start();
+        }
+        finally
+        {
+            _hotkeyAnimating = false;
+        }
+    }
+
+    private void MarkRaisedFromCurrentForeground()
+    {
+        _raisedFromForeground = GetForegroundWindow();
+        _raisedByHotkey = true;
+        _ = ClickedOutsideCards();
+        _foregroundWatchTimer.Start();
+    }
+
+    private async void ForegroundWatchTimer_Tick(DispatcherQueueTimer sender, object args)
+    {
+        if (!_raisedByHotkey || _hotkeyAnimating)
+        {
+            // 动画进行中也要把点击标志读掉，否则这一次点击会残留到下一个 tick 立刻触发收起。
+            _ = ClickedOutsideCards();
             return;
         }
 
+        var clickedAway = ClickedOutsideCards();
+        var current = GetForegroundWindow();
+        // 只比较前台窗口是不够的：用户呼出卡片后，最常见的动作就是点回**呼出时那个窗口**，
+        // 此时前台 HWND 没变，卡片会一直盖在上面收不起来。所以再补一条「点到卡片以外
+        // 的任何地方就收起」，两个条件满足其一即收起。
+        if (current != IntPtr.Zero && IsOwnCard(current))
+        {
+            // 用户在卡片上操作（点空白、拖图标）不算"点到别处"，也不能因为前台变成卡片
+            // 自己就把整批卡片收回去。
+            _raisedFromForeground = current;
+            return;
+        }
+
+        if (!clickedAway && (current == IntPtr.Zero || current == _raisedFromForeground)) return;
+
+        _hotkeyAnimating = true;
+        try
+        {
+            await AnimateLowerAllAsync();
+            ClearRaisedState();
+        }
+        finally
+        {
+            _hotkeyAnimating = false;
+        }
+    }
+
+    private bool IsOwnCard(IntPtr hwnd)
+    {
         foreach (var card in _cards.Values)
-            card.RaiseToFront();
+        {
+            if (card.OwnsHandle(hwnd)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>自上次轮询以来用户是否在卡片之外按下过鼠标。读一次即清标志。</summary>
+    private bool ClickedOutsideCards()
+    {
+        try
+        {
+            var pressed = (GetAsyncKeyState(VK_LBUTTON) & 0x0001) != 0
+                || (GetAsyncKeyState(VK_RBUTTON) & 0x0001) != 0;
+            if (!pressed) return false;
+            if (!GetCursorPos(out var point)) return true;
+            foreach (var card in _cards.Values)
+            {
+                if (card.ContainsScreenPoint(point.X, point.Y)) return false;
+            }
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private void ClearRaisedState()
+    {
+        _raisedByHotkey = false;
+        _raisedFromForeground = IntPtr.Zero;
+        _foregroundWatchTimer.Stop();
+    }
+
+    private async Task AnimateRaiseAllAsync()
+    {
+        var cards = _cards.Values.ToList();
+        await Task.WhenAll(cards.Select(card => card.WaitUntilReadyAsync()));
+        await Task.WhenAll(cards.Select(card => card.RaiseAnimatedAsync()));
+    }
+
+    private async Task AnimateLowerAllAsync()
+    {
+        var cards = _cards.Values.ToList();
+        await Task.WhenAll(cards.Select(card => card.LowerAnimatedAsync()));
     }
 
     public void HideAll()
     {
+        ++_enabledTransitionVersion;
+        ClearRaisedState();
         foreach (var card in _cards.Values)
             card.HideCard();
+    }
+
+    private async Task HideAllAnimatedAsync(int transitionVersion)
+    {
+        var cards = _cards.Values.ToList();
+        await Task.WhenAll(cards.Select(card => card.HideAnimatedAsync(
+            () => transitionVersion == _enabledTransitionVersion && !_enabled)));
     }
 
     public void Dispose()
     {
         _desktopChangeTimer.Stop();
+        _cardChangeTimer.Stop();
+        _foregroundWatchTimer.Stop();
         try { _desktopWatcher?.Dispose(); _desktopWatcher = null; }
         catch (Exception ex) { ErrorReporter.Log("DesktopCardManager.Dispose.Watcher", ex); }
         foreach (var zone in _cards.Keys.ToList())
