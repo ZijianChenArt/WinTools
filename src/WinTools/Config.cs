@@ -226,6 +226,12 @@ public class Config : ObservableObject
     [JsonPropertyName("enableDesktopClickToShow")]
     public bool EnableDesktopClickToShow { get => _enableDesktopClickToShow; set => SetProperty(ref _enableDesktopClickToShow, value); }
 
+    // 默认开启：悬浮搜索是纯按需呼出的功能，不注册快捷键就完全用不了，
+    // 而它本身不常驻任何 hook / 定时器，默认打开不会带来额外开销。
+    private bool _enableSpotlight = true;
+    [JsonPropertyName("enableSpotlight")]
+    public bool EnableSpotlight { get => _enableSpotlight; set => SetProperty(ref _enableSpotlight, value); }
+
     // 字段缺失时（首次启动、config.json 被外部工具简化、跨版本迁移）回退到默认 7 个分区。
     // 显式写 "desktopZones": [] 仍会被反序列化为空 list（尊重用户清空操作）。
     private List<DesktopZone> _desktopZones = DesktopZone.CreateDefaults();

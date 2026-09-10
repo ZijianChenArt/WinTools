@@ -7,7 +7,7 @@ using System.Threading;
 namespace WinTools;
 
 /// <summary>
-/// 监听桌面空白区域的单击，并让资源管理器最小化当前窗口。
+/// 监听桌面空白区域的双击，并让资源管理器最小化当前窗口。
 /// 桌面图标、任务栏和普通窗口不会触发。
 /// </summary>
 public sealed class DesktopClickService : IDisposable
@@ -18,6 +18,8 @@ public sealed class DesktopClickService : IDisposable
     private const int WM_QUIT = 0x0012;
     private const int SM_CXDRAG = 68;
     private const int SM_CYDRAG = 69;
+    private const int SM_CXDOUBLECLK = 36;
+    private const int SM_CYDOUBLECLK = 37;
     private const uint LVM_FIRST = 0x1000;
     private const uint LVM_HITTEST = LVM_FIRST + 18;
     private const uint PROCESS_VM_OPERATION = 0x0008;
@@ -40,6 +42,13 @@ public sealed class DesktopClickService : IDisposable
     private bool _candidateClick;
     private int _dragThresholdX;
     private int _dragThresholdY;
+    private int _doubleClickThresholdX;
+    private int _doubleClickThresholdY;
+    private uint _doubleClickTime;
+    private POINT _firstClickDown;
+    private POINT _firstClickUp;
+    private uint _firstClickTime;
+    private bool _hasFirstClick;
     private bool _showingDesktop;
 
     public bool IsEnabled => _hookThread != null;
@@ -80,6 +89,7 @@ public sealed class DesktopClickService : IDisposable
         _hookThread = null;
         _hookThreadId = 0;
         _candidateClick = false;
+        _hasFirstClick = false;
     }
 
     private void HookThreadMain()
@@ -87,6 +97,9 @@ public sealed class DesktopClickService : IDisposable
         _hookThreadId = GetCurrentThreadId();
         _dragThresholdX = Math.Max(1, GetSystemMetrics(SM_CXDRAG));
         _dragThresholdY = Math.Max(1, GetSystemMetrics(SM_CYDRAG));
+        _doubleClickThresholdX = Math.Max(1, GetSystemMetrics(SM_CXDOUBLECLK));
+        _doubleClickThresholdY = Math.Max(1, GetSystemMetrics(SM_CYDOUBLECLK));
+        _doubleClickTime = GetDoubleClickTime();
         _hookProc = HookCallback;
         _hook = SetWindowsHookEx(WH_MOUSE_LL, _hookProc, GetModuleHandle(null), 0);
         _ready.Set();
@@ -126,12 +139,31 @@ public sealed class DesktopClickService : IDisposable
                 {
                     var down = _downPoint;
                     var up = info.pt;
-                    ThreadPool.QueueUserWorkItem(_ =>
+                    var isSecondClick = _hasFirstClick
+                        && unchecked(info.time - _firstClickTime) <= _doubleClickTime
+                        && Math.Abs(up.X - _firstClickUp.X) < _doubleClickThresholdX
+                        && Math.Abs(up.Y - _firstClickUp.Y) < _doubleClickThresholdY;
+
+                    if (isSecondClick)
                     {
-                        // 按下和抬起都必须落在桌面空白处，避免把图标上的点击也当成"显示桌面"。
-                        if (IsDesktopBlankArea(down) && IsDesktopBlankArea(up))
-                            ToggleDesktopWindows();
-                    });
+                        var firstDown = _firstClickDown;
+                        var firstUp = _firstClickUp;
+                        _hasFirstClick = false;
+                        ThreadPool.QueueUserWorkItem(_ =>
+                        {
+                            // 两次点击的按下和抬起都必须位于桌面空白处，防止跨目标的快速点击误触。
+                            if (IsDesktopBlankArea(firstDown) && IsDesktopBlankArea(firstUp)
+                                && IsDesktopBlankArea(down) && IsDesktopBlankArea(up))
+                                ToggleDesktopWindows();
+                        });
+                    }
+                    else
+                    {
+                        _firstClickDown = down;
+                        _firstClickUp = up;
+                        _firstClickTime = info.time;
+                        _hasFirstClick = true;
+                    }
                 }
             }
         }
@@ -139,10 +171,23 @@ public sealed class DesktopClickService : IDisposable
         return CallNextHookEx(_hook, nCode, wParam, lParam);
     }
 
+    /// <summary>判断某个屏幕坐标是不是落在桌面的空白处。</summary>
+    /// <remarks>
+    /// 有图标时：必须落在桌面 ListView 上，且跨进程命中测试返回 -1（没点到图标）。
+    /// **图标隐藏时**（桌面分区会关掉系统的「显示桌面图标」）：Explorer 会把 <c>SysListView32</c>
+    /// 一起藏掉，<see cref="WindowFromPoint"/> 拿到的是 <c>WorkerW</c> / <c>Progman</c> /
+    /// <c>SHELLDLL_DefView</c>。这时桌面上根本没有图标可点，落在桌面窗口上就等于落在空白处。
+    /// 少了这一条，开启桌面分区后「点击桌面返回」会整个失效（2026-09-07 实测）。
+    /// </remarks>
     private static bool IsDesktopBlankArea(POINT screenPoint)
     {
         var listView = WindowFromPoint(screenPoint);
-        if (listView == IntPtr.Zero || !string.Equals(GetClassName(listView), "SysListView32", StringComparison.Ordinal))
+        if (listView == IntPtr.Zero) return false;
+
+        var className = GetClassName(listView);
+        if (className is "WorkerW" or "Progman" or "SHELLDLL_DefView") return true;
+
+        if (!string.Equals(className, "SysListView32", StringComparison.Ordinal))
             return false;
 
         var parent = GetParent(listView);
@@ -277,6 +322,8 @@ public sealed class DesktopClickService : IDisposable
     private static extern bool PostThreadMessage(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")]
+    private static extern uint GetDoubleClickTime();
     [DllImport("user32.dll")]
     private static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll")]

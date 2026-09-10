@@ -17,8 +17,7 @@
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                Visibility="Collapsed"/>
                     <GridView x:Name="ItemsGrid" SelectionMode="None" IsItemClickEnabled="True"
-                              ItemClick="Items_ItemClick"
-                              CanDragItems="True" AllowDrop="True"
+                              CanDragItems="True" CanReorderItems="True" AllowDrop="True"
                               DragItemsStarting="ItemsGrid_DragItemsStarting"
                               DragOver="ItemsGrid_DragOver"
                               Drop="ItemsGrid_Drop"
@@ -31,7 +30,8 @@
                                  让所有 item 紧贴 GridView 左边缘开始排，单图标固定在卡片最左。
                                  之前设的 HorizontalContentAlignment="Center" 会让单图标居中，
                                  跟"固定宽度靠左"的卡片风格不符。 -->
-                            <Style TargetType="GridViewItem">
+                            <Style TargetType="GridViewItem" BasedOn="{StaticResource DefaultGridViewItemStyle}">
+                                <Setter Property="CornerRadius" Value="{StaticResource PageInnerCornerRadius}"/>
                                 <Setter Property="Padding" Value="0"/>
                                 <Setter Property="Margin" Value="0"/>
                                 <Setter Property="HorizontalContentAlignment" Value="Left"/>
@@ -51,7 +51,10 @@
                         <GridView.ItemTemplate>
                             <DataTemplate x:DataType="local:CardItem">
                                 <StackPanel Width="76" Height="86" Spacing="4" Padding="4,8"
-                                            ToolTipService.ToolTip="{x:Bind DisplayName}">
+                                            DoubleTapped="Item_DoubleTapped" Tag="{x:Bind}">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="{x:Bind DisplayName}" Style="{StaticResource PageDesktopToolTipStyle}"/>
+                                    </ToolTipService.ToolTip>
                                     <StackPanel.ContextFlyout>
                                         <MenuFlyout>
                                             <MenuFlyoutItem Text="打开" Click="ItemMenu_Open_Click" Tag="{x:Bind}">
@@ -62,6 +65,12 @@
                                             <MenuFlyoutItem Text="删除到回收站" Click="ItemMenu_Delete_Click" Tag="{x:Bind}">
                                                 <MenuFlyoutItem.Icon>
                                                     <FontIcon Glyph="&#xE74D;"/>
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutSeparator/>
+                                            <MenuFlyoutItem Text="显示系统右键菜单" Click="ItemMenu_SystemMenu_Click" Tag="{x:Bind}">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon Glyph="&#xE712;"/>
                                                 </MenuFlyoutItem.Icon>
                                             </MenuFlyoutItem>
                                         </MenuFlyout>

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Window
     x:Class="WinTools.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -28,8 +28,10 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- 48px 加高标题栏：只保留应用标识与侧栏开关。 -->
-        <Grid x:Name="AppTitleBar" Height="48" Grid.Row="0" Background="Transparent">
+        <!-- 40dip：对齐文件资源管理器的标签栏（实测 50 物理像素 @125% = 40dip）。
+             系统按钮仍是 Standard 的 32dip、贴顶部绘制，资源管理器也是这样（实测按钮 28.8dip）。
+             所以这里**不能**再让 HookTitleBarPadding 去同步系统标题栏高度，高度以本行为准。 -->
+        <Grid x:Name="AppTitleBar" Height="40" Grid.Row="0" Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="LeftPaddingColumn" Width="0"/>
                 <ColumnDefinition Width="*"/>
@@ -37,17 +39,31 @@
             </Grid.ColumnDefinitions>
 
             <Grid Grid.Column="1">
+                <!-- 左边距 6：侧栏 CompactPaneLength 是 48，图标列中心在 24；
+                     开关按钮宽 36，中心 = 6 + 18 = 24，两者才对得上一条竖线。
+                     曾经是 4，实测汉堡图标中心比下面的导航图标偏左 2px。 -->
                 <StackPanel Orientation="Horizontal" Spacing="8"
-                            Margin="4,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left">
+                            Margin="6,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left">
                     <Button Width="36" Height="32"
                             Background="Transparent" BorderThickness="0" CornerRadius="10"
                             VerticalAlignment="Center"
                             Click="TitleBarPaneToggle_Click"
                             ToolTipService.ToolTip="展开或收起侧边栏">
-                        <FontIcon Glyph="&#xE700;" FontSize="15"/>
+                        <!-- FontSize 16：15dip 在 125% 下是 18.75 物理像素卡半像素，16dip = 20px
+                             落在网格上，墨迹大小也和侧栏导航图标接近。
+                             Margin 顶部 2：图标字体的墨迹是贴基线往上长的，行盒居中会让它比右边的
+                             logo 和文字高约 1.5 物理像素（实测中心 19.0 vs 20.5）。居中元素的上边距
+                             只生效一半，所以 2dip 正好把它压回同一条线。 -->
+                        <FontIcon Glyph="&#xE700;" FontSize="16" Margin="0,2,0,0"/>
                     </Button>
-                    <Image Source="Assets/logo.png" Width="18" Height="18" VerticalAlignment="Center"/>
-                    <TextBlock Text="WinTools" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <!-- 16 而不是 18：18dip 在 125% 缩放下是 22.5 物理像素，卡在半像素上，
+                         上下抗锯齿不对称，看起来比旁边的图标低一点。16dip = 20px 正好落在像素网格上。 -->
+                    <Image Source="Assets/logo.png" Width="16" Height="16" VerticalAlignment="Center"/>
+                    <!-- TextLineBounds="Tight"：默认的 Full 会把 ascent/descent 的空白算进行盒，
+                         "WinTools" 没有下伸部，居中行盒等于把字形墨迹压低约 1.5px，和左边的汉堡
+                         图标差出肉眼可见的一条线。Tight 让行盒贴住墨迹，居中才是真的居中。 -->
+                    <TextBlock Text="WinTools" FontSize="14" FontWeight="SemiBold"
+                               TextLineBounds="Tight" VerticalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Grid>
@@ -174,8 +190,23 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="点击桌面" Style="{StaticResource NavigationLabelStyle}"/>
+                            <TextBlock Text="双击桌面" Style="{StaticResource NavigationLabelStyle}"/>
                             <Ellipse x:Name="NavDotDesktopClick" Grid.Column="1" Width="10" Height="10" Margin="0,0,2,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </NavigationViewItem.Content>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavItemSpotlight" Tag="Spotlight">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Find"/>
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.Content>
+                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="悬浮搜索" Style="{StaticResource NavigationLabelStyle}"/>
+                            <Ellipse x:Name="NavDotSpotlight" Grid.Column="1" Width="10" Height="10" Margin="0,0,2,0" VerticalAlignment="Center"/>
                         </Grid>
                     </NavigationViewItem.Content>
                 </NavigationViewItem>

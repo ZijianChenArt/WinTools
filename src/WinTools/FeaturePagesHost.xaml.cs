@@ -108,6 +108,9 @@ public sealed partial class FeaturePagesHost : UserControl
     private void PerAppImeToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.PerAppImeToggle_Toggled(sender, e);
     private void PositionOffset_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.PositionOffset_ValueChanged(sender, args);
     private void ProgramAssocToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.ProgramAssocToggle_Toggled(sender, e);
+    private void SpotlightToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.SpotlightToggle_Toggled(sender, e);
+    private void Spotlight_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_ApplyHotkey_Click(sender, e);
+    private void Spotlight_RebuildIndex_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_RebuildIndex_Click(sender, e);
     private void ThemeRadioButtons_SelectionChanged(object sender, SelectionChangedEventArgs e) => Owner?.ThemeRadioButtons_SelectionChanged(sender, e);
     private void ThreeFingerCalibrate_Click(object sender, RoutedEventArgs e) => Owner?.ThreeFingerCalibrate_Click(sender, e);
     private void ThreeFingerDragToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.ThreeFingerDragToggle_Toggled(sender, e);

@@ -78,7 +78,45 @@ public sealed partial class MainWindow
 
             }
 
+            if (id == HotkeyIdSpotlight)
+            {
 
+                ToggleSpotlight();
+
+                return (LRESULT)IntPtr.Zero;
+
+
+            }
+
+
+        }
+
+        // 注销 / 关机。WinUI 3 收到 WM_ENDSESSION 不会自己退出，Windows 等满
+        // WaitToKillAppTimeout（默认 5s）后就把本进程所有可见顶层窗口列进
+        // 「这些应用阻止关机」——9 张分区卡片就是 9 行同名条目。必须自己退。
+        // 两条消息都只做通知，处理完继续交给原窗口过程（QUERYENDSESSION 由
+        // DefWindowProc 返回 TRUE，不能在这里替它决定要不要放行关机）。
+        else if (uMsg == WM_QUERYENDSESSION)
+        {
+            // 会话还可能被别的应用取消，所以只落盘不退出。
+            App.SaveBeforeSessionEnd();
+        }
+        else if (uMsg == WM_ENDSESSION)
+        {
+            // wParam 为 0 表示会话结束被取消，此时什么都不做。
+            if (wParam.Value != 0) App.ShutdownForSessionEnd();
+        }
+
+        // 分辨率 / 缩放 / 任务栏变化后卡片必须重排：位置和尺寸都是按当时的
+        // 工作区与 RasterizationScale 算成物理像素写死的，系统不会替我们更新。
+        // 这些消息只做通知，必须继续传给原窗口过程（WinUI 自己也要处理 DPI）。
+        else if (uMsg is WM_DISPLAYCHANGE or WM_DPICHANGED)
+        {
+            QueueDesktopCardRelayout();
+        }
+        else if (uMsg == WM_SETTINGCHANGE && (int)(nuint)wParam.Value == SPI_SETWORKAREA)
+        {
+            QueueDesktopCardRelayout();
         }
 
         return PInvoke.CallWindowProc(_originalWndProc!, hwnd, uMsg, wParam, lParam);
@@ -93,6 +131,10 @@ public sealed partial class MainWindow
 
         RegisterOneHotkey(_hwnd, HotkeyIdDesktopCard, GetDesktopCardHotkey());
 
+        // 未启用时不注册，把 Alt+Space 让回系统（窗口菜单）。
+        if (_config.EnableSpotlight)
+            RegisterOneHotkey(_hwnd, HotkeyIdSpotlight, GetSpotlightHotkey());
+
 
     }
 
@@ -103,6 +145,8 @@ public sealed partial class MainWindow
         {
 
             PInvoke.UnregisterHotKey(_hwnd, HotkeyIdDesktopCard);
+
+            PInvoke.UnregisterHotKey(_hwnd, HotkeyIdSpotlight);
 
 
         }

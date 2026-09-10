@@ -154,17 +154,26 @@ public static class WindowHelper
     /// 外壳层（标题栏 + 侧栏 + 内容区背后）。Mica 下留一点透明度让材质透上来。
     /// 整个窗口只有这一层和内容层两种颜色，内容区圆角缺口露出的也是这一层。
     /// </summary>
+    /// <remarks>
+    /// Mica 风格下**完全不铺色**，和 Windows 设置一致：标题栏、导航栏、内容区背景都是纯 Mica，
+    /// 明暗层次全部交给卡片（`CardBackgroundFillColorDefaultBrush`）。
+    /// 2026-09-06 取样 Windows 设置窗口反推：它的导航栏就是纯 Mica，卡片是白色 alpha≈13/255
+    /// （即标准 `CardBackgroundFillColorDefault` 的 #0D）。本程序原来在这里铺 alpha 235，
+    /// Mica 只剩 8%，把窗口从屏幕最左移到最右采样只差 1 个色阶——等于没有材质，换壁纸自然看不出变化。
+    /// 要调深浅请改卡片层，不要在壳层重新铺不透明色。
+    /// </remarks>
     public static SolidColorBrush GetCodexShellBrush(ElementTheme theme, bool isMica)
     {
+        if (isMica) return new SolidColorBrush(Colors.Transparent);
         var c = GetCodexSidebarBrush(theme).Color;
-        return new SolidColorBrush(Color.FromArgb(isMica ? (byte)235 : (byte)255, c.R, c.G, c.B));
+        return new SolidColorBrush(Color.FromArgb(255, c.R, c.G, c.B));
     }
 
     /// <summary>
-    /// 子页面内容层：盖在外壳层之上的一层半透明黑（浅色主题是白），
-    /// 所以内容区永远等于"外壳色再压暗一档" —— 色相一致，Mica 依旧透得上来。
-    /// 不要改回写死的近黑色（#181818 / #171717），那会让内容区和侧栏彻底割裂；
-    /// 要调深浅只改下面的 alpha。
+    /// 子页面内容区背景：叠在 Mica 之上的一层半透明黑（浅色主题是白），让内容区比
+    /// 标题栏 / 侧栏深一档。外壳层已按 Windows 标准完全不铺色（见
+    /// <see cref="GetCodexShellBrush"/>），所以这里是**唯一**一层遮罩，Mica 仍然透得上来。
+    /// 调深浅只改 <see cref="ContentDepthPercent"/>，不要在外壳层重新铺色。
     /// </summary>
     public static SolidColorBrush GetCodexContentBrush(ElementTheme theme, bool isMica)
     {
@@ -174,10 +183,13 @@ public static class WindowHelper
             : Color.FromArgb(ContentDepthAlpha(45, 220), 255, 255, 255));
     }
 
-    /// <summary>外壳层不透明度：越小 Mica 越明显。</summary>
+    /// <summary>内容层深度百分比：0 = 完全透出 Mica，100 = 几乎不透明。</summary>
+    /// <remarks>深色下 0→alpha 32、100→alpha 150，当前 50 即 alpha 91（Mica 仍透约 64%）。</remarks>
+    private const int ContentDepthPercent = 50;
+
     private static byte ContentDepthAlpha(int shallowAlpha, int deepAlpha)
     {
-        var t = UiStyleService.ContentBackgroundDepth / 100d;
+        var t = ContentDepthPercent / 100d;
         return (byte)Math.Clamp((int)Math.Round(shallowAlpha + (deepAlpha - shallowAlpha) * t), 0, 255);
     }
 
@@ -256,13 +268,28 @@ public static class WindowHelper
         ApplyTransparentTitleBarColors(window);
     }
 
+    /// <summary>完全没有标题栏的窗口（桌面分区卡片）的窗口外观：隐藏标题栏，只留 DWM 圆角边框。</summary>
+    /// <remarks>
+    /// 不要图省事改回 <see cref="ConfigurePopupTitleBar"/>：那条路径上的三件事对卡片都是纯开销——
+    /// <c>ApplyWindowBackdrop</c> 建一个系统背景控制器，随后又被卡片自己的显式 <c>MicaController</c>
+    /// 拆掉（还违反 README 7.4）；<c>ExtendsContentIntoTitleBar</c> 与标题栏配色是给带自定义标题栏
+    /// 的窗口用的，卡片连标题栏元素都没有。2026-09-06 实测：这三步每张卡片 87ms，9 张 = 0.78 秒启动时间。
+    /// </remarks>
+    public static void ConfigureChromelessWindow(Window window)
+    {
+        // 同样不能用 SetBorderAndTitleBar(false, false)，理由见上面那条注释。
+        if (window.AppWindow.Presenter is OverlappedPresenter presenter)
+            presenter.SetBorderAndTitleBar(true, false);
+    }
+
     private static void ApplyTransparentTitleBarColors(Window window)
     {
         if (window.AppWindow.TitleBar is not { } tb) return;
 
         tb.ExtendsContentIntoTitleBar = true;
-        // 48px「加高」标题栏，容纳应用标识与侧栏开关。
-        try { tb.PreferredHeightOption = Microsoft.UI.Windowing.TitleBarHeightOption.Tall; } catch { /* 旧版系统忽略 */ }
+        // 标准 32px 标题栏（`Tall` 是 48px，显得过厚）。主窗口的 XAML 标题栏高度由
+        // HookTitleBarPadding(syncHeight: true) 跟着这个值走，不要在 XAML 里另写死高度。
+        try { tb.PreferredHeightOption = Microsoft.UI.Windowing.TitleBarHeightOption.Standard; } catch { /* 旧版系统忽略 */ }
         tb.BackgroundColor = Colors.Transparent;
         tb.InactiveBackgroundColor = Colors.Transparent;
         tb.ButtonBackgroundColor = Colors.Transparent;
@@ -283,12 +310,15 @@ public static class WindowHelper
             : Color.FromArgb(140, 0, 0, 0);
         tb.ButtonBackgroundColor = Colors.Transparent;
         tb.ButtonInactiveBackgroundColor = Colors.Transparent;
+        // 悬停 / 按下必须用**半透明**填充，值取自系统标准的 SubtleFillColorSecondary /
+        // Tertiary。原来写的是不透明灰（深色 #2D2D2D），在 Mica 标题栏上就是一块突兀的
+        // 灰方块——外壳层还铺着 alpha 235 时看不出来，改成纯 Mica 后一眼就能看见。
         tb.ButtonHoverBackgroundColor = dark
-            ? Color.FromArgb(255, 45, 45, 45)
-            : Color.FromArgb(255, 226, 226, 226);
+            ? Color.FromArgb(15, 255, 255, 255)
+            : Color.FromArgb(9, 0, 0, 0);
         tb.ButtonPressedBackgroundColor = dark
-            ? Color.FromArgb(255, 58, 58, 58)
-            : Color.FromArgb(255, 210, 210, 210);
+            ? Color.FromArgb(10, 255, 255, 255)
+            : Color.FromArgb(6, 0, 0, 0);
     }
 
     public static void HookTitleBarPadding(

@@ -77,10 +77,15 @@ public sealed class DesktopCardManager : IDisposable
     public event EventHandler? ZonesChangedExternally;
 
     /// <summary>开启 / 关闭桌面卡片。开启时按当前分区建卡片，关闭时全部收起。</summary>
+    /// <remarks>
+    /// 桌面图标的显示 / 隐藏跟着这个开关走：开启分区 = 关掉系统的「显示桌面图标」，
+    /// 关闭分区 = 还回去。文件本身自始至终不动（见 <see cref="DesktopCollectService"/>）。
+    /// </remarks>
     public void SetEnabled(bool enabled)
     {
         var transitionVersion = ++_enabledTransitionVersion;
         _enabled = enabled;
+        DesktopIconVisibilityService.SetHidden(enabled);
         if (enabled)
         {
             // 复用窗口和新建窗口统一加入 pendingReveal：先在透明/Cloak 状态完成同步，
@@ -97,7 +102,7 @@ public sealed class DesktopCardManager : IDisposable
     }
 
     /// <summary>
-    /// 启动专用初始化：旧 DeskBox 导入、桌面扫描和物理移动放到后台线程，
+    /// 启动专用初始化：旧版数据迁移（唯一还会动文件的地方）放到后台线程，
     /// 返回 UI 线程后才创建 WinUI 卡片，避免主窗口首帧被文件 I/O 阻塞。
     /// </summary>
     public async Task InitializeAsync()
@@ -107,12 +112,29 @@ public sealed class DesktopCardManager : IDisposable
         _syncing = true;
         try
         {
+            App.TraceStartup("Cards: InitializeAsync 进入");
+            Dictionary<string, string>? migratedZones = null;
+            var migrated = 0;
+            var migrateFailed = 0;
             await Task.Run(() =>
             {
-                DesktopCollectService.ImportLegacyDeskBoxItems(out _);
-                DesktopCollectService.ReclassifyManagedItems(out _);
-                DesktopCollectService.CollectAll(out _);
+                if (!DesktopCollectService.HasLegacyManagedItems()) return;
+                migrated = DesktopCollectService.MigrateLegacyManagedItems(out migrateFailed, out var pins);
+                migratedZones = pins;
+                App.TraceStartup($"Cards: 旧版数据迁移完成，搬回 {migrated} 项，失败 {migrateFailed} 项");
             });
+
+            // 归属写回配置必须在 UI 线程：SettingsService 的防抖保存挂在 UI 线程的 DispatcherQueue 上。
+            // 62 项就写 62 次盘太蠢，所以先全部改到内存里的 zones，最后统一保存一次。
+            if (migratedZones is { Count: > 0 })
+            {
+                foreach (var pair in migratedZones)
+                    PinItemToZone(pair.Key, pair.Value, raiseChanged: false, persist: false);
+                PersistZones();
+                ZonesChangedExternally?.Invoke(this, EventArgs.Empty);
+            }
+
+            DesktopIconVisibilityService.SetHidden(true);
             if (_enabled)
                 SyncCards();
         }
@@ -122,8 +144,11 @@ public sealed class DesktopCardManager : IDisposable
         }
     }
 
-    /// <summary>完全同步：先物理搬入桌面文件，再让卡片集合与分区列表一致。
-    /// 适用于用户主动按"立即同步"或首次开启。</summary>
+    /// <summary>重新扫描桌面并让卡片与分区列表一致。用户主动按「立即同步」或首次开启时调用。</summary>
+    /// <remarks>
+    /// 新机制下**不再有"搬入"这个动作**：桌面项目原地不动，卡片按规则实时分组，
+    /// 所以完整同步和内容同步已经是同一件事。保留两个入口只为兼容调用方语义。
+    /// </remarks>
     public void Sync()
     {
         if (!_enabled || _syncing) return;
@@ -131,10 +156,7 @@ public sealed class DesktopCardManager : IDisposable
         _syncing = true;
         try
         {
-            // 开启 / 立即同步：成功项目从桌面移入托管分区，失败项目仍留在桌面。
-            DesktopCollectService.ImportLegacyDeskBoxItems(out _);
-            DesktopCollectService.ReclassifyManagedItems(out _);
-            DesktopCollectService.CollectAll(out _);
+            DesktopIconVisibilityService.SetHidden(true);
             SyncCards();
         }
         finally
@@ -143,36 +165,18 @@ public sealed class DesktopCardManager : IDisposable
         }
     }
 
-    /// <summary>和 <see cref="Sync"/> 相同，但把磁盘 I/O 放到后台线程，只有建卡片回 UI 线程。
-    /// 监视器触发的自动同步一律走这个版本，避免用户拖一个文件到桌面就卡一下界面。</summary>
-    public async Task SyncAsync()
+    /// <summary>和 <see cref="Sync"/> 相同。桌面监视器触发的自动同步走这个版本。</summary>
+    /// <remarks>
+    /// 以前这里要把 CollectAll 的磁盘 I/O 甩到后台线程，现在只剩目录枚举，
+    /// 直接在 UI 线程做即可；<see cref="SyncCards"/> 本来也必须在 UI 线程。
+    /// </remarks>
+    public Task SyncAsync()
     {
-        if (!_enabled || _syncing) return;
-
-        _syncing = true;
-        try
-        {
-            await Task.Run(() =>
-            {
-                DesktopCollectService.ImportLegacyDeskBoxItems(out _);
-                DesktopCollectService.ReclassifyManagedItems(out _);
-                DesktopCollectService.CollectAll(out _);
-            });
-            if (_enabled) SyncCards();
-        }
-        catch (Exception ex)
-        {
-            ErrorReporter.Log("DesktopCardManager.SyncAsync", ex);
-        }
-        finally
-        {
-            _syncing = false;
-        }
+        Sync();
+        return Task.CompletedTask;
     }
 
-    /// <summary>只同步卡片集合与分区列表，不重新物理搬入。
-    /// 适用于 FileSystemWatcher / 卡片内 FileSystemWatcher 触发的"内容变化"事件，
-    /// 避免每次桌面文件抖动都跑一次全量 CollectAll。</summary>
+    /// <summary>只同步卡片集合与分区列表。桌面内容变化时由防抖定时器调用。</summary>
     public void SyncContent()
     {
         if (!_enabled || _syncing) return;
@@ -195,9 +199,11 @@ public sealed class DesktopCardManager : IDisposable
         // FileSystemWatcher 刷新、每创建一张卡片都重新读取并反序列化 config.json。
         var zones = SettingsService.Instance.Current.DesktopZones ?? new List<DesktopZone>();
         // 空分区不创建窗口，避免默认七张空卡片占满桌面并浪费 WinUI 窗口资源。
-        // 同一轮扫描结果直接传给窗口，避免“判断是否为空”和 Bind/Refresh 各扫一次目录。
+        // 桌面**只枚举一次**再分组：以前是每个分区各扫一次自己的托管目录，现在所有分区
+        // 共用同一份桌面快照，同一轮扫描结果直接传给窗口，Bind/Refresh 不再各扫一次。
+        var grouped = DesktopCollectService.GroupByZone(zones);
         var visibleZones = zones
-            .Select(z => (Zone: z, Items: DesktopCollectService.ListCardItems(z.Name)))
+            .Select(z => (Zone: z, Items: grouped.TryGetValue(z.Name, out var items) ? items : new List<string>()))
             .Where(entry => entry.Items.Count > 0)
             .ToList();
         var wanted = new HashSet<string>(visibleZones.Select(entry => entry.Zone.Name), StringComparer.Ordinal);
@@ -229,6 +235,7 @@ public sealed class DesktopCardManager : IDisposable
             }
 
             var card = new DesktopCardWindow();
+            App.TraceStartup($"Cards: 窗口构造完成 [{zone.Name}]");
             ThemeService.Register(card);
             // 只注册为 shell：卡片自己维护显式 MicaController，不能让 UiStyleService
             // 给它设置窗口背景（会抢走合成目标，Mica 直接没了）。
@@ -248,7 +255,12 @@ public sealed class DesktopCardManager : IDisposable
         }
 
         var zonesForLayout = visibleZones.Select(entry => entry.Zone).ToList();
-        Layout(zonesForLayout);
+        // 有卡片要走 Finalize 时跳过这一次排版：那边等到 XAML Loaded、拿到真实
+        // RasterizationScale 后还会 ApplyScaleAwareSize + Layout 一次，这里算出来的
+        // 必然是错的（实测第一次 workDip=3840x2100，第二次才是正确的 3072x1680），
+        // 而且卡片此时全被 Cloak，位置根本没人看得见。9 张卡片的 Resize + Move 约 70ms。
+        if (pendingReveal.Count == 0)
+            Layout(zonesForLayout);
 
         // 新建 WinUI 窗口刚 Show 时 XamlRoot/DPI 可能仍未就绪。此时用默认 1.0
         // 缩放排版，在高 DPI 多屏环境中会让卡片重叠；手动“同步桌面”之所以能
@@ -262,13 +274,18 @@ public sealed class DesktopCardManager : IDisposable
         List<DesktopZone> zones)
     {
         if (pendingReveal.Count == 0) return;
+        App.TraceStartup("Cards: Finalize 进入，等 XAML Loaded");
         await Task.WhenAll(pendingReveal.Select(card => card.WaitForLayoutReadyAsync()));
+        App.TraceStartup("Cards: XAML Loaded 就绪，等图标");
         await Task.WhenAll(pendingReveal.Select(card => card.WaitUntilReadyAsync()));
+        App.TraceStartup("Cards: 图标就绪");
         foreach (var card in pendingReveal) card.ApplyScaleAwareSize();
         Layout(zones);
+        App.TraceStartup("Cards: 二次布局完成，开始揭示");
 
         // 所有卡片同时揭示：Win11 开窗动画是一次性的，逐张错开会显得像旧版的"逐个加载"。
         await Task.WhenAll(pendingReveal.Select(card => card.RevealAsync()));
+        App.TraceStartup("Cards: 全部揭示完成");
     }
 
     /// <summary>彻底释放单张卡片：解订阅 → 资源回收 → 真正关闭窗口。</summary>
@@ -298,6 +315,7 @@ public sealed class DesktopCardManager : IDisposable
             RenamedEventHandler renamed = (_, _) => QueueDesktopSync();
             _desktopWatcher.Created += changed;
             _desktopWatcher.Changed += changed;
+            _desktopWatcher.Deleted += changed;
             _desktopWatcher.Renamed += renamed;
         }
         catch (Exception ex)
@@ -322,13 +340,22 @@ public sealed class DesktopCardManager : IDisposable
         _cardChangeTimer.Start();
     }
 
-    /// <summary>
-    /// 拖放换区后把归属固化到配置：从所有分区的显式清单里摘掉这个名字，再加进目标分区。
-    /// 不这么做的话，下一次 Sync 里的 ReclassifyManagedItems 会按关键词把它挪回原分区。
-    /// </summary>
+    /// <summary>拖放换区：把归属固化到配置的显式清单。**不移动任何文件**。</summary>
     private void Card_ItemMovedIn(object? sender, CardItemMovedEventArgs e)
+        => PinItemToZone(e.ItemName, e.TargetZone, raiseChanged: true, persist: true);
+
+    /// <summary>
+    /// 把某个名字钉到指定分区：先从所有分区的显式清单里摘掉它，再加进目标分区。
+    /// 这就是新机制下「分区归属」的唯一存储——文件在磁盘上的位置永远是桌面，不表达归属。
+    /// </summary>
+    /// <remarks>
+    /// 不写显式清单的话，下一次 <see cref="DesktopZoneMatcher"/> 会按关键词把它算回原分区，
+    /// 用户的拖放就白做了。
+    /// </remarks>
+    /// <param name="persist">false = 只改内存里的分区对象，由调用方批量落盘（迁移时 62 项就不用写 62 次）。</param>
+    private void PinItemToZone(string itemName, string targetZone, bool raiseChanged, bool persist)
     {
-        if (string.IsNullOrWhiteSpace(e.ItemName) || string.IsNullOrWhiteSpace(e.TargetZone)) return;
+        if (string.IsNullOrWhiteSpace(itemName) || string.IsNullOrWhiteSpace(targetZone)) return;
 
         var zones = SettingsService.Instance.Current.DesktopZones;
         if (zones == null) return;
@@ -338,23 +365,54 @@ public sealed class DesktopCardManager : IDisposable
         {
             if (zone.Items == null) continue;
             var removed = zone.Items.RemoveAll(name =>
-                string.Equals(name, e.ItemName, StringComparison.OrdinalIgnoreCase));
+                string.Equals(name, itemName, StringComparison.OrdinalIgnoreCase));
             if (removed > 0) changed = true;
         }
 
         var target = zones.FirstOrDefault(z =>
-            string.Equals(z.Name, e.TargetZone, StringComparison.Ordinal));
+            string.Equals(z.Name, targetZone, StringComparison.Ordinal));
         if (target != null)
         {
             target.Items ??= new List<string>();
-            target.Items.Add(e.ItemName);
+            target.Items.Add(itemName);
             changed = true;
         }
 
         if (!changed) return;
-        ConfigService.Update(c => c.DesktopZones = zones);
+        if (persist) PersistZones();
         // 设置页里的分区列表是配置的副本，不刷新的话用户下一次编辑分区会用旧副本覆盖这次拖放。
-        ZonesChangedExternally?.Invoke(this, EventArgs.Empty);
+        if (raiseChanged) ZonesChangedExternally?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static void PersistZones()
+    {
+        var zones = SettingsService.Instance.Current.DesktopZones;
+        if (zones == null) return;
+        ConfigService.Update(c => c.DesktopZones = zones);
+    }
+
+    /// <summary>
+    /// 分辨率 / 缩放 / 工作区变化后重新排版：先按新的缩放重算每张卡片的物理尺寸，
+    /// 再整体重排一次位置。
+    /// </summary>
+    /// <remarks>
+    /// 单靠 <see cref="Layout"/> 不够。卡片的窗口尺寸是在 <c>ApplyAutoSize</c> 里
+    /// 用当时的 <c>RasterizationScale</c> 把 DIP 乘成物理像素后 <c>Resize</c> 上去的，
+    /// 缩放改了以后这个像素值就不再对应同样的 DIP——卡片会整体变大或变小，
+    /// 而 <see cref="Layout"/> 仍按 <c>DipWidth/DipHeight</c> 算间距，于是出现
+    /// 「间距没跟着调整」的观感。必须先 <c>ApplyScaleAwareSize()</c> 再排版。
+    /// 调用方（<c>MainWindow.QueueDesktopCardRelayout</c>）已做 700ms 防抖，
+    /// 保证这里读到的是系统落定后的缩放值。
+    /// </remarks>
+    public void RelayoutForDisplayChange()
+    {
+        if (!_enabled || _cards.Count == 0) return;
+
+        App.TraceStartup($"DesktopCardManager.RelayoutForDisplayChange: cards={_cards.Count}");
+        foreach (var card in _cards.Values)
+            card.ApplyScaleAwareSize();
+
+        Layout();
     }
 
     /// <summary>

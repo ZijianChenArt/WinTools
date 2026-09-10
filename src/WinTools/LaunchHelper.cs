@@ -25,7 +25,7 @@ public static class LaunchHelper
         var fileFull = Path.GetFullPath(filePath);
 
         if (!File.Exists(fullPath))
-            return (false, $"程序不存在：\n{fullPath}\n请在“程序关联”中检查路径。");
+            return (false, $"程序不存在：\n{fullPath}\n请在「程序关联」中检查路径。");
 
         if (!File.Exists(fileFull))
             return (false, $"要打开的文件不存在：\n{fileFull}");

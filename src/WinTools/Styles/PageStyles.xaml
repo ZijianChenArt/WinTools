@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
     WinTools 统一 UI 规范（唯一真源）
     ============================================
@@ -31,6 +31,9 @@
         因为它要在页面 XAML 里直接引用。
     -->
     <CornerRadius x:Key="PageInnerCornerRadius">8</CornerRadius>
+    <Style x:Key="PageDesktopToolTipStyle" TargetType="ToolTip" BasedOn="{StaticResource DefaultToolTipStyle}">
+        <Setter Property="CornerRadius" Value="12"/>
+    </Style>
 
     <!-- ============ 排版 ============ -->
     <Style x:Key="PageTitleTextStyle" TargetType="TextBlock">
@@ -219,6 +222,61 @@
         <Setter Property="MinHeight" Value="120"/>
     </Style>
 
+    <!-- ============ 列表行内部（DataTemplate 里用） ============ -->
+    <!-- 列表行容器：输入法规则页与程序关联页共用同一套行内间距 -->
+    <Style x:Key="PageListRowStyle" TargetType="Grid">
+        <Setter Property="ColumnSpacing" Value="12"/>
+        <Setter Property="Padding" Value="8,10"/>
+        <Setter Property="MinHeight" Value="48"/>
+    </Style>
+    <!-- 列表行主标题（应用名 / 程序名） -->
+    <Style x:Key="PageListTitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
+    <!-- 行尾的强调小按钮（输入法「中文 / 英文」切换）。圆角走卡片内部的 8px。 -->
+    <Style x:Key="PageRowChipButtonStyle" TargetType="Button">
+        <Setter Property="Padding" Value="10,4"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="MinWidth" Value="56"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="CornerRadius" Value="{StaticResource PageInnerCornerRadius}"/>
+        <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextOnAccentFillColorPrimaryBrush}"/>
+    </Style>
+    <!-- 行首的扩展名徽标 -->
+    <Style x:Key="PageRowBadgeStyle" TargetType="Border">
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="CornerRadius" Value="{StaticResource PageInnerCornerRadius}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}"/>
+    </Style>
+    <Style x:Key="PageRowBadgeTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+    </Style>
+    <!-- 分区磁贴内部：图标 / 分区名 / 关键词摘要 -->
+    <Style x:Key="PageTileIconStyle" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="16"/>
+        <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+    </Style>
+    <Style x:Key="PageTileTitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="15"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+    </Style>
+    <Style x:Key="PageTileCaptionTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="MaxLines" Value="3"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    </Style>
     <!-- ============ 表单 ============ -->
     <Style x:Key="PageFormStackStyle" TargetType="StackPanel">
         <Setter Property="Spacing" Value="16"/>

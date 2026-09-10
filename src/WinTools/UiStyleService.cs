@@ -10,12 +10,10 @@ public static class UiStyleService
     private static readonly HashSet<Window> Windows = new();
     private static readonly HashSet<IUiStyleShell> Shells = new();
     private static string _preference = UiStylePreference.Mica;
-    private const int FixedContentBackgroundDepth = 40;
 
     public static string Preference => _preference;
 
     public static bool IsMica => UiStylePreference.IsMica(_preference);
-    public static int ContentBackgroundDepth => FixedContentBackgroundDepth;
 
     public static event EventHandler? StyleChanged;
 

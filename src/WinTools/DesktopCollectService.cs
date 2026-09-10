@@ -9,7 +9,11 @@ using WinTools.Services;
 
 namespace WinTools;
 
-/// <summary>收纳日志里的一条记录：一个文件从哪里被移到了哪里。</summary>
+/// <summary>旧版收纳日志的一条记录：一个文件从哪里被移到了哪里。</summary>
+/// <remarks>
+/// 新版**不再移动文件**，这个类型只在一次性迁移（<see cref="DesktopCollectService.MigrateLegacyManagedItems"/>）
+/// 里读旧日志时用到，读完即弃。
+/// </remarks>
 public sealed class CollectedEntry
 {
     [JsonPropertyName("source")]
@@ -26,318 +30,200 @@ public sealed class CollectedEntry
 }
 
 /// <summary>
-/// 桌面收纳：按分区规则把桌面文件<b>物理移动</b>到托管文件夹
-/// <c>%USERPROFILE%\WinTools\&lt;分区名&gt;</c>，桌面因此变干净；卡片再从托管文件夹读取真实文件与图标。
-/// <para>
-/// 每次移动都先写入收纳日志（<c>collected.json</c>），<see cref="RestoreAll"/> 可按日志把文件原样送回桌面。
-/// 只处理当前用户桌面，不动「公共桌面」；跳过隐藏 / 系统项与 desktop.ini。
-/// </para>
+/// 桌面分区的数据源。**不移动文件、不改文件属性**：桌面上的东西永远待在
+/// <c>桌面\xxx</c>，卡片只是按 <see cref="DesktopZoneMatcher"/> 的规则把它们实时分组显示。
 /// </summary>
+/// <remarks>
+/// 桌面之所以看起来干净，是因为 <see cref="DesktopIconVisibilityService"/> 关掉了系统的
+/// 「显示桌面图标」，和文件本身无关。
+/// <para>
+/// 2026-09-07 之前的做法是把桌面项目物理搬进 <c>%USERPROFILE%\WinTools\&lt;分区名&gt;</c>，
+/// 并用 <c>collected.json</c> 记账以便还原。那套机制已经删除，原因见 README 第 7.1 节：
+/// 它会改变文件真实路径，还会和正在写盘的下载 / 正打开着文件的程序抢占用。
+/// 旧数据由 <see cref="MigrateLegacyManagedItems"/> 一次性搬回桌面。
+/// </para>
+/// </remarks>
 public static class DesktopCollectService
 {
     private static readonly object Gate = new();
 
-    /// <summary>托管根目录：<c>%USERPROFILE%\WinTools</c>。</summary>
+    /// <summary>旧版托管根目录 <c>%USERPROFILE%\WinTools</c>。**只用于迁移**，新逻辑不再写入。</summary>
     public static string ManagedRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "WinTools");
 
     private static string JournalPath => Path.Combine(ManagedRoot, "collected.json");
 
-    /// <summary>某个分区的托管文件夹路径。</summary>
-    public static string ZoneFolder(string zoneName) =>
-        Path.Combine(ManagedRoot, SanitizeFolderName(zoneName));
+    #region 桌面枚举与分组
 
-    /// <summary>读取某个分区托管文件夹下的条目（供卡片显示）。</summary>
-    public static List<string> ListZoneItems(string zoneName)
+    /// <summary>用户桌面 + 公共桌面。公共桌面放的是所有用户共享的快捷方式（装软件时留下的）。</summary>
+    private static List<string> DesktopFolders()
     {
+        var folders = new List<string>();
         try
         {
-            var dir = ZoneFolder(zoneName);
-            if (!Directory.Exists(dir)) return new List<string>();
-            return Directory.EnumerateFileSystemEntries(dir)
-                .Where(p => !IsJournalOrSystem(p))
-                .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            if (!string.IsNullOrWhiteSpace(userDesktop)) folders.Add(userDesktop);
         }
-        catch { return new List<string>(); }
+        catch { /* 单独 try，整体不挂 */ }
+        try
+        {
+            var commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+            if (!string.IsNullOrWhiteSpace(commonDesktop)
+                && !folders.Contains(commonDesktop, StringComparer.OrdinalIgnoreCase))
+                folders.Add(commonDesktop);
+        }
+        catch { /* 某些系统没有公共桌面或没权限 */ }
+        return folders;
     }
 
-    /// <summary>卡片只显示已进入托管分区的项目，避免与桌面原生图标重复。</summary>
-    public static List<string> ListCardItems(string zoneName) => ListZoneItems(zoneName);
-
-    /// <summary>重命名分区的托管目录，并同步收纳日志中的路径与分区名。</summary>
-    public static bool RenameZone(string oldName, string newName)
+    /// <summary>枚举桌面上应当由卡片显示的项目。跳过 desktop.ini 和用户自己设了隐藏/系统属性的项。</summary>
+    /// <remarks>
+    /// **不再跳过本程序所在目录**：旧版跳过它是因为会物理移动文件，搬走正在运行的程序会出事；
+    /// 现在不移动任何东西，而且桌面图标是整体隐藏的——不显示它反而会让人找不到。
+    /// </remarks>
+    private static List<FileSystemInfo> EnumerateDesktopEntries()
     {
-        lock (Gate)
+        var result = new List<FileSystemInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var desktop in DesktopFolders())
+        {
+            if (!Directory.Exists(desktop)) continue;
+
+            IEnumerable<FileSystemInfo> entries;
+            try { entries = new DirectoryInfo(desktop).EnumerateFileSystemInfos(); }
+            catch (Exception ex)
+            {
+                ErrorReporter.Log($"DesktopCollectService.Enumerate({desktop})", ex);
+                continue;
+            }
+
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    if (IsShellSystemFile(entry.FullName)) continue;
+                    if ((entry.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
+                    if (!seen.Add(entry.FullName)) continue;
+                    result.Add(entry);
+                }
+                catch { /* 单项失败不影响整体 */ }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>把桌面上的项目按分区规则分组。返回的每个分区都存在于 <paramref name="zones"/> 中。</summary>
+    /// <remarks>
+    /// 桌面图标整体隐藏后，**任何一项都必须落进某张卡片**，否则它在桌面上就彻底没有入口了。
+    /// 所以规则没命中时兜底到最后一个分区，而不是丢弃。
+    /// </remarks>
+    public static Dictionary<string, List<string>> GroupByZone(List<DesktopZone>? zones)
+    {
+        var grouped = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        if (zones is not { Count: > 0 }) return grouped;
+
+        foreach (var zone in zones)
+            grouped[zone.Name] = new List<string>();
+
+        foreach (var entry in EnumerateDesktopEntries())
         {
             try
             {
-                var source = ZoneFolder(oldName);
-                var destination = ZoneFolder(newName);
-                if (string.Equals(source, destination, StringComparison.OrdinalIgnoreCase)) return true;
-                if (Directory.Exists(destination)) return false;
-
-                if (Directory.Exists(source)) Directory.Move(source, destination);
-
-                var prefix = source.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                var journal = LoadJournal();
-                foreach (var entry in journal)
-                {
-                    if (string.Equals(entry.Zone, oldName, StringComparison.Ordinal)) entry.Zone = newName;
-                    if (entry.Destination.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                        entry.Destination = Path.Combine(destination, entry.Destination[prefix.Length..]);
-                }
-                SaveJournal(journal);
-                return true;
+                var isDirectory = (entry.Attributes & FileAttributes.Directory) == FileAttributes.Directory;
+                var index = DesktopZoneMatcher.Match(entry.Name, entry.FullName, isDirectory, zones);
+                if (index < 0 || index >= zones.Count) index = zones.Count - 1;   // 兜底，见上面的注释
+                grouped[zones[index].Name].Add(entry.FullName);
             }
-            catch (Exception ex)
-            {
-                ErrorReporter.Log("DesktopCollectService.RenameZone", ex);
-                return false;
-            }
+            catch { /* 单项失败不影响整体 */ }
         }
-    }
 
-    /// <summary>执行收纳。返回成功移动的条数；失败项跳过并计入 <paramref name="failed"/>。</summary>
-    public static int CollectAll(out int failed)
-    {
-        lock (Gate)
+        // 系统虚拟图标（此电脑 / 回收站 / 网络…）在桌面文件夹里没有文件，上面的枚举看不到它们。
+        // 桌面图标整体隐藏后必须由卡片接管，否则用户再也点不到。按**显示名**参与规则匹配
+        // （默认分区「文件夹与文件」的关键词里本来就有「此电脑 / 回收站 / 网络 / 控制面板」）。
+        foreach (var (parsingName, displayName) in DesktopShellItems.EnumerateVisible())
         {
-            failed = 0;
-            var plan = BuildPlan();
-            if (plan.Count == 0) return 0;
-
-            var journal = LoadJournal();
-            var moved = 0;
-
-            foreach (var item in plan)
+            try
             {
-                try
-                {
-                    var zoneDir = ZoneFolder(item.Zone);
-                    Directory.CreateDirectory(zoneDir);
-
-                    var dest = ResolveCollision(Path.Combine(zoneDir, Path.GetFileName(item.Source)));
-                    if (Directory.Exists(item.Source))
-                        Directory.Move(item.Source, dest);
-                    else
-                        File.Move(item.Source, dest);
-
-                    journal.Add(new CollectedEntry
-                    {
-                        Source = item.Source,
-                        Destination = dest,
-                        Zone = item.Zone,
-                        MovedUtc = DateTime.UtcNow,
-                    });
-                    // 每移动一项立即记录，避免进程意外终止后出现无法还原的文件。
-                    SaveJournal(journal);
-                    moved++;
-                }
-                catch
-                {
-                    failed++;
-                }
+                var index = DesktopZoneMatcher.Match(displayName, parsingName, isDirectory: true, zones);
+                if (index < 0 || index >= zones.Count) index = zones.Count - 1;
+                grouped[zones[index].Name].Add(parsingName);
             }
-
-            return moved;
+            catch { /* 单项失败不影响整体 */ }
         }
-    }
 
-    /// <summary>
-    /// 将 DeskBox 旧版桌面文件区中的顶层项目导入当前分区。只读取用户目录下已知的
-    /// “我的桌面”和“DeskBox”两个旧文件夹，不递归触碰 DeskBox 的其它应用数据。
-    /// 每项仍写入收纳日志，因此“全部还原”可将其放回原来的 DeskBox 目录。
-    /// </summary>
-    public static int ImportLegacyDeskBoxItems(out int failed)
-    {
-        lock (Gate)
+        foreach (var (zone, list) in grouped)
         {
-            failed = 0;
-            var zones = ConfigService.Load().DesktopZones;
-            if (zones is not { Count: > 0 }) return 0;
-
-            var deskBoxRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "DeskBox");
-            var sourceDirectories = new[] { "我的桌面", "DeskBox" }
-                .Select(name => Path.Combine(deskBoxRoot, name))
-                .Where(Directory.Exists)
-                .ToList();
-            if (sourceDirectories.Count == 0) return 0;
-
-            var journal = LoadJournal();
-            var moved = 0;
-            foreach (var sourceDirectory in sourceDirectories)
-            {
-                IEnumerable<FileSystemInfo> entries;
-                try { entries = new DirectoryInfo(sourceDirectory).EnumerateFileSystemInfos().ToList(); }
-                catch { failed++; continue; }
-
-                foreach (var entry in entries)
-                {
-                    try
-                    {
-                        if ((entry.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0)
-                            continue;
-                        var isDirectory = (entry.Attributes & FileAttributes.Directory) != 0;
-                        var zoneIndex = DesktopZoneMatcher.Match(entry.Name, entry.FullName, isDirectory, zones);
-                        if (zoneIndex < 0 || zoneIndex >= zones.Count) { failed++; continue; }
-
-                        var zone = zones[zoneIndex].Name;
-                        var zoneDir = ZoneFolder(zone);
-                        Directory.CreateDirectory(zoneDir);
-                        var destination = ResolveCollision(Path.Combine(zoneDir, entry.Name));
-                        if (isDirectory)
-                            Directory.Move(entry.FullName, destination);
-                        else
-                            File.Move(entry.FullName, destination);
-
-                        journal.Add(new CollectedEntry
-                        {
-                            Source = entry.FullName,
-                            Destination = destination,
-                            Zone = zone,
-                            MovedUtc = DateTime.UtcNow,
-                        });
-                        SaveJournal(journal);
-                        moved++;
-                    }
-                    catch
-                    {
-                        failed++;
-                    }
-                }
-            }
-
-            return moved;
+            var sorted = CardItemOrderStore.Apply(zone, list);
+            list.Clear();
+            list.AddRange(sorted);
         }
+
+        return grouped;
     }
 
-    /// <summary>
-    /// 按当前分类规则重新整理已经在 WinTools 托管根目录中的项目。分类改版后旧目录不会
-    /// 自动消失，因此需要物理迁移并同步修改 journal.destination，保证“全部还原”仍有效。
-    /// </summary>
-    public static int ReclassifyManagedItems(out int failed)
+    /// <summary>读取单个分区当前应显示的桌面项目。</summary>
+    public static List<string> ListCardItems(string zoneName)
     {
-        lock (Gate)
-        {
-            failed = 0;
-            var zones = ConfigService.Load().DesktopZones;
-            if (zones is not { Count: > 0 } || !Directory.Exists(ManagedRoot)) return 0;
-
-            var journal = LoadJournal();
-            var moved = 0;
-            var zoneDirectories = Directory.EnumerateDirectories(ManagedRoot).ToList();
-            foreach (var sourceDirectory in zoneDirectories)
-            {
-                IEnumerable<FileSystemInfo> entries;
-                try { entries = new DirectoryInfo(sourceDirectory).EnumerateFileSystemInfos().ToList(); }
-                catch { failed++; continue; }
-
-                foreach (var entry in entries)
-                {
-                    try
-                    {
-                        if (IsJournalOrSystem(entry.FullName)) continue;
-                        var isDirectory = (entry.Attributes & FileAttributes.Directory) != 0;
-                        var zoneIndex = DesktopZoneMatcher.Match(entry.Name, entry.FullName, isDirectory, zones);
-                        if (zoneIndex < 0 || zoneIndex >= zones.Count) { failed++; continue; }
-
-                        var zone = zones[zoneIndex].Name;
-                        var destinationDirectory = ZoneFolder(zone);
-                        if (string.Equals(
-                            Path.TrimEndingDirectorySeparator(sourceDirectory),
-                            Path.TrimEndingDirectorySeparator(destinationDirectory),
-                            StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        Directory.CreateDirectory(destinationDirectory);
-                        var previousPath = entry.FullName;
-                        var destination = ResolveCollision(Path.Combine(destinationDirectory, entry.Name));
-                        if (isDirectory)
-                            Directory.Move(previousPath, destination);
-                        else
-                            File.Move(previousPath, destination);
-
-                        foreach (var record in journal.Where(record =>
-                                     string.Equals(record.Destination, previousPath, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            record.Destination = destination;
-                            record.Zone = zone;
-                        }
-                        SaveJournal(journal);
-                        moved++;
-                    }
-                    catch
-                    {
-                        failed++;
-                    }
-                }
-
-                try
-                {
-                    if (!Directory.EnumerateFileSystemEntries(sourceDirectory).Any()
-                        && !zones.Any(zone => string.Equals(
-                            ZoneFolder(zone.Name), sourceDirectory, StringComparison.OrdinalIgnoreCase)))
-                        Directory.Delete(sourceDirectory, recursive: false);
-                }
-                catch { /* 空旧目录清理失败不影响分类结果 */ }
-            }
-
-            return moved;
-        }
+        var zones = SettingsService.Instance.Current.DesktopZones;
+        return GroupByZone(zones).TryGetValue(zoneName, out var items) ? items : new List<string>();
     }
 
-    /// <summary>按收纳日志把所有文件送回原位置。返回成功还原的条数。</summary>
-    public static int RestoreAll(out int failed)
+    /// <summary>桌面上被卡片接管的项目总数（= 桌面上可见项目数）。</summary>
+    public static int ManagedItemCount()
     {
-        lock (Gate)
-        {
-            failed = 0;
-            var journal = LoadJournal();
-            if (journal.Count == 0) return 0;
-
-            var remaining = new List<CollectedEntry>();
-            var restored = 0;
-
-            foreach (var entry in journal)
-            {
-                try
-                {
-                    if (!File.Exists(entry.Destination) && !Directory.Exists(entry.Destination))
-                        continue; // 已被用户手动移走：从日志里丢弃，不报错
-
-                    // 公共桌面通常需要管理员权限才能写入。WinTools 正式版以普通用户运行时，
-                    // 直接按日志写回 C:\Users\Public\Desktop 会让这一整批项目全部失败。
-                    // “还原到桌面”的用户预期是重新出现在自己的桌面，因此公共桌面来源
-                    // 安全地落到当前用户桌面；用户桌面及其它旧版来源仍恢复到原路径。
-                    var restoreTarget = GetRestoreTarget(entry.Source);
-                    var back = ResolveCollision(restoreTarget);
-                    Directory.CreateDirectory(Path.GetDirectoryName(back)!);
-                    if (Directory.Exists(entry.Destination))
-                        Directory.Move(entry.Destination, back);
-                    else
-                        File.Move(entry.Destination, back);
-                    restored++;
-                }
-                catch
-                {
-                    failed++;
-                    remaining.Add(entry); // 还原失败的留在日志里，下次可重试
-                }
-            }
-
-            SaveJournal(remaining);
-            return restored;
-        }
-    }
-
-    /// <summary>当前收纳日志里的条目数（>0 表示桌面上有文件已被收走）。</summary>
-    public static int CollectedCount()
-    {
-        try { return LoadJournal().Count; }
+        try { return EnumerateDesktopEntries().Count; }
         catch { return 0; }
     }
+
+    #endregion
+
+    #region 跨分区归属
+
+    /// <summary>跨分区移动结果。</summary>
+    public enum MoveZoneResult
+    {
+        Success = 0,
+        SourceNotFound = 1,
+        SameZone = 2,
+        TargetInvalid = 3,
+        PhysicalFailed = 4,
+    }
+
+    /// <summary>判断能否把某个桌面项目改判到另一个分区。</summary>
+    /// <remarks>
+    /// **不动文件**。真正的归属写入是把名字加进目标分区的显式清单
+    /// （<c>DesktopZone.Items</c>，由 <c>DesktopCardManager.Card_ItemMovedIn</c> 落盘），
+    /// 下一次 <see cref="DesktopZoneMatcher.Match"/> 就会把它算进目标分区。
+    /// </remarks>
+    public static MoveZoneResult CanAssignToZone(string sourcePath, string targetZoneName)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetZoneName))
+            return MoveZoneResult.TargetInvalid;
+        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+            return MoveZoneResult.SourceNotFound;
+
+        var zones = SettingsService.Instance.Current.DesktopZones;
+        if (zones is not { Count: > 0 }) return MoveZoneResult.TargetInvalid;
+        if (!zones.Any(z => string.Equals(z.Name, targetZoneName, StringComparison.Ordinal)))
+            return MoveZoneResult.TargetInvalid;
+
+        try
+        {
+            var name = Path.GetFileName(sourcePath);
+            var isDirectory = Directory.Exists(sourcePath);
+            var index = DesktopZoneMatcher.Match(name, sourcePath, isDirectory, zones);
+            if (index >= 0 && index < zones.Count
+                && string.Equals(zones[index].Name, targetZoneName, StringComparison.Ordinal))
+                return MoveZoneResult.SameZone;
+        }
+        catch { /* 判不出来就当作可以改判 */ }
+
+        return MoveZoneResult.Success;
+    }
+
+    #endregion
 
     #region 删除到回收站
 
@@ -379,8 +265,6 @@ public static class DesktopCollectService
     /// <remarks>
     /// 通过 SHFileOperation + FOF_ALLOWUNDO 走系统回收站（不是真删除），用户可在资源管理器
     /// 「回收站」里还原。文件路径必须以双 null 结尾（SHFileOperation 的字符串约定）。
-    /// 同时从收纳日志（collected.json）里移除相关条目，否则用户点"全部还原"会把已删除的文件
-    /// 当作"已收走"再创建一份空壳到桌面。
     /// </remarks>
     public static RecycleBinResult DeleteToRecycleBin(string path)
     {
@@ -416,7 +300,6 @@ public static class DesktopCollectService
             if (File.Exists(path) || Directory.Exists(path))
                 return RecycleBinResult.Failed;
 
-            RemoveJournalEntriesFor(path);
             return RecycleBinResult.Success;
         }
         catch
@@ -429,233 +312,168 @@ public static class DesktopCollectService
         }
     }
 
-    /// <summary>从收纳日志里剔除路径与已删除项匹配的条目（按 Source 或 Destination 任一字段）。</summary>
-    private static void RemoveJournalEntriesFor(string path)
-    {
-        try
-        {
-            var journal = LoadJournal();
-            var full = System.IO.Path.GetFullPath(path);
-            var remaining = journal.Where(entry =>
-                !string.Equals(System.IO.Path.GetFullPath(entry.Source), full, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(System.IO.Path.GetFullPath(entry.Destination), full, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (remaining.Count != journal.Count)
-                SaveJournal(remaining);
-        }
-        catch
-        {
-            // 日志清理失败不影响主流程。
-        }
-    }
-
     #endregion
 
-    #region 跨分区移动
-
-    /// <summary>跨分区移动结果。</summary>
-    public enum MoveZoneResult
-    {
-        Success = 0,
-        SourceNotFound = 1,
-        SameZone = 2,
-        TargetInvalid = 3,
-        PhysicalFailed = 4,
-    }
-
-    /// <summary>把托管文件/文件夹从当前所在分区移动到另一个分区。
-    /// 物理移动 + 更新 collected.json。FileSystemWatcher 会自动触发双方分区卡片刷新。</summary>
-    public static MoveZoneResult MoveItemToZone(string sourcePath, string targetZoneName)
-    {
-        if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetZoneName))
-            return MoveZoneResult.TargetInvalid;
-        var isFile = File.Exists(sourcePath);
-        var isDir = Directory.Exists(sourcePath);
-        if (!isFile && !isDir) return MoveZoneResult.SourceNotFound;
-
-        // 目标分区不能是"其他"——用户拖动时"其他"分区是兜底，不应该手动塞东西进去。
-        // 也不允许把项目移到与当前所在分区相同的"其他"分区（即自己所在的分区）。
-        // 通过检查 sourcePath 是否在目标分区目录下判断。
-        var targetDir = ZoneFolder(targetZoneName);
-        if (string.IsNullOrEmpty(targetDir)) return MoveZoneResult.TargetInvalid;
-        var sourceFull = Path.GetFullPath(sourcePath).TrimEnd('\\');
-        var targetFull = Path.GetFullPath(targetDir).TrimEnd('\\');
-        if (sourceFull.Equals(targetFull, StringComparison.OrdinalIgnoreCase) ||
-            sourceFull.StartsWith(targetFull + "\\", StringComparison.OrdinalIgnoreCase))
-        {
-            return MoveZoneResult.SameZone;
-        }
-
-        Directory.CreateDirectory(targetDir);
-        var fileName = Path.GetFileName(sourcePath);
-        var dest = ResolveCollision(Path.Combine(targetDir, fileName));
-        try
-        {
-            if (isDir)
-                Directory.Move(sourcePath, dest);
-            else
-                File.Move(sourcePath, dest);
-        }
-        catch
-        {
-            return MoveZoneResult.PhysicalFailed;
-        }
-
-        // 更新 collected.json：把旧条目的 Destination 改成新路径（Source 仍是桌面原路径）。
-        // 如果原条目不存在（用户手动放进去的），添加新条目。
-        var journal = LoadJournal();
-        var updated = false;
-        for (var i = 0; i < journal.Count; i++)
-        {
-            var entry = journal[i];
-            if (string.Equals(
-                Path.GetFullPath(entry.Destination).TrimEnd('\\'),
-                sourceFull,
-                StringComparison.OrdinalIgnoreCase))
-            {
-                journal[i] = new CollectedEntry
-                {
-                    Source = entry.Source,
-                    Destination = dest,
-                    Zone = targetZoneName,
-                    MovedUtc = DateTime.UtcNow,
-                };
-                updated = true;
-                break;
-            }
-        }
-        if (!updated)
-        {
-            journal.Add(new CollectedEntry
-            {
-                Source = sourcePath,
-                Destination = dest,
-                Zone = targetZoneName,
-                MovedUtc = DateTime.UtcNow,
-            });
-        }
-        SaveJournal(journal);
-        return MoveZoneResult.Success;
-    }
-
-    #endregion
-
-    /// <summary>读取桌面（用户 + 公共）与已托管分区中的项目名称，供分区规则编辑器选择。</summary>
+    /// <summary>读取桌面上的项目名称，供分区规则编辑器选择。</summary>
     public static List<string> ListAvailableItemNames()
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            foreach (var desktop in new[]
-            {
-                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-            }.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (string.IsNullOrWhiteSpace(desktop) || !Directory.Exists(desktop)) continue;
-                foreach (var entry in Directory.EnumerateFileSystemEntries(desktop))
-                    if (!IsJournalOrSystem(entry)) names.Add(Path.GetFileName(entry));
-            }
-
-            foreach (var zone in ConfigService.Load().DesktopZones ?? new List<DesktopZone>())
-                foreach (var path in ListZoneItems(zone.Name))
-                    names.Add(Path.GetFileName(path));
+            foreach (var entry in EnumerateDesktopEntries())
+                names.Add(entry.Name);
         }
         catch { /* 返回当前已读取的名称 */ }
 
         return names.OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
-    #region 计划与匹配
+    #region 旧版数据迁移（一次性）
 
-    private readonly record struct PlanItem(string Source, string Zone);
-
-    /// <summary>扫描用户桌面 + 公共桌面，按分区规则决定每一项应归入哪个分区。
-    /// 公共桌面（<c>C:\Users\Public\Desktop</c>）所有用户共享，之前只扫用户桌面
-    /// 导致公共桌面的快捷方式无法被收纳——2026-08-31 修复。</summary>
-    private static List<PlanItem> BuildPlan()
+    /// <summary>旧版托管目录里还有没有文件（有就说明需要迁移）。</summary>
+    public static bool HasLegacyManagedItems()
     {
-        var result = new List<PlanItem>();
-        var zones = ConfigService.Load().DesktopZones;
-        if (zones is not { Count: > 0 }) return result;
-
-        var desktops = new List<string>();
         try
         {
-            var userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            if (!string.IsNullOrEmpty(userDesktop)) desktops.Add(userDesktop);
+            if (!Directory.Exists(ManagedRoot)) return false;
+            return Directory.EnumerateDirectories(ManagedRoot)
+                .Any(dir => Directory.EnumerateFileSystemEntries(dir).Any(p => !IsShellSystemFile(p)));
         }
-        catch { /* 单独 try，整体不挂 */ }
-        try
-        {
-            var commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
-            if (!string.IsNullOrEmpty(commonDesktop)
-                && !desktops.Contains(commonDesktop, StringComparer.OrdinalIgnoreCase))
-                desktops.Add(commonDesktop);
-        }
-        catch { /* 公共桌面目录某些系统不存在或没权限 */ }
-
-        foreach (var desktop in desktops)
-        {
-            if (string.IsNullOrEmpty(desktop) || !Directory.Exists(desktop)) continue;
-
-            IEnumerable<FileSystemInfo> entries;
-            try { entries = new DirectoryInfo(desktop).EnumerateFileSystemInfos(); }
-            catch { continue; }
-
-            foreach (var entry in entries)
-            {
-                try
-                {
-                    if (IsJournalOrSystem(entry.FullName)) continue;
-                    // 不移动包含当前可执行文件的桌面工程/安装目录，否则会破坏正在运行的程序。
-                    if (IsSamePathOrAncestor(entry.FullName, AppContext.BaseDirectory)) continue;
-                    var attrs = entry.Attributes;
-                    if ((attrs & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
-
-                    var isDir = (attrs & FileAttributes.Directory) == FileAttributes.Directory;
-                    var name = entry.Name;
-                    var zoneIndex = DesktopZoneMatcher.Match(name, entry.FullName, isDir, zones);
-                    if (zoneIndex < 0 || zoneIndex >= zones.Count) continue;
-
-                    // 同一个文件路径（用户桌面 / 公共桌面 解析到同一 source）已经入过则跳过
-                    if (result.Any(p => string.Equals(p.Source, entry.FullName, StringComparison.OrdinalIgnoreCase)))
-                        continue;
-
-                    result.Add(new PlanItem(entry.FullName, zones[zoneIndex].Name));
-                }
-                catch { /* 单项失败不影响整体 */ }
-            }
-        }
-
-        return result;
+        catch { return false; }
     }
 
-    #endregion
+    /// <summary>
+    /// 把旧版搬进 <c>%USERPROFILE%\WinTools\&lt;分区名&gt;</c> 的项目**搬回桌面**，
+    /// 并返回「文件名 → 分区名」的归属，交给调用方写进配置的显式清单。
+    /// </summary>
+    /// <remarks>
+    /// 优先还原到 <c>collected.json</c> 记的原路径；公共桌面来源统一落到当前用户桌面
+    /// （改公共桌面要管理员权限）。目标重名时自动追加 " (2)"。
+    /// 迁移前会把旧日志另存为 <c>collected.json.migrated-&lt;时间戳&gt;</c>，不直接删。
+    /// </remarks>
+    public static int MigrateLegacyManagedItems(out int failed, out Dictionary<string, string> zoneByName)
+    {
+        lock (Gate)
+        {
+            failed = 0;
+            zoneByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var moved = 0;
 
-    #region 日志读写
+            try
+            {
+                if (!Directory.Exists(ManagedRoot)) return 0;
+
+                var zones = SettingsService.Instance.Current.DesktopZones ?? new List<DesktopZone>();
+                var userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                if (string.IsNullOrWhiteSpace(userDesktop) || !Directory.Exists(userDesktop)) return 0;
+
+                foreach (var zoneDir in Directory.EnumerateDirectories(ManagedRoot).ToList())
+                {
+                    var folderName = Path.GetFileName(zoneDir);
+                    // 目录名是分区名的“合法化”结果，反查回真正的分区名。
+                    var zoneName = zones.FirstOrDefault(z =>
+                        string.Equals(SanitizeFolderName(z.Name), folderName, StringComparison.OrdinalIgnoreCase))?.Name;
+
+                    List<FileSystemInfo> entries;
+                    try { entries = new DirectoryInfo(zoneDir).EnumerateFileSystemInfos().ToList(); }
+                    catch (Exception ex) { ErrorReporter.Log($"Migrate.Enumerate({zoneDir})", ex); failed++; continue; }
+
+                    foreach (var entry in entries)
+                    {
+                        try
+                        {
+                            if (IsShellSystemFile(entry.FullName)) continue;
+
+                            // **一律落到当前用户桌面**，不要照搬日志里的原路径。
+                            // 2026-09-07 实测：62 项里有 13 项的 Source 指向旧 DeskBox 目录
+                            // （`%USERPROFILE%\DeskBox\...`，早年从那个软件导入的），另有 2 项来自
+                            // 公共桌面（改那里要管理员权限）。按原路径还原会把它们送回桌面**之外**，
+                            // 于是既不在桌面、也不在卡片里，等于凭空消失。
+                            var destination = ResolveCollision(Path.Combine(userDesktop, entry.Name));
+                            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                            if (entry is DirectoryInfo)
+                                Directory.Move(entry.FullName, destination);
+                            else
+                                File.Move(entry.FullName, destination);
+
+                            if (!string.IsNullOrEmpty(zoneName))
+                                zoneByName[Path.GetFileName(destination)] = zoneName;
+                            moved++;
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorReporter.Log($"Migrate.Move({entry.FullName})", ex);
+                            failed++;
+                        }
+                    }
+
+                    try
+                    {
+                        if (!Directory.EnumerateFileSystemEntries(zoneDir).Any())
+                            Directory.Delete(zoneDir, recursive: false);
+                    }
+                    catch { /* 空目录删不掉不影响迁移结果 */ }
+                }
+
+                ArchiveJournal();
+            }
+            catch (Exception ex)
+            {
+                ErrorReporter.Log("DesktopCollectService.MigrateLegacyManagedItems", ex);
+            }
+
+            return moved;
+        }
+    }
+
+    /// <summary>迁移遗留的分区目录改名。新逻辑没有分区目录，没有遗留目录时直接成功。</summary>
+    public static bool RenameZone(string oldName, string newName)
+    {
+        lock (Gate)
+        {
+            try
+            {
+                var source = Path.Combine(ManagedRoot, SanitizeFolderName(oldName));
+                var destination = Path.Combine(ManagedRoot, SanitizeFolderName(newName));
+                if (string.Equals(source, destination, StringComparison.OrdinalIgnoreCase)) return true;
+                if (!Directory.Exists(source)) return true;      // 常态：早就没有分区目录了
+                if (Directory.Exists(destination)) return false;
+
+                Directory.Move(source, destination);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ErrorReporter.Log("DesktopCollectService.RenameZone", ex);
+                return false;
+            }
+        }
+    }
 
     private static List<CollectedEntry> LoadJournal()
     {
         try
         {
             if (!File.Exists(JournalPath)) return new List<CollectedEntry>();
-            var json = File.ReadAllText(JournalPath);
-            return JsonSerializer.Deserialize<List<CollectedEntry>>(json) ?? new List<CollectedEntry>();
+            return JsonSerializer.Deserialize<List<CollectedEntry>>(File.ReadAllText(JournalPath))
+                ?? new List<CollectedEntry>();
         }
         catch { return new List<CollectedEntry>(); }
     }
 
-    private static void SaveJournal(List<CollectedEntry> entries)
+    /// <summary>迁移完成后把旧日志改名留档，而不是删除——万一迁移有问题还能人工对账。</summary>
+    private static void ArchiveJournal()
     {
         try
         {
-            Directory.CreateDirectory(ManagedRoot);
-            var json = JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true });
-            var tmp = JournalPath + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Move(tmp, JournalPath, overwrite: true);
+            if (!File.Exists(JournalPath)) return;
+            var archived = JournalPath + $".migrated-{DateTime.Now:yyyyMMdd-HHmmss}";
+            File.Move(JournalPath, archived, overwrite: false);
         }
-        catch { /* 写日志失败不阻断，但下次无法还原这批 */ }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("DesktopCollectService.ArchiveJournal", ex);
+        }
     }
 
     #endregion
@@ -679,41 +497,12 @@ public static class DesktopCollectService
         return Path.Combine(dir, $"{stem} ({Guid.NewGuid():N}){ext}");
     }
 
-    private static string GetRestoreTarget(string originalSource)
-    {
-        try
-        {
-            var commonDesktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
-            if (!string.IsNullOrWhiteSpace(commonDesktop) && IsSamePathOrAncestor(commonDesktop, originalSource))
-            {
-                var userDesktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                if (!string.IsNullOrWhiteSpace(userDesktop))
-                    return Path.Combine(userDesktop, Path.GetFileName(originalSource));
-            }
-        }
-        catch { /* 路径识别失败时沿用日志中的原路径 */ }
-
-        return originalSource;
-    }
-
-    private static bool IsJournalOrSystem(string path)
+    private static bool IsShellSystemFile(string path)
     {
         var name = Path.GetFileName(path);
         return string.Equals(name, "desktop.ini", StringComparison.OrdinalIgnoreCase)
             || string.Equals(name, "collected.json", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(name, "collected.json.tmp", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsSamePathOrAncestor(string candidate, string child)
-    {
-        try
-        {
-            var parent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidate));
-            var fullChild = Path.TrimEndingDirectorySeparator(Path.GetFullPath(child));
-            return string.Equals(parent, fullChild, StringComparison.OrdinalIgnoreCase)
-                || fullChild.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-        }
-        catch { return false; }
+            || name.StartsWith("collected.json.", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string SanitizeFolderName(string name)

@@ -205,7 +205,8 @@
                         <AppBarButton Icon="Add" Label="添加" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_Add_Click"/>
                         <AppBarButton Icon="Delete" Label="删除" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_Delete_Click"/>
                         <AppBarButton Icon="Refresh" Label="刷新" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RefreshApps_Click"/>
-                        <AppBarButton Icon="Undo" Label="恢复预设" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RestoreDefaults_Click"/>
+                        <AppBarButton Icon="Import" Label="补充推荐" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RestoreDefaults_Click"
+                                      ToolTipService.ToolTip="把内置推荐规则里还没有的补进列表，不覆盖已有规则"/>
                     </CommandBar>
                 </Grid>
 
@@ -220,20 +221,18 @@
                             <ListView x:Name="ImeRulesListView" SelectionMode="Single">
                                 <ListView.ItemTemplate>
                                     <DataTemplate x:DataType="local:ImeRuleEntry">
-                                        <Grid ColumnSpacing="12" Padding="8,10" MinHeight="48">
+                                        <Grid Style="{StaticResource PageListRowStyle}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                                                <TextBlock Text="{x:Bind DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource PageListTitleTextStyle}"/>
                                                 <TextBlock Text="{x:Bind ProcessName}" Style="{StaticResource PageCaptionTextStyle}"/>
                                             </StackPanel>
                                             <Button Grid.Column="1" Click="ImeModeChip_Click" Content="{x:Bind ModeLabel}" Tag="{x:Bind}"
-                                                    Padding="10,4" MinHeight="0" MinWidth="56"
-                                                    CornerRadius="{StaticResource PageInnerCornerRadius}" VerticalAlignment="Center" FontSize="13"
-                                                    Background="{ThemeResource AccentFillColorDefaultBrush}" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
-                                                    BorderThickness="0" ToolTipService.ToolTip="切换默认输入语言"/>
+                                                    Style="{StaticResource PageRowChipButtonStyle}"
+                                                    ToolTipService.ToolTip="切换默认输入语言"/>
                                         </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
@@ -330,19 +329,17 @@
                             <ListView x:Name="AssocListView" SelectionMode="Single">
                                 <ListView.ItemTemplate>
                                     <DataTemplate x:DataType="local:ConfigEntry">
-                                        <Grid ColumnSpacing="12" Padding="8,10" MinHeight="48">
+                                        <Grid Style="{StaticResource PageListRowStyle}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="72"/>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <Border Grid.Column="0" Padding="8,4" CornerRadius="{StaticResource PageInnerCornerRadius}"
-                                                    HorizontalAlignment="Center" VerticalAlignment="Center" BorderThickness="0"
-                                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                                                <TextBlock Text="{x:Bind Ext}" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}" FontSize="13"/>
+                                            <Border Grid.Column="0" Style="{StaticResource PageRowBadgeStyle}">
+                                                <TextBlock Text="{x:Bind Ext}" Style="{StaticResource PageRowBadgeTextStyle}"/>
                                             </Border>
                                             <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{x:Bind Name}" Style="{StaticResource PageListTitleTextStyle}"/>
                                                 <TextBlock Text="{x:Bind Path}" Style="{StaticResource PageCaptionTextStyle}"/>
                                             </StackPanel>
                                         </Grid>
@@ -399,8 +396,8 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
-                    <TextBlock Text="点击桌面" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="单击桌面空白处显示桌面，再单击一次恢复窗口。"
+                    <TextBlock Text="双击桌面" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="双击桌面空白处显示桌面，再双击一次恢复窗口。"
                                Style="{StaticResource PageDescriptionTextStyle}"/>
                 </StackPanel>
                 <ToggleSwitch x:Name="DesktopClickToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
@@ -410,7 +407,61 @@
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
                 <StackPanel Style="{StaticResource PageCardStackStyle}">
                     <tk:SettingsCard Header="不会触发的情况"
-                                     Description="点在桌面图标或任务栏上、以及任何拖动操作，都不会被当成单击。">
+                                     Description="点在桌面图标或任务栏上、以及任何拖动操作，都不会被当成单击">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE7F4;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                    </tk:SettingsCard>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============ 悬浮搜索 ============ -->
+        <Grid x:Name="ContentSpotlight" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="悬浮搜索" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="按快捷键在屏幕中央呼出搜索框，输入即可检索并启动电脑上的应用程序。支持拼音全拼与首字母（baidu / bdwp 都能找到「百度网盘」），拼错一两个字母也能搜到。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="SpotlightToggle" Grid.Column="1" OnContent="已启用" OffContent="已禁用"
+                              VerticalAlignment="Center" Toggled="SpotlightToggle_Toggled"/>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel Style="{StaticResource PageCardStackStyle}">
+                    <tk:SettingsCard Header="呼出快捷键" Description="默认 Alt+Space；关闭本功能后会把该组合键让回系统">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE765;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                            <TextBox x:Name="HotkeySpotlightBox" PlaceholderText="例如 Alt+Space" Width="200" VerticalAlignment="Center"/>
+                            <Button Content="应用" Click="Spotlight_ApplyHotkey_Click" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </tk:SettingsCard>
+
+                    <tk:SettingsCard Header="应用索引" Description="来自开始菜单、桌面快捷方式与系统「所有应用」清单，建索引时顺带算好拼音；装 / 卸载程序后可手动重建">
+                        <tk:SettingsCard.HeaderIcon>
+                            <FontIcon Glyph="&#xE721;"/>
+                        </tk:SettingsCard.HeaderIcon>
+                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                            <TextBlock x:Name="SpotlightStatusText" Text="索引尚未建立，首次呼出时会自动扫描。"
+                                       Style="{StaticResource PageCaptionTextStyle}" VerticalAlignment="Center"/>
+                            <Button Content="重建索引" Click="Spotlight_RebuildIndex_Click" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </tk:SettingsCard>
+
+                    <tk:SettingsCard Header="操作方式"
+                                     Description="↑↓ 选择，Enter 打开，Ctrl+Enter 打开所在位置，Esc 或点击别处关闭；没有匹配结果时按 Enter 直接执行输入内容。输入法处于中文状态时会先经过候选窗，按 Shift 切到英文更顺手">
                         <tk:SettingsCard.HeaderIcon>
                             <FontIcon Glyph="&#xE7F4;"/>
                         </tk:SettingsCard.HeaderIcon>
@@ -495,16 +546,16 @@
                             </StackPanel>
                         </Button>
                         <Button Style="{StaticResource PageToolbarIconButtonStyle}"
-                                ToolTipService.ToolTip="查看更多">
+                                ToolTipService.ToolTip="更多">
                             <FontIcon Glyph="&#xE712;"/>
                             <Button.Flyout>
                                 <MenuFlyout Placement="BottomEdgeAlignedRight">
                                     <MenuFlyoutItem Icon="Save" Text="保存到预设" Click="Zone_PresetExport_Click"/>
                                     <MenuFlyoutItem Icon="OpenFile" Text="从预设恢复" Click="Zone_PresetImport_Click"/>
                                     <MenuFlyoutSeparator/>
-                                    <MenuFlyoutItem Icon="Sync" Text="重新同步桌面" Click="Zone_Reapply_Click"/>
+                                    <MenuFlyoutItem Icon="Sync" Text="同步桌面" Click="Zone_Reapply_Click"/>
                                     <MenuFlyoutItem Icon="Undo" Text="恢复默认分区" Click="Zone_ResetDefaults_Click"/>
-                                    <MenuFlyoutItem Icon="Back" Text="全部还原到桌面" Click="DesktopRestore_Click"/>
+                                    <MenuFlyoutItem Icon="Back" Text="恢复桌面图标" Click="DesktopRestore_Click"/>
                                 </MenuFlyout>
                             </Button.Flyout>
                         </Button>
@@ -548,13 +599,10 @@
                                                     <RowDefinition Height="*"/>
                                                 </Grid.RowDefinitions>
                                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                                    <FontIcon Glyph="&#xE8B7;" FontSize="16" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
-                                                    <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="15"
-                                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                                                    <FontIcon Glyph="&#xE8B7;" Style="{StaticResource PageTileIconStyle}"/>
+                                                    <TextBlock Text="{x:Bind Name}" Style="{StaticResource PageTileTitleTextStyle}"/>
                                                 </StackPanel>
-                                                <TextBlock Grid.Row="1" Text="{x:Bind KeywordsSummary}" FontSize="12"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                           TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Grid.Row="1" Text="{x:Bind KeywordsSummary}" Style="{StaticResource PageTileCaptionTextStyle}"/>
                                             </Grid>
                                         </Border>
                                     </DataTemplate>

@@ -83,6 +83,8 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
             // 关闭时清空本次暂存记录并隐藏，窗口实例保留供下次拖拽复用。
             AppWindow.Closing += (_, e) =>
             {
+                // 进程正在退出时放行，否则窗口会一直拦下 WM_CLOSE（见 App.IsShuttingDown）。
+                if (App.IsShuttingDown) return;
                 e.Cancel = true;
                 Items.Clear();
                 AppWindow.Hide();

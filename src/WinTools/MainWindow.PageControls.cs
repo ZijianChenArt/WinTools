@@ -1,4 +1,4 @@
-using Microsoft.UI.Xaml.Controls;
+﻿using Microsoft.UI.Xaml.Controls;
 
 namespace WinTools;
 
@@ -29,6 +29,7 @@ public sealed partial class MainWindow
     private RadioButtons ThemeRadioButtons => FeaturePages.GetControl<RadioButtons>(nameof(ThemeRadioButtons));
     private Grid ContentAppSettings => FeaturePages.GetControl<Grid>(nameof(ContentAppSettings));
     private Grid ContentDesktopClick => FeaturePages.GetControl<Grid>(nameof(ContentDesktopClick));
+    private Grid ContentSpotlight => FeaturePages.GetControl<Grid>(nameof(ContentSpotlight));
     private Grid ContentDragStash => FeaturePages.GetControl<Grid>(nameof(ContentDragStash));
     private Grid ContentThreeFingerDrag => FeaturePages.GetControl<Grid>(nameof(ContentThreeFingerDrag));
     private TextBlock AssocCountText => FeaturePages.GetControl<TextBlock>(nameof(AssocCountText));
@@ -51,4 +52,7 @@ public sealed partial class MainWindow
     private ToggleSwitch PerAppImeToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(PerAppImeToggle));
     private ToggleSwitch ProgramAssocToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(ProgramAssocToggle));
     private ToggleSwitch ThreeFingerDragToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(ThreeFingerDragToggle));
+    private ToggleSwitch SpotlightToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(SpotlightToggle));
+    private TextBox HotkeySpotlightBox => FeaturePages.GetControl<TextBox>(nameof(HotkeySpotlightBox));
+    private TextBlock SpotlightStatusText => FeaturePages.GetControl<TextBlock>(nameof(SpotlightStatusText));
 }

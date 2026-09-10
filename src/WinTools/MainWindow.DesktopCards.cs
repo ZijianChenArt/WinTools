@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Text.Json;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -133,6 +134,42 @@ public sealed partial class MainWindow
 
     }
 
+    /// <summary>
+    /// 分辨率 / 缩放 / 工作区变化后重排卡片（由 <c>HotkeyWndProc</c> 的
+    /// WM_DISPLAYCHANGE / WM_DPICHANGED / WM_SETTINGCHANGE 调用）。
+    /// </summary>
+    /// <remarks>
+    /// 必须防抖：改一次分辨率 Windows 会连发好几条消息，而且消息到达时
+    /// <c>XamlRoot.RasterizationScale</c> 往往还是旧值——立刻重排会用旧缩放算出
+    /// 错误的物理像素，正是"改完分辨率要手动同步一次才正常"的根因。
+    /// 700ms 是等系统把工作区和 DPI 都落定（README 7.7 的同一考量）。
+    /// </remarks>
+    internal void QueueDesktopCardRelayout()
+    {
+        if (_desktopCardManager?.IsEnabled != true) return;
+
+        if (_displayChangeTimer == null)
+        {
+            _displayChangeTimer = DispatcherQueue.CreateTimer();
+            _displayChangeTimer.Interval = TimeSpan.FromMilliseconds(700);
+            _displayChangeTimer.IsRepeating = false;
+            _displayChangeTimer.Tick += (_, _) =>
+            {
+                try
+                {
+                    _desktopCardManager?.RelayoutForDisplayChange();
+                }
+                catch (Exception ex)
+                {
+                    ErrorReporter.Log("MainWindow.QueueDesktopCardRelayout", ex);
+                }
+            };
+        }
+
+        _displayChangeTimer.Stop();
+        _displayChangeTimer.Start();
+    }
+
     internal void DesktopCardMaxColumns_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
 
@@ -187,95 +224,60 @@ public sealed partial class MainWindow
 
     }
 
-    /// <summary>刷新「已收纳 N 项」提示。</summary>
+    /// <summary>刷新「桌面 N 项」提示。</summary>
+    /// <remarks>
+    /// 新机制下文件不会被搬走，所以这里显示的是「桌面上有多少项由卡片接管显示」，
+    /// 不再是「已收纳（=已移走）多少项」。
+    /// </remarks>
     private void UpdateCollectStatus()
     {
         if (CollectStatusText == null) return;
 
-        var n = DesktopCollectService.CollectedCount();
+        var n = DesktopCollectService.ManagedItemCount();
 
-        CollectStatusText.Text = n > 0 ? $"已收纳 {n}项" : "";
+        CollectStatusText.Text = n > 0 ? $"桌面 {n} 项已收进卡片" : "";
 
 
     }
 
+    /// <summary>「恢复桌面图标」：关掉分区并把系统的「显示桌面图标」打开。</summary>
+    /// <remarks>
+    /// 新机制下没有「还原文件」这回事——文件从来没有离开过桌面，路径一直是 <c>桌面\xxx</c>。
+    /// 用户想重新看到桌面图标时要做的只有一件事：把 Windows 的「显示桌面图标」还回去。
+    /// </remarks>
     internal async void DesktopRestore_Click(object sender, RoutedEventArgs e)
     {
-
         if (MainNav.XamlRoot == null) return;
-
-        var pending = DesktopCollectService.CollectedCount();
-
-        if (pending == 0)
-        {
-
-            await new ContentDialog
-            {
-
-                Title = "没有可还原的项",
-                Content = "收纳日志为空，桌面文件都在原位。",
-                CloseButtonText = "确定",
-                XamlRoot = MainNav.XamlRoot,
-            }
-
-.ShowAsync();
-
-            return;
-
-
-        }
 
         var confirm = new ContentDialog
         {
-
-            Title = "确认还原",
-            Content = $"将把 {pending}个已收纳的项目移回桌面原位置。",
-            PrimaryButtonText = "全部还原",
+            Title = "恢复桌面图标",
+            Content = "将关闭桌面分区，并重新显示桌面图标。\n"
+                    + "文件本来就一直在桌面上，这一步不会移动任何东西。",
+            PrimaryButtonText = "恢复",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = MainNav.XamlRoot,
-        }
-
-;
+        };
 
         if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
 
-        // 先关闭自动收纳，否则文件回到桌面后会立即再次进入卡片。
+        // 关掉分区会连带把桌面图标还回去（见 DesktopCardManager.SetEnabled）。
         _config.EnableDesktopCard = false;
         ConfigService.Update(c => c.EnableDesktopCard = false);
-
         _desktopCardManager?.SetEnabled(false);
 
         if (DesktopCardToggle != null)
         {
-
             _isLoadingDragStashSettings = true;
-
             DesktopCardToggle.IsOn = false;
-
             _isLoadingDragStashSettings = false;
-
-
         }
 
-        var restored = DesktopCollectService.RestoreAll(out var failed);
+        // 兜底：分区本来就是关的时候 SetEnabled 不会被调用。
+        Services.DesktopIconVisibilityService.SetHidden(false);
 
         UpdateCollectStatus();
-
-        SyncDesktopCardsIfEnabled();
-
-        await new ContentDialog
-        {
-
-            Title = "还原完成",
-            Content = failed > 0 ? $"已还原 {restored}项，{failed}项失败（保留在日志里，可再试一次）。" : $"已把 {restored}项送回桌面。",
-            CloseButtonText = "确定",
-            XamlRoot = MainNav.XamlRoot,
-        }
-
-.ShowAsync();
-
-
     }
 
     private void SyncMainToggle(ToggleSwitch? toggle, bool enabled)
@@ -388,7 +390,7 @@ public sealed partial class MainWindow
     private void UpdateZoneCount()
     {
 
-        ZoneCountText.Text = _desktopZones.Count > 0 ? $"{_desktopZones.Count}个" : "暂无分区";
+        ZoneCountText.Text = _desktopZones.Count > 0 ? $"{_desktopZones.Count} 个" : "暂无分区";
 
         ZoneEmptyHint.Visibility = _desktopZones.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
 
@@ -451,6 +453,26 @@ public sealed partial class MainWindow
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
         var name = nameBox.Text?.Trim();
         return string.IsNullOrEmpty(name) ? null : name;
+    }
+
+    /// <summary>托盘右键菜单的「同步桌面」。与设置页同名项走同一条同步路径。</summary>
+    /// <remarks>
+    /// 托盘菜单没有可用的 <c>XamlRoot</c>，弹不了 ContentDialog；分区未开启的情况
+    /// 由 <c>TrayIcon</c> 在菜单弹出前置灰该项拦掉，这里只做一层兜底。
+    /// </remarks>
+    internal void SyncDesktopCardsFromTray()
+    {
+        if (!_config.EnableDesktopCard) return;
+
+        try
+        {
+            EnsureDesktopCardManager().Sync();
+            UpdateCollectStatus();
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("MainWindow.SyncDesktopCardsFromTray", ex);
+        }
     }
 
     /// <summary>「同步桌面」：按当前分区规则重新收纳桌面项目并刷新卡片。</summary>

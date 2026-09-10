@@ -73,6 +73,23 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     #region 常量
     private const uint WM_HOTKEY = 0x0312;
 
+    /// <summary>分辨率 / 色深 / 显示器拔插后广播到所有顶层窗口。</summary>
+    private const uint WM_DISPLAYCHANGE = 0x007E;
+
+    /// <summary>缩放比例（DPI）变化。manifest 声明了 PerMonitorV2，本窗口会收到。</summary>
+    private const uint WM_DPICHANGED = 0x02E0;
+
+    /// <summary>系统参数变化；只关心 SPI_SETWORKAREA（任务栏尺寸 / 位置改变）。</summary>
+    private const uint WM_SETTINGCHANGE = 0x001A;
+
+    private const int SPI_SETWORKAREA = 0x002F;
+
+    /// <summary>系统询问能否结束会话（注销 / 关机）。此时会话仍可能被取消。</summary>
+    private const uint WM_QUERYENDSESSION = 0x0011;
+
+    /// <summary>会话结束的最终通知：wParam 非 0 表示真的要结束，必须尽快自行退出。</summary>
+    private const uint WM_ENDSESSION = 0x0016;
+
 
     private const int GWLP_WNDPROC = -4;
 
@@ -82,6 +99,12 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     /// <summary>桌面卡片快捷键在 <see cref = "Config.Hotkeys"/> 里的键名。</summary>
     private const string DesktopCardHotkeyKey = "DesktopCard";
     private const string DesktopCardHotkeyDefault = "Ctrl+Alt+Shift+F12";
+
+    /// <summary>悬浮搜索全局快捷键 ID。</summary>
+    private const int HotkeyIdSpotlight = 11;
+    /// <summary>悬浮搜索快捷键在 <see cref = "Config.Hotkeys"/> 里的键名。</summary>
+    private const string SpotlightHotkeyKey = "Spotlight";
+    private const string SpotlightHotkeyDefault = "Alt+Space";
 
     /// <summary>手动声明 SetWindowLongPtrW（CsWin32 不生成此宏对应函数）。</summary>
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)] private static extern IntPtr NativeSetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
@@ -99,6 +122,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         public const string DesktopOrganize = "DesktopOrganize";
 
         public const string DesktopClick = "DesktopClick";
+
+        public const string Spotlight = "Spotlight";
 
         public const string AppSettings = "AppSettings";
 
@@ -123,6 +148,9 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     private readonly TouchpadInputHost _touchpadInputHost = new();
 
     private DesktopCardManager? _desktopCardManager;
+
+    /// <summary>显示配置变化后的重排防抖计时器，首次用到时才创建。</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _displayChangeTimer;
 
     // 程序关联内嵌编辑
     private readonly ObservableCollection<ConfigEntry> _assocEntries = new();
@@ -221,7 +249,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         UpdateNavStatusIndicators();
 
-        // 桌面卡片由 App 在主窗口首帧完成后初始化，避免多窗口创建抢占首屏。    
+        // 桌面卡片由 App 在主窗口首帧完成后初始化，避免多窗口创建抢占首屏。
     }
 
     #region 初始化
@@ -233,6 +261,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         MainNav.MenuItems.Add(NavItemDesktopOrganize);
 
         MainNav.MenuItems.Add(NavItemDesktopClick);
+
+        MainNav.MenuItems.Add(NavItemSpotlight);
 
         MainNav.MenuItems.Add(NavItemDragStash);
 
@@ -254,6 +284,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _contentPanels[NavTags.PerAppIme] = ContentPerAppIme;
         _contentPanels[NavTags.DesktopOrganize] = ContentDesktopOrganize;
         _contentPanels[NavTags.DesktopClick] = ContentDesktopClick;
+        _contentPanels[NavTags.Spotlight] = ContentSpotlight;
         _contentPanels[NavTags.AppSettings] = ContentAppSettings;
 
 
@@ -264,7 +295,9 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     {
         WindowHelper.ConfigureTransparentTitleBar(this, AppTitleBar);
 
-        WindowHelper.HookTitleBarPadding(this, AppTitleBar, LeftPaddingColumn, RightPaddingColumn, syncHeight: true);
+        // syncHeight: false —— 标题栏高度固定 40dip（对齐资源管理器标签栏），不跟随系统的
+        // 32dip 标准高度；这里只同步左右两侧的系统按钮占位。
+        WindowHelper.HookTitleBarPadding(this, AppTitleBar, LeftPaddingColumn, RightPaddingColumn);
 
     }
 
@@ -286,6 +319,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
             AppWindow.Closing += (_, e) =>
             {
+                // 进程正在退出（托盘「退出」/ 注销 / 关机）时放行，不再缩回托盘。
+                if (App.IsShuttingDown) return;
 
                 e.Cancel = true;
 
@@ -438,6 +473,11 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
                 break;
 
+            case NavTags.Spotlight:
+                LoadSpotlightFromConfig();
+
+                break;
+
             case NavTags.AppSettings:
                 LoadAppSettingsFromConfig();
 
@@ -484,6 +524,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (ProgramAssocToggle != null) ProgramAssocToggle.IsOn = _config.EnableProgramAssoc;
         if (PerAppImeToggle != null) PerAppImeToggle.IsOn = _config.EnablePerAppIme;
         if (DesktopClickToggle != null) DesktopClickToggle.IsOn = _config.EnableDesktopClickToShow;
+        if (SpotlightToggle != null) SpotlightToggle.IsOn = _config.EnableSpotlight;
+        if (HotkeySpotlightBox != null) HotkeySpotlightBox.Text = GetSpotlightHotkey();
         if (AutoStartToggle != null) AutoStartToggle.IsOn = AutostartService.IsEnabled();
         SyncThemeRadioFromConfig();
         var offsetX = _config.StashOffsetX > 0 ? _config.StashOffsetX : 150;
@@ -500,6 +542,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         // 开关与滑块在操作时已写入 _config；此处仅补充可能未点「保存」的文本框内容
         _config.Hotkeys ??= new Dictionary<string, string>();
         if (HotkeyDesktopCardBox != null) _config.Hotkeys[DesktopCardHotkeyKey] = HotkeyDesktopCardBox.Text?.Trim() ?? "";
+        if (HotkeySpotlightBox != null) _config.Hotkeys[SpotlightHotkeyKey] = HotkeySpotlightBox.Text?.Trim() ?? "";
 
         if (_assocListInitialized)
         {
@@ -679,7 +722,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _touchpadInputHost.ConfigurePointerCurve(calibrated.LowSpeedGain, calibrated.HighSpeedGain, calibrated.AccelerationStart, calibrated.AccelerationEnd);
 
         ThreeFingerCalibrationStatusText.Text =
-            $"校准完成：已分析{calibrated.SampleCount}个有效移动样本。";
+            $"校准完成：已分析 {calibrated.SampleCount} 个有效移动样本。";
 
         var completed = new ContentDialog
         {
@@ -890,6 +933,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         SetNavDot(NavDotDesktopOrganize, _config.EnableDesktopCard, onBrush, offBrush);
 
         SetNavDot(NavDotDesktopClick, _config.EnableDesktopClickToShow, onBrush, offBrush);
+
+        SetNavDot(NavDotSpotlight, _config.EnableSpotlight, onBrush, offBrush);
 
 
     }

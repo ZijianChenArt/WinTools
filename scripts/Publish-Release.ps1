@@ -1,6 +1,7 @@
 param(
     [ValidateSet('win-x64', 'win-x86', 'win-arm64')]
-    [string]$Runtime = 'win-x64'
+    [string]$Runtime = 'win-x64',
+    [string]$WindowsSdkVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,6 +11,14 @@ $explorerProject = Join-Path $projectRoot 'src\WinToolsExplorerCommand\WinToolsE
 $publishRoot = Join-Path $projectRoot 'artifacts\release'
 $publishDir = Join-Path $publishRoot $Runtime
 $stagingDir = Join-Path $publishRoot ".$Runtime-staging"
+
+# 删除 / 替换前确保最终路径仍在当前仓库的发布目录内。
+$releaseBoundary = [IO.Path]::GetFullPath($publishRoot) + [IO.Path]::DirectorySeparatorChar
+foreach ($targetDirectory in @($publishDir, $stagingDir)) {
+    if (-not [IO.Path]::GetFullPath($targetDirectory).StartsWith($releaseBoundary, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Publish path escaped workspace: $targetDirectory"
+    }
+}
 
 # Staging can always be rebuilt. User configuration lives in
 # %LocalAppData%\WinTools and is intentionally never copied into release output.
@@ -36,7 +45,9 @@ if (-not $msbuild) {
     throw 'MSBuild was not found.'
 }
 
-& $msbuild $explorerProject /nologo /verbosity:minimal /t:Build /p:Configuration=Release /p:Platform=$platform
+$sdkArguments = @()
+if ($WindowsSdkVersion) { $sdkArguments += "/p:WindowsTargetPlatformVersion=$WindowsSdkVersion" }
+& $msbuild $explorerProject /nologo /verbosity:minimal /t:Build /p:Configuration=Release /p:Platform=$platform @sdkArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Explorer command build failed with exit code $LASTEXITCODE"
 }

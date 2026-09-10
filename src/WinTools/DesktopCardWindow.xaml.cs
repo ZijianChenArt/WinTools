@@ -51,9 +51,15 @@ public sealed class CardItem : INotifyPropertyChanged
     private readonly record struct ShortcutIconInfo(string TargetPath, string IconPath, int IconIndex);
     private sealed record IconLoadRequest(string Path, TaskCompletionSource<IconLoadResult> Completion);
 
-    // WScript.Shell 必须运行在 STA。统一复用一个后台 STA 线程，既不阻塞 WinUI 首帧，
-    // 也避免为几十个快捷方式各创建一条线程。
+    // WScript.Shell 必须运行在 STA，所以图标解析放在固定几条后台 STA 线程上，既不阻塞
+    // WinUI 首帧，也不会为几十个快捷方式各创建一条线程。
     private static readonly BlockingCollection<IconLoadRequest> IconLoadQueue = new();
+
+    /// <summary>图标解析工作线程数。这条链路的成本几乎全在 <c>SHGetFileInfo</c>（等 Shell
+    /// 回话，不吃 CPU），所以并行度按核心数定没有意义，4 条就够。</summary>
+    /// <remarks>2026-09-06 实测 69 个托管项目：单线程 490ms（7.1ms/项），4 条 STA 线程 85ms。
+    /// 图标转 PNG 只占 15ms，不是瓶颈，不用管。</remarks>
+    private static readonly int IconWorkerCount = Math.Clamp(Environment.ProcessorCount, 1, 4);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct SHFILEINFO
@@ -81,13 +87,18 @@ public sealed class CardItem : INotifyPropertyChanged
 
     static CardItem()
     {
-        var thread = new Thread(ProcessIconLoadQueue)
+        // 多个消费者共用同一个 BlockingCollection：GetConsumingEnumerable 本身支持并发消费，
+        // 每个请求各自持有 TaskCompletionSource，完成顺序乱掉也不影响绑定。
+        for (var i = 0; i < IconWorkerCount; i++)
         {
-            IsBackground = true,
-            Name = "WinTools shell icon loader",
-        };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
+            var thread = new Thread(ProcessIconLoadQueue)
+            {
+                IsBackground = true,
+                Name = $"WinTools shell icon loader {i + 1}",
+            };
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+        }
     }
 
     private BitmapImage? _icon;
@@ -95,6 +106,15 @@ public sealed class CardItem : INotifyPropertyChanged
     public CardItem(string path)
     {
         Path = path;
+        // 系统虚拟图标（此电脑 / 回收站…）的 Path 是 Shell 解析名 ::{CLSID}，
+        // 拆不出文件名，显示名要向 Shell 要。
+        if (DesktopShellItems.IsShellItem(path))
+        {
+            IsShellItem = true;
+            DisplayName = DesktopShellItems.GetDisplayName(path) ?? "系统项目";
+            return;
+        }
+
         DisplayName = System.IO.Path.GetFileNameWithoutExtension(path);
         if (string.IsNullOrEmpty(DisplayName))
             DisplayName = System.IO.Path.GetFileName(path);
@@ -102,6 +122,9 @@ public sealed class CardItem : INotifyPropertyChanged
 
     public string Path { get; }
     public string DisplayName { get; }
+
+    /// <summary>是不是系统虚拟图标（此电脑 / 回收站 / 网络…）。这类项目不能删除，打开方式也不同。</summary>
+    public bool IsShellItem { get; }
 
     public BitmapImage? Icon
     {
@@ -232,6 +255,17 @@ public sealed class CardItem : INotifyPropertyChanged
                     continue;
                 }
 
+                // 系统虚拟图标只能通过 PIDL 取图标，走不了下面基于路径的那套。
+                if (DesktopShellItems.IsShellItem(request.Path))
+                {
+                    var handle = DesktopShellItems.GetIconHandle(request.Path);
+                    var shellResult = new IconLoadResult(
+                        request.Path, handle != IntPtr.Zero ? ConvertIconToPng(handle) : null);
+                    IconCache[request.Path] = new CachedIcon(stamp, shellResult);
+                    request.Completion.TrySetResult(shellResult);
+                    continue;
+                }
+
                 var shortcut = ResolveShortcutIcon(request.Path);
                 var resolvedPath = !string.IsNullOrWhiteSpace(shortcut.TargetPath)
                     ? shortcut.TargetPath
@@ -319,15 +353,10 @@ public sealed class CardItem : INotifyPropertyChanged
         if (!System.IO.Path.GetExtension(path).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
             return default;
 
-        object? shell = null;
         object? shortcut = null;
         try
         {
-            var shellType = Type.GetTypeFromProgID("WScript.Shell");
-            if (shellType == null)
-                return default;
-
-            shell = Activator.CreateInstance(shellType);
+            var shell = GetWScriptShell();
             if (shell == null)
                 return default;
 
@@ -356,34 +385,49 @@ public sealed class CardItem : INotifyPropertyChanged
         }
         catch
         {
+            // 缓存的实例可能已经失效（RCW 分离等），丢掉让下一次重建，不要一直用坏的。
+            _wscriptShell = null;
             return default;
         }
         finally
         {
             // 某些 WinRT/COM 组合会在 FinalReleaseComObject 时报告 RCW 已分离；
             // 资源释放失败不能反过来让已经解析成功的图标变成空白。
+            // 只释放这次创建的 shortcut，shell 实例留给本线程后续请求复用。
             try
             {
                 if (shortcut != null && Marshal.IsComObject(shortcut))
                     Marshal.FinalReleaseComObject(shortcut);
             }
             catch { }
-
-            try
-            {
-                if (shell != null && Marshal.IsComObject(shell))
-                    Marshal.FinalReleaseComObject(shell);
-            }
-            catch { }
         }
+    }
+
+    /// <summary>本线程复用的 <c>WScript.Shell</c> 实例。</summary>
+    /// <remarks>每解析一个快捷方式就新建一个实例，COM 激活的开销比解析本身还大：
+    /// 2026-09-06 实测 51 个 .lnk，每项新建 233ms，复用一个实例 78ms。
+    /// 实例只在自己的 STA 工作线程上使用（COM 单元规则），线程随进程结束，无需显式释放。</remarks>
+    [ThreadStatic] private static object? _wscriptShell;
+
+    private static object? GetWScriptShell()
+    {
+        if (_wscriptShell != null) return _wscriptShell;
+        var shellType = Type.GetTypeFromProgID("WScript.Shell");
+        if (shellType == null) return null;
+        _wscriptShell = Activator.CreateInstance(shellType);
+        return _wscriptShell;
     }
 }
 
 /// <summary>
 /// 单个「桌面分区」卡片：常驻桌面、可拖动 / 缩放、只用 Mica 材质。
-/// 内容是该分区托管文件夹（<see cref="DesktopCollectService.ZoneFolder"/>）里的真实文件，
-/// 显示真实图标，单击启动。
+/// 内容是**桌面上**匹配到本分区的真实文件（见 <see cref="DesktopCollectService.GroupByZone"/>），
+/// 显示真实图标，单击启动。文件一直在桌面原路径，卡片只是换个地方显示它们。
 /// </summary>
+/// <remarks>
+/// 卡片自己不监视文件系统：所有卡片共用 <c>DesktopCardManager</c> 的那一个桌面监视器，
+/// 由它防抖后统一刷新。以前每张卡片各监视自己的托管目录，一次拖放会触发多轮重复刷新。
+/// </remarks>
 public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 {
     private const int DefaultWidthDip = 260;
@@ -415,6 +459,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     private const int GWL_EXSTYLE = -20;
     private const long WS_EX_TOPMOST = 0x00000008;
+    private const long WS_EX_TOOLWINDOW = 0x00000080;
 
     private static readonly IntPtr HWND_TOPMOST = new(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new(-2);
@@ -448,7 +493,6 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     private readonly ObservableCollection<CardItem> _items = new();
     private readonly IntPtr _hwnd;
     private string _zoneName = "";
-    private FileSystemWatcher? _watcher;
     private MicaController? _micaController;
     private SystemBackdropConfiguration? _backdropConfiguration;
     private ICompositionSupportsSystemBackdrop? _backdropTarget;
@@ -475,6 +519,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         InitializeComponent();
         _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         ItemsGrid.ItemsSource = _items;
+        _items.CollectionChanged += (_, _) => QueueItemOrderSave();
         ShellRoot.Loaded += (_, _) => _layoutReady.TrySetResult();
         ConfigureWindow();
         // 每张桌面分区都是独立 HWND。启动时批量创建窗口，如果未完成首帧就 Show，
@@ -525,11 +570,19 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
                 p.IsAlwaysOnTop = false;
             }
 
-            WindowHelper.ConfigurePopupTitleBar(this);
+            // 卡片没有标题栏元素，也自己维护显式 MicaController（见 7.4），
+            // 所以走 Chromeless 这条最短路径，不要用 ConfigurePopupTitleBar。
+            WindowHelper.ConfigureChromelessWindow(this);
             WindowHelper.DisableWindowTransitions(this);
             // 去掉 DWM 的 1px 边框，否则会与卡片自身描边形成「双层框」。
             WindowHelper.RemoveSystemWindowBorder(this);
             AppWindow.IsShownInSwitchers = false;
+            // IsShownInSwitchers 只在 Shell 层面挡住 Alt-Tab / 任务栏，**不改扩展样式**
+            // （实测卡片的 ex style 仍是 0x00000100，只有 WS_EX_WINDOWEDGE）。凡是按
+            // EnumWindows 找「应用窗口」的系统组件照样把每张卡片当成独立应用，关机界面
+            // 因此会列出 N 行同名的「桌面卡片」。降级为工具窗口并清空标题即可避开。
+            MarkAsToolWindow();
+            Title = string.Empty;
             ApplyUiStyleSurfaces();
 
             // 卡片不真正关闭，只隐藏；由管理器在 Cleanup() 里解订阅本 handler
@@ -537,6 +590,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             // 卡片窗口长期滞留在 WinUI 的窗口列表里。
             _closingHandler = (_, e) =>
             {
+                // 进程正在退出时必须放行：否则关机界面的「结束任务」和不带 /F 的
+                // taskkill 都关不掉卡片，只有管理器 Cleanup() 那一条路能关。
+                if (App.IsShuttingDown) return;
                 e.Cancel = true;
                 AppWindow.Hide();
             };
@@ -550,7 +606,6 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     {
         _zoneName = zoneName;
         RefreshContent(initialItems);
-        StartWatching();
     }
 
     /// <summary>本卡片所在显示器的工作区（换算为 DIP），供管理器排布。</summary>
@@ -778,6 +833,25 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         }
     }
 
+    /// <summary>把卡片降级为工具窗口，让系统不再把它当作独立的应用窗口列举
+    /// （关机界面、任务管理器的窗口分组都按这个标志判断）。</summary>
+    /// <remarks>WS_EX_TOOLWINDOW 与 Mica **不**冲突——冲突的是 WS_EX_LAYERED（见 7.4）；
+    /// 淡入淡出期间临时加 / 摘 LAYERED 的 <see cref="SetLayered"/> 只改那一位，不受影响。
+    /// 必须在窗口首次 Show 之前设置，否则 Shell 可能残留任务栏状态。</remarks>
+    private void MarkAsToolWindow()
+    {
+        try
+        {
+            var style = GetWindowLongPtr(_hwnd, GWL_EXSTYLE).ToInt64();
+            if ((style & WS_EX_TOOLWINDOW) != 0) return;
+            SetWindowLongPtr(_hwnd, GWL_EXSTYLE, new IntPtr(style | WS_EX_TOOLWINDOW));
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("DesktopCard.MarkAsToolWindow", ex);
+        }
+    }
+
     private void SetLayered(bool layered)
     {
         var style = GetWindowLongPtr(_hwnd, GWL_EXSTYLE).ToInt64();
@@ -922,12 +996,33 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         }
     }
 
+    private bool _draggingItems;
+    private bool _refreshingItems;
+    private bool _itemOrderSaveQueued;
+
+    private void QueueItemOrderSave()
+    {
+        if (_refreshingItems || _draggingItems || _itemOrderSaveQueued) return;
+        _itemOrderSaveQueued = true;
+        // 将同一轮集合变更合并，下一轮保存最终顺序。
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _itemOrderSaveQueued = false;
+            if (!CardItemOrderStore.Save(_zoneName, _items.Select(item => item.Path)))
+                ShowTransientToast("图标顺序保存失败，请重试。");
+        });
+    }
+
     /// <summary>重新读取托管文件夹内容。</summary>
     public void RefreshContent(System.Collections.Generic.IReadOnlyList<string>? knownPaths = null)
     {
+        // 拖动持有容器，期间不要清空集合；结束后再合并磁盘变化。
+        if (_draggingItems || _itemOrderSaveQueued) return;
+        _refreshingItems = true;
         try
         {
-            var paths = knownPaths ?? DesktopCollectService.ListCardItems(_zoneName);
+            var paths = CardItemOrderStore.Apply(_zoneName,
+                knownPaths ?? DesktopCollectService.ListCardItems(_zoneName));
 
             // 路径没变的项目**直接复用旧对象**，连带保留已经加载好的图标。
             // 每次刷新都 new 一遍的话，托管目录里动一个文件就要把整张卡片的图标重新走一遍
@@ -956,47 +1051,28 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             ApplyAutoSize(paths.Count);
         }
         catch { /* ignore */ }
+        finally { _refreshingItems = false; }
     }
 
-    /// <summary>监视托管文件夹，内容变化时自动刷新卡片。</summary>
-    private void StartWatching()
+
+    private void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: CardItem item }) return;
+        e.Handled = true;
+        OpenItem(item);
+    }
+
+    private void OpenItem(CardItem item)
     {
         try
         {
-            _watcher?.Dispose();
-            var dir = DesktopCollectService.ZoneFolder(_zoneName);
-            void OnChanged(object s, FileSystemEventArgs e) =>
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    RefreshContent();
-                    ContentChanged?.Invoke(this, EventArgs.Empty);
-                });
-
-            if (Directory.Exists(dir))
+            // 系统虚拟图标没有文件路径，交给 explorer 解析（见 DesktopShellItems.Open）。
+            if (item.IsShellItem)
             {
-                _watcher = new FileSystemWatcher(dir)
-                {
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
-                    EnableRaisingEvents = true,
-                };
-                _watcher.Created += OnChanged;
-                _watcher.Deleted += OnChanged;
-                _watcher.Renamed += (s, e) => DispatcherQueue.TryEnqueue(() =>
-                {
-                    RefreshContent();
-                    ContentChanged?.Invoke(this, EventArgs.Empty);
-                });
+                DesktopShellItems.Open(item.Path);
+                return;
             }
 
-        }
-        catch { /* 监视失败只是不自动刷新 */ }
-    }
-
-    private void Items_ItemClick(object sender, ItemClickEventArgs e)
-    {
-        if (e.ClickedItem is not CardItem item) return;
-        try
-        {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = item.Path,
@@ -1006,27 +1082,33 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         catch { /* 启动失败静默 */ }
     }
 
-    /// <summary>把被拖动的 CardItem 引用塞到 DataPackage，让目标 GridView 在 Drop 时能拿到。
-    /// WinUI 3 的 GridView 拖放默认走 DataView，但跨 DataTemplate/跨窗口需要显式传递引用，
-    /// 所以用 Properties 字典挂自定义键。</summary>
+    /// <summary>通过可传递的字符串携带路径与源分区，避免跨窗口传递托管 UI 对象。</summary>
     private void ItemsGrid_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
         if (e.Items.FirstOrDefault() is CardItem item)
         {
-            e.Data.Properties["CardItem"] = item;
+            _draggingItems = true;
+            e.Data.Properties["CardItem"] = item.Path;
+            e.Data.Properties["SourceCard"] = _zoneName;
+            // Properties 只是元数据；至少提供一个真实数据格式，系统才会启动 OLE 拖放。
+            e.Data.SetData("WinTools.DesktopCardItem", item.Path);
+            e.Data.RequestedOperation = DataPackageOperation.Move;
         }
     }
 
-    /// <summary>拖动经过时决定是否接受 Drop：只有携带 CardItem 的拖动才接受为"移动"。</summary>
+    /// <summary>接受携带卡片路径的拖动，并提示分区内排序。</summary>
     private void ItemsGrid_DragOver(object sender, DragEventArgs e)
     {
-        if (e.DataView.Properties.TryGetValue("CardItem", out var obj) && obj is CardItem)
+        if (e.DataView.Properties.TryGetValue("CardItem", out var obj) && obj is string)
         {
+            if (e.DataView.Properties.TryGetValue("SourceCard", out var source) && source is string zone && zone == _zoneName)
+            {
+                // 同卡片内不接管事件：交给 CanReorderItems 产生 Fluent 插入间隙和原生让位动画。
+                return;
+            }
+
             e.AcceptedOperation = DataPackageOperation.Move;
-        }
-        else
-        {
-            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
         }
     }
 
@@ -1034,68 +1116,77 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     /// 然后由双方 FileSystemWatcher 触发 ContentChanged → Sync → 卡片自动刷新。</summary>
     private void ItemsGrid_Drop(object sender, DragEventArgs e)
     {
-        if (!e.DataView.Properties.TryGetValue("CardItem", out var obj) || obj is not CardItem item)
+        if (!e.DataView.Properties.TryGetValue("CardItem", out var obj) || obj is not string path)
+            return;
+        var item = _items.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase))
+            ?? new CardItem(path);
+
+        // 同卡片内不接管 Drop，由 CanReorderItems 完成最终插入。
+        if (e.DataView.Properties.TryGetValue("SourceCard", out var source) && source is string zone && zone == _zoneName)
             return;
 
-        var result = DesktopCollectService.MoveItemToZone(item.Path, _zoneName);
+        e.Handled = true;
+        e.AcceptedOperation = DataPackageOperation.None;
+        var result = DesktopCollectService.CanAssignToZone(item.Path, _zoneName);
         switch (result)
         {
             case DesktopCollectService.MoveZoneResult.Success:
-                // 物理位置变了还不够：下一次「同步桌面」会按关键词重新归类，把它挪回去。
-                // 所以要把这次手动放置记进分区的显式文件清单（匹配优先级最高的一档）。
+                e.AcceptedOperation = DataPackageOperation.Move;
+                // **文件不动**，换区就是把名字记进目标分区的显式清单（匹配优先级最高的一档）。
+                // 不记的话，下一次匹配会按关键词把它算回原来的分区。
                 ItemMovedIn?.Invoke(this, new CardItemMovedEventArgs(item.DisplayName, _zoneName));
-                // 双方 FileSystemWatcher 会自动更新 UI。
+                // 归属变了，两张卡片都要重画：桌面监视器不会因为"没有文件变化"而触发。
+                ContentChanged?.Invoke(this, EventArgs.Empty);
                 break;
             case DesktopCollectService.MoveZoneResult.SameZone:
-                // 拖到本分区不做事（视觉上是原位）。
+                // 已经属于本分区，不用改判。
                 break;
             case DesktopCollectService.MoveZoneResult.SourceNotFound:
             case DesktopCollectService.MoveZoneResult.PhysicalFailed:
             case DesktopCollectService.MoveZoneResult.TargetInvalid:
-                ShowTransientToast("移动失败：源文件不存在或目标分区无效。");
+                ShowTransientToast("换区失败：项目不存在或目标分区无效。");
                 break;
         }
     }
 
-    /// <summary>拖动完成后统一让源 GridView 重新同步一遍，避免某些场景下
-    /// FileSystemWatcher 没及时触发（比如跨卷移动某些边界情况）。</summary>
+    /// <summary>拖放结束后保存顺序，再合并拖动期间的目录变化。</summary>
     private void ItemsGrid_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e)
     {
-        if (e.DropResult == DataPackageOperation.Move)
+        _draggingItems = false;
+        if (e.DropResult == DataPackageOperation.Move &&
+            !CardItemOrderStore.Save(_zoneName, _items.Select(item => item.Path)))
         {
-            // 源分区会通过 FileSystemWatcher 收到 Deleted 事件 → ContentChanged → Sync。
-            // 这里不再主动调用，避免重复 IO。
+            ShowTransientToast("图标顺序保存失败，请重试。");
         }
+        RefreshContent();
     }
 
     /// <summary>右键菜单「打开」：走默认 Shell 启动（.exe 直接运行、.doc 走关联软件等）。</summary>
     private void ItemMenu_Open_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = item.Path,
-                UseShellExecute = true,
-            });
-        }
-        catch
-        {
-            // 启动失败静默——和单击启动行为一致。
-        }
+        OpenItem(item);
     }
 
     /// <summary>右键菜单「删除到回收站」：通过 SHFileOperation + FOF_ALLOWUNDO 移到回收站。</summary>
     private void ItemMenu_Delete_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
+        // 系统虚拟图标（此电脑 / 回收站…）没有文件可删，SHFileOperation 对它无意义。
+        // 想让它从桌面消失，得去「个性化 → 主题 → 桌面图标设置」里关。
+        if (item.IsShellItem)
+        {
+            ShowTransientToast("系统图标不能删除。请在「个性化 → 主题 → 桌面图标设置」里关闭。");
+            return;
+        }
         var result = DesktopCollectService.DeleteToRecycleBin(item.Path);
         switch (result)
         {
             case DesktopCollectService.RecycleBinResult.Success:
-                // FileSystemWatcher 会在 200ms 内触发 ContentChanged → Sync → 卡片自动少一个图标。
-                // 这里什么都不用做。
+                // 先立即更新当前卡片，避免用户看到已不存在的入口；再让管理器做一次全量同步，
+                // 同时覆盖公共桌面、Shell 延迟通知或 FileSystemWatcher 偶发漏事件的情况。
+                _items.Remove(item);
+                ContentChanged?.Invoke(this, EventArgs.Empty);
                 break;
             case DesktopCollectService.RecycleBinResult.NotFound:
             case DesktopCollectService.RecycleBinResult.Failed:
@@ -1105,6 +1196,19 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
                 // 用户取消或 Shell 拒绝——不打扰。
                 break;
         }
+    }
+
+    /// <summary>显示该项目由 Windows Shell 和已安装扩展共同提供的完整原生右键菜单。</summary>
+    private void ItemMenu_SystemMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
+        // MenuFlyout 的 Click 回调执行时原菜单仍在关闭过程中；此处同步进入 TrackPopupMenuEx
+        // 会形成两个嵌套菜单消息循环，表现为窗口卡死。排到下一轮，让 WinUI 先完整收起菜单。
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!ShellContextMenu.Show(item.Path, _hwnd))
+                ShowTransientToast("无法打开系统右键菜单。");
+        });
     }
 
     /// <summary>短暂的轻量提示。卡片是桌面浮层，没必要弹模态 ContentDialog。</summary>
@@ -1200,7 +1304,6 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     public void Cleanup()
     {
-        try { _watcher?.Dispose(); _watcher = null; } catch { /* ignore */ }
         try { _fadeTimer?.Stop(); _fadeTimer = null; } catch { /* ignore */ }
         try
         {

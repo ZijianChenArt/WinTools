@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.Input;
@@ -23,9 +23,12 @@ public sealed class TrayIcon : IDisposable
     private Window? _trayWindow;
     private TaskbarIcon? _taskbarIcon;
     private bool _disposed;
+    /// <summary>「同步桌面」项：分区功能没开时置灰，见 <see cref="ShowContextMenu"/>。</summary>
+    private MenuFlyoutItem? _syncDesktopItem;
 
     public event EventHandler? ShowMainRequested;
     public event EventHandler? DragStashToggleRequested;
+    public event EventHandler? SyncDesktopRequested;
     public event EventHandler? SettingsRequested;
     public event EventHandler? ExitRequested;
 
@@ -103,6 +106,14 @@ public sealed class TrayIcon : IDisposable
             // 1×1 窗口被创建后从未 Activate，AppWindow.Presenter 可能为 null
             // 这里直接 Show 一次（幂等），同时把标题 / 图标 / 任务栏归属设稳。
             _trayWindow.Activate();
+
+            // Activate() 才是真正把这个宿主窗口显示出来的那一步。IsShownInSwitchers
+            // 与 1×1 尺寸是在**首次显示之前**设的，部分 Win11 版本会在窗口显示时把它们
+            // 重置，于是 Alt-Tab / 任务栏里会冒出一个标题为「WinTools Tray」的空窗口。
+            // 显示后立刻重设一次，并挪到屏幕外，避免它以任何形式露出来。
+            _trayWindow.AppWindow.IsShownInSwitchers = false;
+            _trayWindow.AppWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
+            _trayWindow.AppWindow.Move(new Windows.Graphics.PointInt32(-32000, -32000));
         }
         catch { /* 早期失败也不影响主流程 */ }
     }
@@ -129,6 +140,10 @@ public sealed class TrayIcon : IDisposable
         {
             if (_taskbarIcon is null) return;
             EnsureShown();
+            // 分区没开时同步无意义（设置页里点会弹"请先打开总开关"），托盘里直接置灰，
+            // 不弹对话框——托盘菜单没有可用的 XamlRoot。
+            if (_syncDesktopItem is not null)
+                _syncDesktopItem.IsEnabled = Services.SettingsService.Instance.Current.EnableDesktopCard;
             var anchor = GetCursorPos(out var p)
                 ? new System.Drawing.Point(p.X, p.Y)
                 : default;
@@ -174,6 +189,15 @@ public sealed class TrayIcon : IDisposable
         };
         toggleStash.Click += (_, _) => DragStashToggleRequested?.Invoke(this, EventArgs.Empty);
         menu.Items.Add(toggleStash);
+
+        // 与桌面分区页「更多」菜单里的同名项走同一条路径，文案保持一致。
+        _syncDesktopItem = new MenuFlyoutItem
+        {
+            Text = "同步桌面",
+            Icon = new SymbolIcon(Symbol.Sync)
+        };
+        _syncDesktopItem.Click += (_, _) => SyncDesktopRequested?.Invoke(this, EventArgs.Empty);
+        menu.Items.Add(_syncDesktopItem);
 
         menu.Items.Add(new MenuFlyoutSeparator());
 

@@ -37,11 +37,18 @@ public partial class App : Application, IWindowRegistry
         try { File.AppendAllText(StartupTracePath, $"{DateTime.Now:O} {message}{Environment.NewLine}"); } catch { }
     }
     private const string SingleInstanceKey = "WinTools";
+
+    /// <summary>进程正在退出：托盘「退出 WinTools」或系统注销 / 关机。
+    /// 所有「关闭时只隐藏」的窗口都必须查这个标志再决定要不要 <c>e.Cancel = true</c>，
+    /// 否则关机界面上的「结束任务」和不带 <c>/F</c> 的 taskkill 都关不掉它们。</summary>
+    internal static bool IsShuttingDown { get; private set; }
+
     private Window? _window;
     private TrayIcon? _trayIcon;
     private FloatingStashManager? _stashManager;
     private PerAppImeService? _perAppImeService;
     private DesktopClickService? _desktopClickService;
+    private SpotlightWindow? _spotlightWindow;
 
     #region Win32 错误弹窗
 
@@ -76,7 +83,13 @@ public partial class App : Application, IWindowRegistry
             var ex = (Exception)e.ExceptionObject;
             ReportFatal("App.UnhandledException", ex);
         };
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => SaveConfigOnExit();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            // 退出路径（托盘退出 / 会话结束）已经各自落过盘了。会话结束那条还处在
+            // csrss 的同步 SendMessage 里，此时读 XAML 必抛 COMException，不能再走一遍。
+            if (IsShuttingDown) return;
+            SaveConfigOnExit();
+        };
         TraceStartup("App constructor: completed");
     }
 
@@ -115,10 +128,9 @@ public partial class App : Application, IWindowRegistry
             return;
         }
 
-        // 默认分类可能随版本调整（例如“开发与效率”升级为“开发与 AI”并新增 AI 规则）。
-        // 卡片创建前同步整理托管目录，避免配置名称已更新、旧项目却仍停在原分区。
-        try { DesktopCollectService.ReclassifyManagedItems(out _); }
-        catch (Exception ex) { ErrorReporter.Log("App.ReclassifyManagedItems", ex); }
+        // 分区归属现在是**实时匹配**（枚举桌面 + DesktopZoneMatcher），配置里的分类规则改了
+        // 下一次刷新就生效，不需要启动时再整理一遍目录。旧版数据的一次性迁移放在
+        // DesktopCardManager.InitializeAsync 的后台线程里，不占首帧。
 
         instance.Activated += OnAppInstanceActivated;
         TraceStartup("OnLaunchedCore: before MainWindow");
@@ -161,6 +173,10 @@ public partial class App : Application, IWindowRegistry
             // 旧“桌面整理”已并入桌面分区卡片，清理此前可能注册的右键菜单。
             try { DesktopContextMenuService.SetEnabled(false); }
             catch (Exception ex) { ErrorReporter.Log("App.DisableLegacyDesktopContextMenu", ex); }
+            // 提前建好应用索引：第一次按 Alt+Space 就该立刻出结果，
+            // 而不是等几百毫秒扫完开始菜单。索引自己跑在独立 STA 线程上。
+            try { if (startupConfig.EnableSpotlight) _ = AppSearchIndex.GetAsync(); }
+            catch (Exception ex) { ErrorReporter.Log("App.WarmUpAppSearchIndex", ex); }
             TraceStartup("OnLaunchedCore: background init done");
         });
         Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(() =>
@@ -189,12 +205,9 @@ public partial class App : Application, IWindowRegistry
         _trayIcon = new TrayIcon();
         _trayIcon.ShowMainRequested += (_, _) => BringWindowToForeground();
         _trayIcon.DragStashToggleRequested += (_, _) => ShowDragStashWindow();
+        _trayIcon.SyncDesktopRequested += (_, _) => (_window as MainWindow)?.SyncDesktopCardsFromTray();
         _trayIcon.SettingsRequested += (_, _) => OpenSettingsWindow();
-        _trayIcon.ExitRequested += (_, _) =>
-        {
-            SaveConfigOnExit();
-            Environment.Exit(0);
-        };
+        _trayIcon.ExitRequested += (_, _) => ShutdownNow();
     }
 
     private void HideToTray()
@@ -318,6 +331,100 @@ public partial class App : Application, IWindowRegistry
         if (!config.EnableDesktopClickToShow) return;
         _desktopClickService = new DesktopClickService();
         _desktopClickService.SetEnabled(true);
+    }
+
+    #endregion
+
+    #region 悬浮搜索
+
+    /// <summary>全局快捷键入口：呼出 / 收起悬浮搜索窗口。</summary>
+    /// <remarks>窗口按需创建后常驻（只隐藏不销毁），第二次呼出无需重新走 WinUI 初始化。</remarks>
+    internal void ToggleSpotlight()
+    {
+        try
+        {
+            if (_spotlightWindow == null)
+            {
+                _spotlightWindow = new SpotlightWindow();
+                RegisterWinToolsWindow(_spotlightWindow);
+            }
+
+            _spotlightWindow.Toggle();
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("App.ToggleSpotlight", ex);
+        }
+    }
+
+    #endregion
+
+    #region 退出与会话结束
+
+    /// <summary>会话结束的两条消息是 csrss 用 <c>SendMessage</c> 跨进程同步发过来的，
+    /// 处理它们期间**禁止 COM 调出**（HRESULT <c>RPC_E_CANTCALLOUT_ININPUTSYNCCALL</c>）。
+    /// 所以这两个入口只做纯文件 I/O，读 XAML 控件的那一份必须排队到消息循环里跑。</summary>
+    /// <remarks>2026-09-06 实测：直接在窗口过程里调 <see cref="SaveConfigOnExit"/>，
+    /// 会在 <c>FlushAndSaveConfig</c> → <c>FindName</c> 处抛 <c>COMException</c>，配置一点没存上。</remarks>
+    private static void FlushSettingsWithoutUi()
+    {
+        try { SettingsService.Instance.FlushNow(); }
+        catch (Exception ex) { ErrorReporter.Log("App.FlushSettingsWithoutUi", ex); }
+    }
+
+    /// <summary>收到 <c>WM_QUERYENDSESSION</c>：会话仍可能被别的应用取消，只落盘不退出。</summary>
+    internal static void SaveBeforeSessionEnd()
+    {
+        // 读 XAML 的完整保存排进 DispatcherQueue：回到消息循环（两条消息之间）才执行，
+        // 那时已经不在同步 SendMessage 里，COM 可以正常调用。队列没来得及跑也不要紧，
+        // 下面的纯 I/O 落盘就是兜底。
+        try { (Current as App)?._window?.DispatcherQueue.TryEnqueue(SaveConfigOnExit); }
+        catch (Exception ex) { ErrorReporter.Log("App.SaveBeforeSessionEnd", ex); }
+        FlushSettingsWithoutUi();
+    }
+
+    /// <summary>收到 <c>WM_ENDSESSION</c>(wParam≠0)：落盘后立刻结束进程。</summary>
+    /// <remarks>
+    /// WinUI 3 收到 <c>WM_ENDSESSION</c> **不会**自己退出。不主动退的后果是 Windows 等满
+    /// <c>WaitToKillAppTimeout</c>（默认 5s），然后把本进程所有可见顶层窗口列到
+    /// 「这些应用阻止关机」那一屏上——分区卡片有几张就列几行同名的条目。
+    /// 关机时进程由 csrss 结束，<c>AppDomain.ProcessExit</c> 也不保证执行，所以配置必须
+    /// 在这里落盘。托盘图标**不摘**：<c>TaskbarIcon</c> 是 XAML 元素，同样受 COM 调出限制，
+    /// 而且注销 / 关机时整个 Shell 都会消失，不存在幽灵图标。
+    /// </remarks>
+    internal static void ShutdownForSessionEnd()
+    {
+        IsShuttingDown = true;
+        FlushSettingsWithoutUi();
+        RestoreDesktopIcons();
+        Environment.Exit(0);
+    }
+
+    /// <summary>退出前把桌面图标还给用户。</summary>
+    /// <remarks>
+    /// 桌面分区靠关闭系统的「显示桌面图标」让桌面变干净。程序都退出了还留着一个空桌面，
+    /// 用户会以为文件没了——虽然右键桌面就能恢复，但不该让他自己去发现。
+    /// 这里只调 Win32 SendMessage + 读注册表，不碰 COM/XAML，会话结束路径也能安全执行。
+    /// </remarks>
+    private static void RestoreDesktopIcons()
+    {
+        try { DesktopIconVisibilityService.SetHidden(false); }
+        catch (Exception ex) { ErrorReporter.Log("App.RestoreDesktopIcons", ex); }
+    }
+
+    /// <summary>托盘「退出 WinTools」：普通上下文，可以读 XAML、摘托盘图标。</summary>
+    internal static void ShutdownNow()
+    {
+        if (!IsShuttingDown)
+        {
+            IsShuttingDown = true;
+            SaveConfigOnExit();
+            RestoreDesktopIcons();
+            // 托盘图标由 Shell 持有，进程直接结束会在通知区域留下幽灵图标。
+            try { (Current as App)?._trayIcon?.Dispose(); }
+            catch (Exception ex) { ErrorReporter.Log("App.ShutdownNow.Tray", ex); }
+        }
+        Environment.Exit(0);
     }
 
     #endregion

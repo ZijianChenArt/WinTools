@@ -76,7 +76,7 @@ public sealed partial class MainWindow
                 var dialog = new ContentDialog
                 {
 
-                    Title = "开机自动启动",
+                    Title = "开机启动",
                     Content = $"设置失败：{error}",
                     CloseButtonText = "确定",
                     XamlRoot = MainNav.XamlRoot,

@@ -70,9 +70,10 @@ public sealed partial class ProgramDropWindow : Window, IUiStyleShell
 
             AppWindow.IsShownInSwitchers = false;
 
-            // 关闭时隐藏而非销毁
+            // 关闭时隐藏而非销毁；进程正在退出时放行（见 App.IsShuttingDown）。
             AppWindow.Closing += (_, e) =>
             {
+                if (App.IsShuttingDown) return;
                 e.Cancel = true;
                 AppWindow.Hide();
             };
