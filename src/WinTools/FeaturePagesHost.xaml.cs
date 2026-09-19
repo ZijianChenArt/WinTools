@@ -10,6 +10,13 @@ namespace WinTools;
 public sealed partial class FeaturePagesHost : UserControl
 {
     internal MainWindow? Owner { get; set; }
+    private void TaskbarInfoPlacement_Changed(object sender, SelectionChangedEventArgs e) => Owner?.TaskbarInfoAppearance_Changed();
+    private void TaskbarInfoAppearance_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoAppearance_Changed();
+    private void TaskbarInfoToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoToggle_Toggled(sender, e);
+    private void TaskbarInfoMode_SelectionChanged(object sender, SelectionChangedEventArgs e) => Owner?.TaskbarInfoMode_SelectionChanged(sender, e);
+    private void TaskbarInfoApply_Click(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoApply_Click(sender, e);
+    private void TaskbarInfoRefresh_Click(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoRefresh_Click(sender, e);
+    private void TaskbarInfoOffset_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.TaskbarInfoOffset_ValueChanged(sender, args);
 
     public FeaturePagesHost() => InitializeComponent();
 
@@ -94,6 +101,7 @@ public sealed partial class FeaturePagesHost : UserControl
     private void DesktopCardGap_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.DesktopCardGap_ValueChanged(sender, args);
     private void DesktopCardMaxColumns_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.DesktopCardMaxColumns_ValueChanged(sender, args);
     private void DesktopRestore_Click(object sender, RoutedEventArgs e) => Owner?.DesktopRestore_Click(sender, e);
+    private void DesktopCleanupBroken_Click(object sender, RoutedEventArgs e) => Owner?.DesktopCleanupBroken_Click(sender, e);
     private void DesktopClickToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DesktopClickToggle_Toggled(sender, e);
     private void DragStash_Show_Click(object sender, RoutedEventArgs e) => Owner?.DragStash_Show_Click(sender, e);
     private void DragStashToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DragStashToggle_Toggled(sender, e);
@@ -111,6 +119,9 @@ public sealed partial class FeaturePagesHost : UserControl
     private void SpotlightToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.SpotlightToggle_Toggled(sender, e);
     private void Spotlight_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_ApplyHotkey_Click(sender, e);
     private void Spotlight_RebuildIndex_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_RebuildIndex_Click(sender, e);
+    private void VoiceBallToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.VoiceBallToggle_Toggled(sender, e);
+    private void VoiceBall_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.VoiceBall_ApplyHotkey_Click(sender, e);
+    private void VoiceBall_ResetPosition_Click(object sender, RoutedEventArgs e) => Owner?.VoiceBall_ResetPosition_Click(sender, e);
     private void ThemeRadioButtons_SelectionChanged(object sender, SelectionChangedEventArgs e) => Owner?.ThemeRadioButtons_SelectionChanged(sender, e);
     private void ThreeFingerCalibrate_Click(object sender, RoutedEventArgs e) => Owner?.ThreeFingerCalibrate_Click(sender, e);
     private void ThreeFingerDragToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.ThreeFingerDragToggle_Toggled(sender, e);

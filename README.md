@@ -1,4 +1,4 @@
-﻿# WinTools 维护手册
+# WinTools 维护手册
 
 基于 .NET 10 + WinUI 3 的 Windows 桌面工具集：桌面分区卡片、悬浮搜索、悬浮暂存、
 三指拖拽、按程序切换输入法、程序关联与点击桌面。
@@ -373,8 +373,22 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   用户就再也点不到了。用 Shell 解析名 `::{CLSID}` 当 Path，显示名和图标通过 PIDL 找 Shell 要
   （`SHParseDisplayName` + `SHGetFileInfo` 带 `SHGFI_PIDL`），打开走 `explorer.exe shell:::{CLSID}`。
   是否启用读注册表 `HideDesktopIcons\NewStartPanel`（值 1 = 用户在「桌面图标设置」里关掉了）。
+  **取图标必须两条路都试**：`SHGFI_PIDL | SHGFI_ICON` 在本程序进程里对控制面板 / 回收站 /
+  网络**都不返回句柄**（错误日志里有记录，但同样的调用在普通测试进程里是成功的），所以要退到
+  `SHGFI_SYSICONINDEX` + `ImageList_GetIcon` 从系统图像列表取。
+  **绝对不要再拿 `SHGetStockIconInfo` 兜底**：2026-09-12 之前那版就是这么写的，而且 SIID 给错了
+  ——控制面板写成 22（`SIID_FIND`，放大镜）、此电脑写成 15（`SIID_SERVER`，服务器机箱），
+  Shell 里**根本没有**「控制面板」对应的库存图标。结果卡片上的控制面板变成一个放大镜，
+  用户一眼就看出不对。取不到就宁可空着，也别画一个错的。
 - **`DesktopZoneMatcher`**：显式文件名 → 名称关键词 → 游戏协议 → 扩展名 / 文件夹 → 兜底分区，
   五级优先级。关键词以 `.` 开头视为扩展名；含 `steam://` 等协议的关键词优先匹配 `.url` 目标。
+  **目录例外**：对文件夹，「文件夹」规则排在名称关键词之前。2026-09-12 用户反馈：桌面上
+  一个叫「AI Project Unity」的工程目录因为名字含 `Unity` 被分进了「三维与引擎」；对文件夹
+  来说，名字里出现软件名多半说明它是那个软件的工程 / 数据目录，不是软件本身。想让某个
+  文件夹归到软件分区，拖过去即可——显式清单优先级最高，不受这条影响。
+- **同名去重按名称，不按路径**：安装程序常常同时往「当前用户桌面」和「公共桌面」写同名
+  快捷方式（例如极空间，两个 `.lnk` 指向同一个 exe），按路径去重会让卡片里出现两个一模一样
+  的图标。`DesktopFolders()` 把用户桌面排在前面，先到先得 = 保留用户桌面那一个。
 - **兜底不能丢**：桌面图标整体隐藏后，任何一项都必须落进某张卡片，否则它就彻底没有入口了。
   所以 `GroupByZone` 在规则没命中时兜底到**最后一个分区**，而不是像旧版那样跳过。
 - **分区归属**只存一处：配置里每个分区的显式清单 `DesktopZone.Items`。拖动换区 =
@@ -426,9 +440,15 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   刷新和重启按上述分组及组内顺序显示，不改文件名或归属规则。
   当前顺序按分区名保存，分区改名后尚不迁移这份顺序；预设也暂不包含它。
 - **图标交互**：文件、文件夹与系统虚拟图标都必须双击打开，单击只用于选择或准备拖动。
-  卡片的简化右键菜单保留「打开 / 删除到回收站」，并提供「显示系统右键菜单」入口；后者通过
+  卡片的简化右键菜单保留「打开 / 重命名 / 删除到回收站」，并提供「显示系统右键菜单」入口；后者通过
   Shell `IContextMenu` 显示项目原生菜单，不能用跳转到资源管理器代替，否则打开方式、发送到、
   压缩扩展、属性等 Shell 功能会丢失。系统虚拟图标没有文件实体，不显示自定义删除结果。
+- **重命名**（2026-09-18）：弹出一个 240dip 宽的输入框（回车确认、Esc 取消），不做资源管理器式
+  的就地编辑——格子只有 76dip 宽看不全名字，按下去还会先被 GridView 当成拖动起手。编辑的是
+  **不含扩展名**的名字（与卡片显示一致），提交时拼回原扩展名，`.lnk` 不会被改丢。实际改名走
+  `SHFileOperation(FO_RENAME)`，但非法字符、重名、以空格/点结尾都先在托管侧校验，这样能给出
+  不同的提示。改完要调 `CardItemOrderStore.Rename` 换掉顺序表里的旧文件名（顺序表按文件名记，
+  不换的话图标会掉到同类末尾），再通知管理器同步——改名后可能按关键字匹配到别的分区了。
 - **悬停圆角**：图标容器显式引用 `PageInnerCornerRadius`（8px），文件名提示使用
   `PageDesktopToolTipStyle`（12px）。自定义样式分别继承 `DefaultGridViewItemStyle` 和
   `DefaultToolTipStyle`，避免退回旧模板；不要只改资源键或控件属性而忽略实际绘制模板。
@@ -527,6 +547,54 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   就是点回呼出时那个窗口，前台 HWND 根本没变，卡片会一直盖着收不起来。反过来，前台切到
   卡片自身（点卡片空白、拖图标）不算"点到别处"。进入监测前要先把遗留的点击标志读掉，
   否则第一个 tick 就把刚呼出的卡片收回去。再次按快捷键仍可手动收起，计时器必须同步停止。
+- **"点到别处"不能只用卡片矩形判定**（2026-09-18 修）。九张卡片是九个独立 HWND，按矩形判
+  会把这些明明还在操作卡片的动作误判成"点走了"，用户感受就是"刚呼出来，一点就整批消失"：
+  - 卡片**之间的缝隙**（默认 gap 16dip）落在所有矩形之外——A/B 实测，旧逻辑点一下缝隙，
+    置顶卡片数直接 9 → 0；
+  - 右键菜单、工具提示是**独立顶层窗口**，位置大多超出卡片矩形，点菜单项 = 点到别处。
+
+  判定改成三层：卡片矩形 → `WindowFromPoint` + 属主链（认出卡片自己的弹出窗口）→
+  整批卡片的包围盒。前台窗口的判定同样要认弹出窗口（`IsOwnCardOrPopup`）。
+
+### 7.6.1 图标的选中态
+
+`GridView` 用 `SelectionMode="Single"`，单击选中并保留高亮，双击打开（`DoubleTapped`），
+和 Windows 桌面一致。此前是 `SelectionMode="None"`，只有 hover 有反馈，鼠标一移开就什么都
+看不出来，用户无法判断自己选中了哪个。三个配套细节：
+
+- 选中底色必须自己覆盖 `GridViewItemBackgroundSelected` 系列主题资源（系统主题色 35% 透明）。
+  默认值在 Mica 表面上几乎看不见。
+- 九张卡片是九个独立 `GridView`，互不知情。卡片选中后要通过 `ItemSelected` 事件通知管理器
+  把**其余卡片的选中清掉**，否则会同时亮好几个。收起整批卡片时一并清空。
+- "点空白处取消选中"要用 **`PointerPressed` + `AddHandler(handledEventsToo: true)`**，
+  不能用 `Tapped`：落在 `GridView` 空白区域的点击会被它内部的 ScrollViewer 当成平移手势吃掉，
+  `Tapped` 一次都不会触发（实测埋点里只有点在图标上时才有记录）。
+
+### 7.6.2 卡片尺寸：四边等距与按行自适应行高
+
+2026-09-18 一次性修了三个互相牵连的尺寸问题，数字都是实测的：
+
+- **窗口矩形 ≠ 可见客户区。** Win11 的窗口矩形外面还有一圈透明拖拽边框（125% 下左右各 9px、
+  底部 9px），`AppWindow.Move/Resize` 操作的是窗口矩形。以前把 DIP 尺寸直接当窗口尺寸下发，
+  等于内容区被吃掉一圈：最后一行的选中框底边被裁掉，卡片之间的可见间距也比设置值大了 18px。
+  现在 `TargetWindowRect` 用 `GetWindowRect` / `GetClientRect` / `ClientToScreen` 量出这圈边框，
+  把矩形**外扩**后下发，让客户区正好等于布局算出来的 DIP 矩形。
+- **四边等距。** 宽度公式原来每列多给 `ItemMarginDip * 2`（8dip），可 `ItemContainerStyle` 早把
+  GridViewItem 的 Margin/Padding 清零了，容器实测就是 76dip。多出的 24dip 因为面板左对齐全堆在
+  右边——左留白 8、右留白 32。现在宽度 = 列数 × 76 + 2 × 8，XAML 的内边距四边统一为 8。
+- **按行自适应行高**（`CardTilesPanel`）。`ItemsWrapGrid` 是均匀网格，所有格子必须按"两行
+  文件名"留高度，单行的行下面就空一截。改用自定义面板：列宽固定，**每行高度取这一行最高的格子**，
+  和 Windows 桌面一致。卡片高度因此算不出来，只能等面板量完再读（`ApplyMeasuredContentHeight`），
+  读到后发 `SizeChangedByContent` 让管理器**只重排位置**——不能走 `ContentChanged`，那条路会重新
+  刷内容 → 重新测量 → 又报高度变化，两边互相喂事件停不下来。WinUI 会把每个格子的高度向上取整到
+  整像素（86dip@125% = 107.5px → 实占 108px），测量值天然包含这点，不会再裁最后一行。
+
+换面板的代价是**卡片内拖动排序必须自己做**：内置重排只认 `ItemsWrapGrid` / `ItemsStackPanel`，
+换成自定义面板后拖得起来、松手不插入（实现 `IInsertionPanel` 也不够）。现在在 Drop 里用
+`CardTilesPanel.GetInsertionIndex` 算插入点、直接 `_items.Move`。**`CanReorderItems` 仍须保持
+True**——设成 False 后拖动会话不再把 DragOver/Drop 发回源列表（埋点只剩 Starting →
+Completed(None)），自己处理也收不到。合成鼠标输入能驱动这条链路，可以用来做回归测试
+（旧版作对照组时同一套拖动能重排）。
 
 ### 7.7 多屏拓扑记忆（`Services/CardLayoutCache.cs`）
 
@@ -548,14 +616,24 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 链路：`MainWindow.HotkeyWndProc`（复用已有的窗口过程子类化，不必引入
 `Microsoft.Win32.SystemEvents` 依赖）接住 `WM_DISPLAYCHANGE` / `WM_DPICHANGED` /
 `WM_SETTINGCHANGE`+`SPI_SETWORKAREA` → `QueueDesktopCardRelayout()` 防抖 →
-`DesktopCardManager.RelayoutForDisplayChange()`。三条硬性要求：
+`DesktopCardManager.RelayoutForDisplayChangeAsync()`。四条硬性要求：
 
-- **必须防抖，且不能太短（现为 700ms）**。改一次分辨率 Windows 会连发好几条消息，
-  而且消息到达时 `XamlRoot.RasterizationScale` 往往还是旧值——立刻重排等于用旧缩放
-  再算错一遍，白修。
-- **必须先 `ApplyScaleAwareSize()` 再 `Layout()`**，顺序不能反。只调 `Layout()` 不够：
-  窗口像素尺寸还是按旧缩放设的，`Layout` 却按 `DipWidth/DipHeight` 算间距，
-  于是卡片大小和间距对不上，看起来就是「间距没跟着调整」。
+- **必须防抖，且不能太短（现为 900ms）**。改一次分辨率 Windows 会连发好几条消息，
+  远程控制软件（ToDesk / 向日葵之类）改分辨率时更是分好几步落定；防抖太短就会把一次
+  改动拆成好几轮重排。
+- **必须一张卡片一让步（`await Task.Yield()`），不能一口气排完。** 分辨率刚变完的那
+  几秒里，一次 `MoveAndResize` 要同步走完 DWM 合成 + XAML 重排，实测 9 张 Mica 卡片
+  连着做会占住 UI 线程 **11.6 秒**（2026-09-17 实测，`WinTools-startup-trace.txt`）。
+  消息泵一停，Windows 就判定进程「未响应」并结束它——事件查看器里是 `AppHangB1`，
+  用户看到的是「改完分辨率程序就闪退」。这是本节最重要的一条。
+- **缩放只认 `GetDpiForMonitor`（主显示器有效 DPI）。** 另外两个来源在过渡期都会骗人：
+  `XamlRoot.RasterizationScale` 要等 WinUI 下一帧；`GetDpiForWindow` 是**每个窗口各自**
+  处理完 `WM_DPICHANGED` 才更新，于是同一轮排版里前几张卡片读到旧缩放、后几张读到新的，
+  卡片被分成两组按两种尺寸摆。用错缩放算出来的像素尺寸会被永久写死在窗口上，表现就是
+  卡片变窄、每行少一个图标。
+- 位置和尺寸合并成一次 `AppWindow.MoveAndResize`，且目标值与当前值相同时直接跳过；
+  排完一遍后再比一次显示签名（工作区 + 缩放），稳定了还要补跑一遍收尾——过渡态的尺寸
+  不能留在窗口上。
 - 这三条消息**只作通知**，处理完必须继续传给原窗口过程（WinUI 自己也要处理 DPI），
   不能像 `WM_HOTKEY` 那样直接 return。
 
@@ -616,6 +694,32 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   打开所在位置，`Esc` 或失去焦点关闭；没有匹配结果时，`Enter` 直接执行输入内容。
 - 搜索窗口的图标解析复用桌面卡片的 `CardItem` 缓存和 STA 队列，不能另建一套同步 Shell 图标链路。
 
+### 语音小球
+
+文本框处于输入状态时，在**输入光标正下方**（放不下就正上方）显示麦克风小球，点一下模拟按下设置里的
+语音快捷键（默认 `Win+H`，可填输入法的组合，允许只有修饰键，如 `Ctrl+Win+Shift`），再点一下再按一次。默认关闭。
+
+- 全部在 `VoiceBallService` 的一条 MTA 后台线程：WinEvent（焦点 / 前台 / 拖动窗口）防抖 80ms 判定；
+  隐藏时每 500ms 轮询前台有没有输入光标（浏览器页面内换输入框不一定发焦点事件）；显示时每 150ms 跟随光标。
+  同一行内光标移动不超过三个小球宽度不跟，避免打字时小球每个字跳一下。
+- **正在听（小球点亮）时不跟随光标**：语音转写持续往框里写字，跟着跑既晃眼又点不准。
+- **拖动记位置**：未点亮时按住拖动（超过系统拖动阈值才算拖），松手把「小球中心相对光标底端」的偏移
+  （DIP，按 100% 缩放计）写进配置 `voiceBallCustomOffset / voiceBallOffsetX / voiceBallOffsetY`；之后按该偏移摆放，
+  下方超出屏幕时整体翻到光标上方。设置页「小球位置」卡片用 1/2 比例示意图标出位置，「重置」恢复默认。
+  拖动回调来自小球后台线程，`App` 用启动时记下的 UI 线程 `DispatcherQueue` 切回，不能在后台线程访问 `Window.DispatcherQueue`。
+- **判定依据是「有输入光标」，UIA 只负责排除**（密码框、只读、禁用）。踩过的坑：第一版只认 UIA 的 Edit /
+  可写 Value+Text，结果几乎只有 Claude 能出小球——2026-09-14 实测 ChatGPT 桌面版输入框在 UIA 里是 Group，
+  没有文本模式。光标来源按精度：UIA TextPattern2.GetCaretRange → MSAA `OBJID_CARET` → `GetGUIThreadInfo`
+  系统光标（`Services/FocusedTextProbe`）。记事本走 UIA，Edge 地址栏 / ChatGPT 走 MSAA，均实测可用。
+- **小球必须是纯 Win32 分层窗口**（`WS_EX_NOACTIVATE` + `MA_NOACTIVATE`），不要换成 WinUI 窗口：
+  点击时焦点必须留在原文本框，快捷键才会发到正确的程序。实测记事本点击后前台不变，`Win+H` 面板正常弹出。
+- **Mica 底色是算出来的**（`Services/MicaColorSampler`）：系统 Mica 只在窗口激活时显示材质，而小球永远不激活。
+  取壁纸在小球所在屏幕位置的平均色，保留色相 / 饱和度、亮度换成 Mica 色调，再按深色 `#202020`×0.8、
+  浅色 `#F3F3F3`×0.5 混合；外加 Win11 的 1px 渐变描边、柔和投影、悬停 / 按下叠色，正在听时换强调色 + 脉冲圈。
+- 诊断：`%TEMP%\WinTools-voiceball-trace.on` 存在时（需重启程序），每次判定结果与原因写入
+  `%TEMP%\WinTools-voiceball-trace.txt`。
+- 小球状态靠点击次数自行记录，用别的方式结束语音后可能与输入法实际状态不一致；焦点离开原窗口时重置。
+
 ### 侧栏状态圆点
 
 `UpdateNavStatusIndicators()` 里每个圆点**只反映该页的总开关**。不要再写"或者某个子功能还开着"
@@ -624,32 +728,45 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 
 ### 托盘菜单
 
-托盘图标贴着任务栏，右键菜单必须向上弹：`TrayIcon.BuildContextMenu` 里设
-`Placement = FlyoutPlacementMode.TopEdgeAlignedRight`。实测菜单占 y=1098~1228，
-点击点 y=1235，完全在上方。
+**单击和右键都弹这同一个菜单**，托盘图标本身不再直接开主窗口——主窗口从菜单里的
+「显示主窗口」进。这样所有快捷入口收在一处，用户不必记「左键开窗、右键菜单」两套操作。
 
-**已知问题：位置对了但动画方向不对**。菜单弹在光标上方，入场动画却是从上往下展开，和系统托盘里
-其它应用相反。框架按**它自己解析出来的**放置方向挑动画，而托盘这条路径（H.NotifyIcon 的
-`ContextMenuMode.SecondWindow` + 光标定位）拿到的是「向下」那一套。
+菜单分三组，顺序按使用频率，退出永远在最后：
 
-2026-09-06 试过两条路，**都失败并已回退**，别再重来一遍：
+| 组 | 项 |
+| --- | --- |
+| 打开 | 悬浮搜索（右侧标出全局快捷键）、悬浮暂存、显示主窗口 |
+| 桌面分区 | 桌面分区（`ToggleMenuFlyoutItem`，勾选 = 已开启）、同步桌面 |
+| 程序 | 设置…、退出 WinTools |
 
-1. `AreOpenCloseAnimationsEnabled = false` + 给 `MenuFlyoutPresenterStyle` 挂
-   `PopupThemeTransition { FromVerticalOffset = 40 }`：那条 Transition 在这条弹出路径上
-   **根本不触发**，结果是彻底没有动画。
-2. 同样关掉框架动画，改在 `Opened` 里用 `GetOpenPopupsForXamlRoot` 找到弹出层、
-   自己跑合成动画（Translation + Opacity）：同样没有可见动画。
+菜单**只在启动时构建一次**，而配置随时会变，所以动态部分必须在每次弹出前由
+`RefreshMenuState()` 重算，不能在 `BuildContextMenu` 里写死：
 
-结论：**保留框架默认动画**（方向不对但至少有过渡），只保留 `Placement` 设置。真要修，
-下一步应该先搞清楚 H.NotifyIcon 的 `ShowContextMenu` 到底用什么参数调 `ShowAt`，
-而不是继续在动画这一层试。
+- 「桌面分区」的勾选状态、「同步桌面」的置灰（分区没开时同步无意义，而托盘菜单没有
+  可用的 `XamlRoot`，弹不了对话框，只能置灰）；
+- 「悬浮搜索」右侧的快捷键文字（`KeyboardAcceleratorTextOverride`），功能关闭时显示「已关闭」。
 
-`TaskbarIcon` 是 `FrameworkElement`，必须挂在可视树上，所以有一个专门装它的宿主窗口
-（标题「WinTools Tray」）。**这个窗口缩不到 1×1**：WinUI 3 有最小窗口尺寸，`AppWindow.Resize(1,1)`
-实测最终是 136×39。而真正把它显示出来的是 `EnsureShown()` 里的 `Activate()`，于是屏幕左上角
-(156,156) 会冒出一个空白小方块。`IsShownInSwitchers = false` 只挡 Alt-Tab / 任务栏，挡不住它被画出来。
-正确做法是 **`Activate()` 之后**重设 `IsShownInSwitchers`、尺寸，并 `Move` 到 (-32000,-32000)；
-只在窗口首次显示**之前**设这些属性是不够的。
+关掉「桌面分区」会连带把系统的「显示桌面图标」还回去（见 `DesktopCardManager.SetEnabled`），
+所以这一项同时也是「我想看回桌面图标」的快捷开关。托盘改动作后要同步设置页那个
+`ToggleSwitch`（`MainWindow.SetDesktopCardsEnabledFromTray`），否则用户下次打开设置页会看到相反状态。
+
+位置与动画的坑见下面两段——那是历史遗留，别重复踩。
+
+### 清理失效快捷方式
+
+桌面分区页「更多」→「清理失效快捷方式」：扫出目标已不存在的桌面 `.lnk`，
+**列出来（含原目标路径）让用户确认后**再一起删到回收站。
+
+- **绝不自动删**。卸载软件留下的死快捷方式和"目标暂时读不到"从文件系统层面看是一样的。
+- 误判防护（`Services/BrokenShortcutScanner`）：目标在可移动磁盘 / 网络位置 / UNC 路径 /
+  未就绪的卷上，一律跳过；`TargetPath` 为空的（指向 Shell 命名空间对象，如控制面板项）也跳过。
+  宁可漏报，不能误报。
+- 只看 `.lnk`。`.url` 指向网址，没有「目标文件存在与否」可言。
+- 解析快捷方式要 STA（`WScript.Shell` 的约束，和图标解析同源），所以扫描内部自己起一条
+  STA 线程；调用方用 `Task.Run` 包一层即可，别在 UI 线程直接调。
+- 删除走 `DesktopCollectService.DeleteToRecycleBin`（`FOF_ALLOWUNDO`），用户能在回收站还原。
+  2026-09-12 实测：造一个指向不存在路径的 `.lnk` → 对话框正确列出 → 删除后桌面上消失、
+  回收站里能找到。
 
 ### 启动路径
 
@@ -799,6 +916,54 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 
 ## 11. 主要文件
 
+### 任务栏信息（2026-09-19）
+
+功能图标由 `FeatureIcons.cs` 统一定义，沿用 [Segoe Fluent Icons](https://learn.microsoft.com/en-us/windows/apps/design/iconography/segoe-fluent-icons-font)，缺少该字体时回退 MDL2。侧栏、托盘菜单、搜索与暂存浮窗、语音小球和任务栏使用同一功能映射；桌面卡片用分区网格、暂存用图钉、关联用链接、语音用麦克风；音频设备选择独立为宽文字按钮，不混入功能图标。通用新增、删除、刷新等动作保留原有标准图标。原生任务栏缓存字体矢量轮廓，只在 DPI 改变时重建，并在服务释放时回收。
+
+左侧独立「任务栏信息」功能页：默认开启主屏幕底部任务栏左侧的 Codex 剩余额度；可切换为自定义文字、
+调整向右偏移或关闭。左侧仍是独立分层窗口，不是注入 Explorer 的系统组件；默认不绘制底色，
+可开启「显示底色」提升对比度。主屏幕底部横向任务栏隐藏或前台全屏时，左侧信息也会隐藏。
+位置可手动调整以避开已有按钮；信息区域响应点击，不抢前台输入焦点。
+左侧窗口通过 popup owner 跟随任务栏层级；仅在显示或位置尺寸变化时定位，不再每秒重新置顶，避免点击任务栏时反复遮挡。隐藏操作也仅在可见状态改变时执行。
+
+快捷图标默认开启：四宫格调用现有 ShowDesktopCardsFromTray 呼出图标库，不最小化应用或切回桌面；
+快捷按钮排列在信息区最左侧，额度或自定义文字在右侧；鼠标悬停时仅对应按钮显示圆角底框，移出即清除，仅悬停目标改变时重绘。
+四宫格按钮再次点击会收起左侧卡片；外部点击检测忽略该按钮，避免按下时收起、松开时又打开。
+设备入口为耳麦图标 + 设备文字按钮，设备与 Codex / 自定义信息使用无描边柔和底框；信息框按文字测量宽度，最长 240 DIP。弹窗移除额外边线和系统描边，保留真实 Mica；任务栏分层窗口的底框是半透明绘制效果。三个功能图标在最左侧。设备选择使用 WinUI + Mica 面板，扬声器与麦克风分别下拉选择，显示当前普通默认设备；选择后同时更新普通与通话默认并重新读取验证。后台枚举，不启动常驻轮询；失去焦点或 Esc 收起，提供声音设置入口。独立指定设备的应用仍使用其应用内设置。
+设备枚举采用 [Windows Core Audio](https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-getdefaultaudioendpoint)；默认设备写入使用非公开 IPolicyConfig 接口（[接口定义参考](https://github.com/frgnca/AudioDeviceCmdlets/blob/master/SOURCE/IPolicyConfig.cs)），异常会明确提示，菜单提供 Windows 声音设置入口。
+只读音频集成检查：`dotnet run --project tests/AudioDevice.Tests`，验证设备标识、默认项及切换接口可用性，不实际修改设备。
+收纳图标打开悬浮暂存；麦克风图标执行语音小球设置的快捷键（默认 Win+H），不抢输入焦点，关闭小球后仍可使用。图标为随 DPI 缩放的矢量线条。左键点击信息文字不弹菜单，右键打开托盘菜单，
+可呼出悬浮搜索、桌面分区与刷新额度；菜单不再提供「任务栏信息」或「显示 / 恢复桌面」项。
+设置页不再单列「快捷按钮」卡片，保留独立任务栏信息页中的额度与外观选项。
+左侧信息区弹出的菜单向上、向右展开；从四宫格或该菜单呼出桌面图标库时，按需创建一组
+独立的左侧浮层窗口，满列后向右排。右侧常驻桌面卡片始终保持右侧布局，不再搬动原窗口。
+左侧浮层直接显示、直接收起，不播放过渡动画；点击浮层外部后将其隐藏，再次打开复用窗口；浮层不更改桌面图标显隐或桌面布局缓存。
+日常收起使用 DWM 遮蔽，保留已准备的窗口表面；内容不变时再次打开跳过 Show 和渲染等待，整组解除遮蔽。
+两组共用分区配置、排序存储和桌面监视器，同步时复用一次桌面枚举结果；排序和文件变动
+通知两组同步。右侧桌面完成显示后，左侧窗口逐张提前创建并隐藏，点击时直接显示；内容变化后更新隐藏窗口，主管理器释放时一起回收。悬浮暂存保持原来的位置逻辑。
+左侧打开时复用右侧现有分组快照、项目对象和已解码图标；两侧的窗口、集合和选中态独立。
+内容未改变时跳过列表重建；左侧整组等待共享图标准备及统一渲染屏障后一起解除遮蔽，避免逐张出现和图标后闪；打开耗时写入 DesktopLibrary.Open 日志。
+卡片内容变化采用增量插入、移动、删除，保留未变项目的界面容器；左侧复用右侧排序结果，避免重复查询 Shell 名称和文件类型。隐藏预备阶段也完成布局，布局快照不变时跳过磁盘读写。
+
+布局回归：`dotnet run --project tests/DesktopCardLayout.Tests`，覆盖左右独立计算、列换行、
+桌面原位置保留、负坐标屏幕和空列表。窗口交互仍按用户要求不做界面自动验收。
+选择「仅系统托盘」会隐藏左侧窗口，但继续刷新额度；悬停 WinTools 原生托盘图标查看额度、
+重置时间和更新时间，点击图标打开菜单。托盘位置由 Windows 管理，图标可能在折叠区。
+这两种模式共用一个额度读取服务。左侧快捷按钮没有独立键盘焦点，可通过原生托盘菜单访问同样的动作。
+
+2026-09-19：上述模式和快捷入口已通过 Release 编译；遵照用户要求不进行界面自动操作，
+底色观感、按钮点击与自动隐藏效果仍需用户实际确认。
+
+`TaskbarInfoService.cs` 管理显示与两分钟刷新，`MainWindow.TaskbarInfo.cs` 管理设置。
+`Services/CodexQuotaReader.cs` 启动本机 `codex.exe app-server`，完成握手后只调用
+`account/rateLimits/read`，请求结束即回收进程；不会创建模型任务或消费重置额度。
+优先显示 `rateLimitsByLimitId.codex`，兼容旧 `rateLimits`；按真实周期标注，缺失窗口不虚构。
+接口依据：[OpenAI App Server 文档](https://developers.openai.com/codex/app-server)。
+需要已安装并登录的 Codex 桌面版或 PATH 上的原生 CLI。失败显示不可用，详细原因在设置页。
+
+验证：`dotnet run --project tests/TaskbarInfo.Tests`；加 `-- --live` 可验证本机实际额度。
+覆盖通用额度桶优先级、旧格式、空字段、周窗口单独存在、百分比边界与其他额度桶隔离。
+
 | 文件 | 职责 |
 | --- | --- |
 | `App.xaml/.cs` | 入口、单实例、主窗口与后台服务初始化 |
@@ -823,6 +988,7 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 | `FloatingStashWindow` | 文件悬浮暂存；关窗清空本次记录 |
 | `GlobalDragWatcher` | 普通鼠标 + 三指全局拖动检测 |
 | `ProgramDropWindow` | 拖放文件时的程序选择窗口 |
+| `VoiceBallService` / `Services/FocusedTextProbe.cs` / `Services/MicaColorSampler.cs` | 语音小球：光标跟踪、Mica 小球绘制与快捷键模拟 |
 | `DesktopClickService` | 桌面空白双击切换「显示桌面 / 恢复窗口」 |
 | `DesktopContextMenuService` | 清理历史「整理桌面」注册表菜单 |
 | `ThreeFingerDragService` | 精确触控板三指接触合成原生拖动 |
@@ -844,3 +1010,7 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   存储检查不等同于鼠标交互通过；需用真实鼠标复核分区内跨行拖动、跨分区移动、取消拖动和重启恢复。
 
 后续完成界面复核后应更新此处，不要把未通过的检查写成「已实测支持」。
+
+设备浮层外观补充：任务栏设备与 Codex 采用透明圆角细线框，不填底色；设备弹窗恢复最初的默认 MicaBackdrop，不设置 TintOpacity、LuminosityOpacity 或着色覆盖；不要与 DesktopAcrylicBackdrop 混用。标题使用不带章节外边距的样式，避免滚动和裁切。已通过限定范围实际截图检查（artifacts/ui-check/outline-default.png），未选择音频设备。
+
+音频入口支持再次点击收起；弹窗打开期间监听外部鼠标按下，排除入口按钮和自身下拉菜单，收起即卸载监听。线框高度 34 DIP；图标组左内距 8 DIP、按钮宽 36 DIP、到音频入口间隔 4 DIP；耳麦与音频设备文字采用固定间距。已实际验证切换收起与点击 WinTools 信息区收起，并截图检查间距。

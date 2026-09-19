@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Window
     x:Class="WinTools.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -96,7 +96,7 @@
                     <Setter Property="VerticalContentAlignment" Value="Center"/>
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                 </Style>
-                <Style TargetType="SymbolIcon">
+                <Style TargetType="FontIcon">
                     <Setter Property="Width" Value="20"/>
                     <Setter Property="Height" Value="20"/>
                     <Setter Property="HorizontalAlignment" Value="Center"/>
@@ -107,7 +107,7 @@
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="NavItemThreeFingerDrag" Tag="ThreeFingerDrag">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="TouchPointer"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.ThreeFingerDrag}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -122,7 +122,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemDragStash" Tag="DragStash">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Pin"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.DragStash}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -137,7 +137,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemProgramAssoc" Tag="ProgramAssociation">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="OpenFile"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.ProgramAssociation}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -152,7 +152,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemPerAppIme" Tag="PerAppIme">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Keyboard"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.InputMethod}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -167,7 +167,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemDesktopOrganize" Tag="DesktopOrganize">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="ViewAll"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.DesktopCards}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -182,7 +182,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemDesktopClick" Tag="DesktopClick">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Home"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.DesktopClick}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -197,7 +197,7 @@
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemSpotlight" Tag="Spotlight">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Find"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.Search}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
@@ -210,11 +210,39 @@
                         </Grid>
                     </NavigationViewItem.Content>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="NavItemVoiceBall" Tag="VoiceBall">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.Voice}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.Content>
+                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="语音小球" Style="{StaticResource NavigationLabelStyle}"/>
+                            <Ellipse x:Name="NavDotVoiceBall" Grid.Column="1" Width="10" Height="10" Margin="0,0,2,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </NavigationViewItem.Content>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavItemTaskbarInfo" Tag="TaskbarInfo">
+                    <NavigationViewItem.Icon><FontIcon Glyph="{x:Bind local:FeatureIcons.TaskbarInfo}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/></NavigationViewItem.Icon>
+                    <NavigationViewItem.Content>
+                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="任务栏信息" Style="{StaticResource NavigationLabelStyle}"/>
+                            <Ellipse x:Name="NavDotTaskbarInfo" Grid.Column="1" Width="10" Height="10" Margin="0,0,2,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </NavigationViewItem.Content>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem x:Name="NavItemAppSettings" Tag="AppSettings">
                     <NavigationViewItem.Icon>
-                        <SymbolIcon Symbol="Setting"/>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.Settings}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
                     </NavigationViewItem.Icon>
                     <NavigationViewItem.Content>
                         <TextBlock Text="设置" Style="{StaticResource NavigationLabelStyle}"/>
@@ -236,4 +264,3 @@
         </NavigationView>
     </Grid>
 </Window>
-

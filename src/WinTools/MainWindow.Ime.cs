@@ -91,7 +91,7 @@ public sealed partial class MainWindow
     private void UpdateImeCount()
     {
 
-        ImeCountText.Text = _imeRules.Count > 0 ? $"{_imeRules.Count} 项" : "暂无规则";
+        ImeCountText.Text = _imeRules.Count > 0 ? $"{_imeRules.Count} 条规则" : "";
 
         ImeEmptyHint.Visibility = _imeRules.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
 

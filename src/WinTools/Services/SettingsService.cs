@@ -79,6 +79,13 @@ public sealed class SettingsService
     public void ResetToDefaults()
     {
         var defaults = ConfigService.GetDefault();
+        Current.EnableTaskbarInfo = defaults.EnableTaskbarInfo;
+        Current.TaskbarInfoPlacement = defaults.TaskbarInfoPlacement;
+        Current.TaskbarInfoBackground = defaults.TaskbarInfoBackground;
+        Current.TaskbarInfoActions = defaults.TaskbarInfoActions;
+        Current.TaskbarInfoMode = defaults.TaskbarInfoMode;
+        Current.TaskbarInfoText = defaults.TaskbarInfoText;
+        Current.TaskbarInfoOffset = defaults.TaskbarInfoOffset;
         Current.Entries = defaults.Entries;
         Current.Hotkeys = defaults.Hotkeys;
         Current.EnableDragStash = defaults.EnableDragStash;
@@ -101,6 +108,10 @@ public sealed class SettingsService
         Current.WindowGap = defaults.WindowGap;
         Current.EnablePerAppIme = defaults.EnablePerAppIme;
         Current.EnableDesktopClickToShow = defaults.EnableDesktopClickToShow;
+        Current.EnableVoiceBall = defaults.EnableVoiceBall;
+        Current.VoiceBallCustomOffset = defaults.VoiceBallCustomOffset;
+        Current.VoiceBallOffsetX = defaults.VoiceBallOffsetX;
+        Current.VoiceBallOffsetY = defaults.VoiceBallOffsetY;
         Current.DesktopZones = defaults.DesktopZones;
         Current.DesktopZoneSchemaVersion = defaults.DesktopZoneSchemaVersion;
         Current.EnableDesktopCard = defaults.EnableDesktopCard;

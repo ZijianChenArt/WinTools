@@ -62,12 +62,12 @@ public sealed partial class MainWindow
         {
             var entries = await AppSearchIndex.GetAsync(forceRefresh: true);
             if (SpotlightStatusText != null)
-                SpotlightStatusText.Text = $"已索引 {entries.Count} 个应用程序。";
+                SpotlightStatusText.Text = $"已索引 {entries.Count} 个应用";
         }
         catch (Exception ex)
         {
             ErrorReporter.Log("MainWindow.Spotlight_RebuildIndex_Click", ex);
-            if (SpotlightStatusText != null) SpotlightStatusText.Text = "索引重建失败，详见错误日志。";
+            if (SpotlightStatusText != null) SpotlightStatusText.Text = "重建索引失败";
         }
     }
 
@@ -76,8 +76,8 @@ public sealed partial class MainWindow
         if (SpotlightStatusText == null) return;
         var count = AppSearchIndex.Snapshot.Count;
         SpotlightStatusText.Text = count > 0
-            ? $"已索引 {count} 个应用程序。"
-            : "索引尚未建立，首次呼出时会自动扫描。";
+            ? $"已索引 {count} 个应用"
+            : "尚未建立索引，首次打开搜索时将自动建立";
     }
 
     #endregion

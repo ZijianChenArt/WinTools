@@ -76,8 +76,8 @@ public sealed partial class MainWindow
                 var dialog = new ContentDialog
                 {
 
-                    Title = "开机启动",
-                    Content = $"设置失败：{error}",
+                    Title = "无法更改登录时启动",
+                    Content = error,
                     CloseButtonText = "确定",
                     XamlRoot = MainNav.XamlRoot,
                 }
@@ -121,7 +121,7 @@ public sealed partial class MainWindow
             {
 
                 Title = "三指拖拽",
-                Content = "未检测到 Windows 精确触控板，无法使用此功能。",
+                Content = "未检测到精确式触摸板，无法使用此功能。",
                 CloseButtonText = "确定",
                 XamlRoot = MainNav.XamlRoot,
             }

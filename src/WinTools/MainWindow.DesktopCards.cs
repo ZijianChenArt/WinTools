@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using System.Text;
 using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
@@ -129,7 +130,7 @@ public sealed partial class MainWindow
 
     private void SyncDesktopCardsIfEnabled()
     {
-        if (_desktopCardManager?.IsEnabled == true) _desktopCardManager.Sync();
+        if (_desktopCardManager?.HasVisibleCards == true) _desktopCardManager.Sync();
 
 
     }
@@ -142,22 +143,27 @@ public sealed partial class MainWindow
     /// 必须防抖：改一次分辨率 Windows 会连发好几条消息，而且消息到达时
     /// <c>XamlRoot.RasterizationScale</c> 往往还是旧值——立刻重排会用旧缩放算出
     /// 错误的物理像素，正是"改完分辨率要手动同步一次才正常"的根因。
-    /// 700ms 是等系统把工作区和 DPI 都落定（README 7.7 的同一考量）。
+    /// 900ms 是等系统把工作区和 DPI 都落定（README 7.7 的同一考量）。远程控制软件
+    /// （ToDesk / 向日葵之类）改分辨率时系统常常分好几步落定，短防抖会让一次改动触发
+    /// 好几轮重排，实测能把 UI 线程连续堵住十几秒并被 Windows 当成「未响应」结束掉。
+    /// 真排完之后 <see cref="DesktopCardManager.RelayoutForDisplayChangeAsync"/> 还会再
+    /// 校验一次显示参数，所以这里宁可等久一点。
     /// </remarks>
     internal void QueueDesktopCardRelayout()
     {
-        if (_desktopCardManager?.IsEnabled != true) return;
+        if (_desktopCardManager?.HasVisibleCards != true) return;
 
         if (_displayChangeTimer == null)
         {
             _displayChangeTimer = DispatcherQueue.CreateTimer();
-            _displayChangeTimer.Interval = TimeSpan.FromMilliseconds(700);
+            _displayChangeTimer.Interval = TimeSpan.FromMilliseconds(900);
             _displayChangeTimer.IsRepeating = false;
-            _displayChangeTimer.Tick += (_, _) =>
+            _displayChangeTimer.Tick += async (_, _) =>
             {
                 try
                 {
-                    _desktopCardManager?.RelayoutForDisplayChange();
+                    var manager = _desktopCardManager;
+                    if (manager != null) await manager.RelayoutForDisplayChangeAsync();
                 }
                 catch (Exception ex)
                 {
@@ -186,7 +192,7 @@ public sealed partial class MainWindow
         ConfigService.Update(c => c.DesktopCardMaxColumns = v);
 
         // 重排现有卡片宽度
-        if (_desktopCardManager != null && _desktopCardManager.IsEnabled) _desktopCardManager.SyncContent();
+        if (_desktopCardManager != null && _desktopCardManager.HasVisibleCards) _desktopCardManager.SyncContent();
 
     }
 
@@ -235,9 +241,90 @@ public sealed partial class MainWindow
 
         var n = DesktopCollectService.ManagedItemCount();
 
-        CollectStatusText.Text = n > 0 ? $"桌面 {n} 项已收进卡片" : "";
+        CollectStatusText.Text = n > 0 ? $"已整理 {n} 个桌面项目" : "";
 
 
+    }
+
+    /// <summary>「清理失效快捷方式」：找出目标已不存在的桌面 .lnk，列出来让用户确认后删到回收站。</summary>
+    /// <remarks>
+    /// **绝不自动删**。快捷方式指向移动硬盘 / 网络位置时目标会临时读不到，
+    /// 扫描器已经跳过这类卷（见 <see cref="Services.BrokenShortcutScanner"/>），
+    /// 但最终还是要用户自己点头——删的是他的文件。
+    /// </remarks>
+    internal async void DesktopCleanupBroken_Click(object sender, RoutedEventArgs e)
+    {
+        if (MainNav.XamlRoot == null) return;
+
+        List<Services.BrokenShortcut> broken;
+        try
+        {
+            broken = await Task.Run(Services.BrokenShortcutScanner.Scan);
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("MainWindow.DesktopCleanupBroken", ex);
+            return;
+        }
+
+        if (broken.Count == 0)
+        {
+            await new ContentDialog
+            {
+                Title = "未发现失效的快捷方式",
+                Content = "桌面上所有快捷方式指向的项目均存在。",
+                CloseButtonText = "确定",
+                XamlRoot = MainNav.XamlRoot,
+            }.ShowAsync();
+            return;
+        }
+
+        // 列出来给用户看清楚删的是哪些、目标原本指向哪里。
+        var list = new StringBuilder();
+        foreach (var item in broken)
+            list.AppendLine($"· {item.DisplayName}\n    目标：{item.Target}");
+
+        var confirm = new ContentDialog
+        {
+            Title = $"发现 {broken.Count} 个失效的快捷方式",
+            Content = new ScrollViewer
+            {
+                MaxHeight = 320,
+                Content = new TextBlock
+                {
+                    Text = list.ToString().TrimEnd(),
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true,
+                },
+            },
+            PrimaryButtonText = "全部移到回收站",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = MainNav.XamlRoot,
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var deleted = 0;
+        var failed = 0;
+        foreach (var item in broken)
+        {
+            if (DesktopCollectService.DeleteToRecycleBin(item.Path)
+                == DesktopCollectService.RecycleBinResult.Success) deleted++;
+            else failed++;
+        }
+
+        UpdateCollectStatus();
+        SyncDesktopCardsIfEnabled();
+
+        await new ContentDialog
+        {
+            Title = "清理完成",
+            Content = failed > 0
+                ? $"已将 {deleted} 个快捷方式移到回收站，{failed} 个无法删除。"
+                : $"已将 {deleted} 个失效的快捷方式移到回收站，可从回收站还原。",
+            CloseButtonText = "确定",
+            XamlRoot = MainNav.XamlRoot,
+        }.ShowAsync();
     }
 
     /// <summary>「恢复桌面图标」：关掉分区并把系统的「显示桌面图标」打开。</summary>
@@ -251,9 +338,9 @@ public sealed partial class MainWindow
 
         var confirm = new ContentDialog
         {
-            Title = "恢复桌面图标",
-            Content = "将关闭桌面分区，并重新显示桌面图标。\n"
-                    + "文件本来就一直在桌面上，这一步不会移动任何东西。",
+            Title = "要恢复桌面图标吗？",
+            Content = "将关闭桌面分区并重新显示桌面图标。"
+                    + "文件始终保留在桌面上，此操作不会移动任何文件。",
             PrimaryButtonText = "恢复",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,
@@ -390,7 +477,7 @@ public sealed partial class MainWindow
     private void UpdateZoneCount()
     {
 
-        ZoneCountText.Text = _desktopZones.Count > 0 ? $"{_desktopZones.Count} 个" : "暂无分区";
+        ZoneCountText.Text = _desktopZones.Count > 0 ? $"{_desktopZones.Count} 个分区" : "";
 
         ZoneEmptyHint.Visibility = _desktopZones.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
 
@@ -439,7 +526,7 @@ public sealed partial class MainWindow
         var nameBox = new TextBox
         {
             Text = currentName,
-            PlaceholderText = "例如 办公、素材、游戏",
+            PlaceholderText = "例如：办公、素材、游戏",
         };
         var dialog = new ContentDialog
         {
@@ -455,7 +542,47 @@ public sealed partial class MainWindow
         return string.IsNullOrEmpty(name) ? null : name;
     }
 
-    /// <summary>托盘右键菜单的「同步桌面」。与设置页同名项走同一条同步路径。</summary>
+    /// <summary>托盘菜单「显示桌面分区」：把所有分区卡片呼到最前（动作，不是开关）。</summary>
+    /// <remarks>
+    /// 分区功能还没开时顺带把它打开——用户点「显示」就是想看到分区。这时要写配置并
+    /// 同步设置页那个 ToggleSwitch，否则重启后又是关的、设置页也显示相反状态。
+    /// 管理器本身的启用与呼出由 <see cref="DesktopCardManager.ShowAll"/> 一并完成。
+    /// </remarks>
+    internal void ToggleDesktopLibrary() => EnsureDesktopCardManager().ToggleLibrary();
+
+    internal void ShowDesktopCardsFromTray(bool fromLeft = false)
+    {
+        try
+        {
+            if (fromLeft)
+            {
+                EnsureDesktopCardManager().ShowAll(fromLeft: true);
+                return;
+            }
+            if (!_config.EnableDesktopCard)
+            {
+                _config.EnableDesktopCard = true;
+                ConfigService.Update(c => c.EnableDesktopCard = true);
+
+                if (DesktopCardToggle != null)
+                {
+                    _isLoadingDragStashSettings = true;
+                    DesktopCardToggle.IsOn = true;
+                    _isLoadingDragStashSettings = false;
+                }
+            }
+
+            EnsureDesktopCardManager().ShowAll(fromLeft);
+            UpdateCollectStatus();
+            UpdateNavStatusIndicators();
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("MainWindow.ShowDesktopCardsFromTray", ex);
+        }
+    }
+
+    /// <summary>托盘菜单的「同步桌面」。与设置页同名项走同一条同步路径。</summary>
     /// <remarks>
     /// 托盘菜单没有可用的 <c>XamlRoot</c>，弹不了 ContentDialog；分区未开启的情况
     /// 由 <c>TrayIcon</c> 在菜单弹出前置灰该项拦掉，这里只做一层兜底。
@@ -485,7 +612,7 @@ public sealed partial class MainWindow
                 var info = new ContentDialog
                 {
                     Title = "桌面分区",
-                    Content = "请先打开页面右上角的总开关，再同步桌面。",
+                    Content = "请先打开桌面分区，再同步桌面。",
                     CloseButtonText = "确定",
                     XamlRoot = MainNav.XamlRoot,
                 };
@@ -505,8 +632,8 @@ public sealed partial class MainWindow
         {
             var confirm = new ContentDialog
             {
-                Title = "恢复默认分区？",
-                Content = "当前分区列表会被内置的推荐分类替换，已收纳的文件会按新分区重新归类。",
+                Title = "要恢复默认分区吗？",
+                Content = "当前分区将被替换为内置的推荐分区，桌面项目会按新分区重新归类。",
                 PrimaryButtonText = "恢复默认",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Close,
@@ -675,7 +802,7 @@ public sealed partial class MainWindow
                 {
 
                     Title = "导入失败",
-                    Content = $"预设文件解析失败：{ex.Message}",
+                    Content = $"无法读取预设文件：{ex.Message}",
                     CloseButtonText = "确定",
                     XamlRoot = MainNav.XamlRoot,
                 }
@@ -721,8 +848,8 @@ public sealed partial class MainWindow
             var confirm = new ContentDialog
             {
 
-                Title = "从预设文件恢复？",
-                Content = $"将用预设文件里的 {imported.Count} 个分区替换当前分区。\n\n" + "已分配到当前分区的桌面图标会按新分区结构重新分类（按文件名字段匹配）。",
+                Title = "要导入分区预设吗？",
+                Content = $"将使用预设文件中的 {imported.Count} 个分区替换当前分区，桌面项目会按新分区重新归类。",
                 PrimaryButtonText = "恢复",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,

@@ -7,24 +7,45 @@
     Title="桌面卡片">
 
     <!-- 外轮廓只由 DWM 的 12px 窗口圆角负责；XAML 表面不再重复画圆角或描边。 -->
+    <!-- 点在图标以外的地方要清掉选中（和 Windows 桌面一致）。这个 Tapped 处理器不在这里挂，
+         而是在构造函数里 AddHandler(handledEventsToo: true)：GridView 会把落在自己空白处的
+         Tapped 标记为已处理，普通挂钩根本收不到。 -->
     <Grid x:Name="ShellRoot" Background="Transparent" Padding="0">
         <Border x:Name="CardSurface"
                 Background="{ThemeResource CodexSurfaceBrush}"
                 BorderThickness="0" CornerRadius="0">
-            <Grid Padding="8,8,8,10">
+            <!-- 四边同一个内边距。卡片尺寸由 ApplyAutoSize 按 GridPadding 算出来，
+                 这里改了那边也要改。 -->
+            <Grid Padding="8">
                     <TextBlock x:Name="EmptyHint" Text="这个分区还没有文件。"
                                Opacity="0.5" FontSize="12" TextWrapping="Wrap"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                Visibility="Collapsed"/>
-                    <GridView x:Name="ItemsGrid" SelectionMode="None" IsItemClickEnabled="True"
+                    <!-- SelectionMode=Single：单击选中并保留高亮（此前是 None，只有 hover 才有反馈，
+                         松开鼠标就什么都看不出来，用户无法判断自己选中了哪个）。
+                         双击打开仍然走 ItemTemplate 上的 DoubleTapped。 -->
+                    <!-- CanReorderItems 必须保持 True，但真正执行卡片内重排的是 code-behind 的
+                         ReorderWithinCard：内置重排只认 ItemsWrapGrid，换成 CardTilesPanel 后它不再
+                         插入；而一旦设成 False，拖动会话就不再把 DragOver/Drop 发回源列表，
+                         自己处理也收不到（2026-09-18 埋点实测）。 -->
+                    <GridView x:Name="ItemsGrid" SelectionMode="Single" IsItemClickEnabled="True"
+                              SelectionChanged="ItemsGrid_SelectionChanged"
                               CanDragItems="True" CanReorderItems="True" AllowDrop="True"
                               DragItemsStarting="ItemsGrid_DragItemsStarting"
-                              DragOver="ItemsGrid_DragOver"
-                              Drop="ItemsGrid_Drop"
                               DragItemsCompleted="ItemsGrid_DragItemsCompleted"
                               ScrollViewer.HorizontalScrollMode="Disabled"
                               ScrollViewer.VerticalScrollBarVisibility="Disabled"
                               Padding="0">
+                        <GridView.Resources>
+                            <!-- 选中态底色：系统主题色半透明，深浅色主题都能看清，接近 Windows
+                                 桌面图标被选中时的那个半透明蓝框。默认值在 Mica 表面上几乎看不见。 -->
+                            <SolidColorBrush x:Key="GridViewItemBackgroundSelected"
+                                             Color="{ThemeResource SystemAccentColor}" Opacity="0.35"/>
+                            <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver"
+                                             Color="{ThemeResource SystemAccentColor}" Opacity="0.45"/>
+                            <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed"
+                                             Color="{ThemeResource SystemAccentColor}" Opacity="0.5"/>
+                        </GridView.Resources>
                         <GridView.ItemContainerStyle>
                             <!-- 关键：清掉 WinUI 3 默认 GridViewItem 的内边距 + 默认 Center 内容对齐，
                                  让所有 item 紧贴 GridView 左边缘开始排，单图标固定在卡片最左。
@@ -41,16 +62,18 @@
                         </GridView.ItemContainerStyle>
                         <GridView.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <!-- WrapGrid 默认按可用宽度换行；卡片宽度由 MaxColumns 算好固定值，
-                                     全部内容靠左排（单图标在卡片最左，多图标也整体靠左不居中）。
-                                     ItemsWrapGrid 不再 HorizontalAlignment="Center"。 -->
-                                <ItemsWrapGrid Orientation="Horizontal"
-                                               HorizontalAlignment="Left"/>
+                                <!-- 自定义换行面板：列宽固定 76dip，**每行高度取该行最高的格子**。
+                                     ItemsWrapGrid 是均匀网格，所有格子必须同尺寸，于是每一行都要按
+                                     "两行文件名"预留高度，单行文件名的行下面就空一截。详见
+                                     CardTilesPanel 的注释。 -->
+                                <local:CardTilesPanel ItemWidth="76" HorizontalAlignment="Left"/>
                             </ItemsPanelTemplate>
                         </GridView.ItemsPanel>
                         <GridView.ItemTemplate>
                             <DataTemplate x:DataType="local:CardItem">
-                                <StackPanel Width="76" Height="86" Spacing="4" Padding="4,8"
+                                <!-- 不写固定 Height：格子的高度由内容决定（文件名占 1 行还是 2 行），
+                                     CardTilesPanel 按每行最高的格子决定这一行的高度。 -->
+                                <StackPanel Width="76" Spacing="4" Padding="4,8"
                                             DoubleTapped="Item_DoubleTapped" Tag="{x:Bind}">
                                     <ToolTipService.ToolTip>
                                         <ToolTip Content="{x:Bind DisplayName}" Style="{StaticResource PageDesktopToolTipStyle}"/>
@@ -60,6 +83,11 @@
                                             <MenuFlyoutItem Text="打开" Click="ItemMenu_Open_Click" Tag="{x:Bind}">
                                                 <MenuFlyoutItem.Icon>
                                                     <FontIcon Glyph="&#xE8A7;"/>
+                                                </MenuFlyoutItem.Icon>
+                                            </MenuFlyoutItem>
+                                            <MenuFlyoutItem Text="重命名" Click="ItemMenu_Rename_Click" Tag="{x:Bind}">
+                                                <MenuFlyoutItem.Icon>
+                                                    <FontIcon Glyph="&#xE8AC;"/>
                                                 </MenuFlyoutItem.Icon>
                                             </MenuFlyoutItem>
                                             <MenuFlyoutItem Text="删除到回收站" Click="ItemMenu_Delete_Click" Tag="{x:Bind}">

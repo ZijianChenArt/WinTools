@@ -27,7 +27,7 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="18"
+            <FontIcon Grid.Column="0" Glyph="{x:Bind local:FeatureIcons.Search}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}" FontSize="18"
                       VerticalAlignment="Center"
                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 

@@ -55,4 +55,10 @@ public sealed partial class MainWindow
     private ToggleSwitch SpotlightToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(SpotlightToggle));
     private TextBox HotkeySpotlightBox => FeaturePages.GetControl<TextBox>(nameof(HotkeySpotlightBox));
     private TextBlock SpotlightStatusText => FeaturePages.GetControl<TextBlock>(nameof(SpotlightStatusText));
+    private Grid ContentVoiceBall => FeaturePages.GetControl<Grid>(nameof(ContentVoiceBall));
+    private ToggleSwitch VoiceBallToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(VoiceBallToggle));
+    private TextBox HotkeyVoiceBallBox => FeaturePages.GetControl<TextBox>(nameof(HotkeyVoiceBallBox));
+    private CommunityToolkit.WinUI.Controls.SettingsCard VoiceBallHotkeyCard => FeaturePages.GetControl<CommunityToolkit.WinUI.Controls.SettingsCard>(nameof(VoiceBallHotkeyCard));
+    private CommunityToolkit.WinUI.Controls.SettingsCard VoiceBallPositionCard => FeaturePages.GetControl<CommunityToolkit.WinUI.Controls.SettingsCard>(nameof(VoiceBallPositionCard));
+    private Button VoiceBallResetPositionButton => FeaturePages.GetControl<Button>(nameof(VoiceBallResetPositionButton));
 }

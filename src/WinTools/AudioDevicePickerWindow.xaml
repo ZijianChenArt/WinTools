@@ -1,0 +1,15 @@
+<Window x:Class="WinTools.AudioDevicePickerWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="音频设备">
+    <Border Style="{StaticResource AudioPickerSurfaceStyle}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Style="{StaticResource PageFormStackStyle}" KeyDown="Root_KeyDown">
+                <TextBlock Text="音频设备" Style="{StaticResource PageSubtitleTextStyle}"/>
+                <ComboBox x:Name="Output" Header="扬声器 · 输出" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
+                <ComboBox x:Name="Input" Header="麦克风 · 输入" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
+                <TextBlock x:Name="Status" Text="正在读取设备…" Style="{StaticResource PageDescriptionTextStyle}"/>
+                <HyperlinkButton Content="更多声音设置" Click="Settings_Click"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</Window>

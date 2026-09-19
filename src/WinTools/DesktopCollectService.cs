@@ -84,6 +84,10 @@ public static class DesktopCollectService
     private static List<FileSystemInfo> EnumerateDesktopEntries()
     {
         var result = new List<FileSystemInfo>();
+        // 按**名称**去重，不是按完整路径。装软件时很多安装程序会同时往「当前用户桌面」和
+        // 「公共桌面」各写一个同名快捷方式（例如极空间，两个 .lnk 指向同一个 exe），
+        // 按路径去重的话两个都会进卡片，用户看到的就是一模一样的两个图标。
+        // DesktopFolders() 把用户桌面排在前面，所以先到先得 = 保留用户桌面那一个。
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var desktop in DesktopFolders())
@@ -104,7 +108,7 @@ public static class DesktopCollectService
                 {
                     if (IsShellSystemFile(entry.FullName)) continue;
                     if ((entry.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
-                    if (!seen.Add(entry.FullName)) continue;
+                    if (!seen.Add(entry.Name)) continue;
                     result.Add(entry);
                 }
                 catch { /* 单项失败不影响整体 */ }
@@ -243,6 +247,7 @@ public static class DesktopCollectService
         public IntPtr lpszProgressTitle;
     }
 
+    private const uint FO_RENAME = 0x0004;
     private const uint FO_DELETE = 0x0003;
     private const ushort FOF_ALLOWUNDO = 0x0040;
     private const ushort FOF_NOCONFIRMATION = 0x0010;
@@ -259,6 +264,91 @@ public static class DesktopCollectService
         NotFound = 1,
         Aborted = 2,
         Failed = 3,
+    }
+
+    /// <summary>重命名结果。</summary>
+    public enum RenameResult
+    {
+        Success = 0,
+        /// <summary>原文件已经不在了（可能刚被别处移走 / 删掉）。</summary>
+        NotFound = 1,
+        /// <summary>新名字为空、只有空白，或含有 Windows 不允许的字符。</summary>
+        InvalidName = 2,
+        /// <summary>同目录下已经有同名文件或文件夹。</summary>
+        NameExists = 3,
+        /// <summary>Shell 拒绝或没有权限（例如公共桌面下的项目需要管理员）。</summary>
+        Failed = 4,
+    }
+
+    /// <summary>重命名桌面上的一个文件 / 文件夹。卡片右键菜单「重命名」调用。</summary>
+    /// <param name="path">原完整路径。</param>
+    /// <param name="newFileName">新的**完整文件名**（含扩展名），不是路径。</param>
+    /// <param name="newPath">成功时返回新的完整路径。</param>
+    /// <remarks>
+    /// 和删除一样走 <c>SHFileOperation</c>（<c>FO_RENAME</c>）而不是 <c>File.Move</c>：
+    /// Shell 会自己发变更通知，资源管理器桌面上的图标同步更新；指向它的快捷方式也由 Shell 处理。
+    /// 校验放在托管侧先做，这样能把「名字非法」「重名」和「没权限」区分开来给用户不同提示，
+    /// SHFileOperation 的返回码做不到这一点。
+    /// </remarks>
+    public static RenameResult RenameItem(string path, string newFileName, out string newPath)
+    {
+        newPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path)) return RenameResult.NotFound;
+        if (!File.Exists(path) && !Directory.Exists(path)) return RenameResult.NotFound;
+
+        newFileName = newFileName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(newFileName)) return RenameResult.InvalidName;
+        // 目录分隔符也在 GetInvalidFileNameChars 里，所以"输入了一整条路径"同样会被挡住。
+        if (newFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return RenameResult.InvalidName;
+        if (newFileName is "." or "..") return RenameResult.InvalidName;
+        // 尾部的点和空格会被文件系统悄悄吃掉，直接按非法处理，免得改完名字和用户输入的不一样。
+        if (newFileName.EndsWith(' ') || newFileName.EndsWith('.')) return RenameResult.InvalidName;
+
+        var directory = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(directory)) return RenameResult.Failed;
+        var target = Path.Combine(directory, newFileName);
+
+        // 只改大小写（a.txt → A.txt）时目标"已存在"的就是它自己，不能当成重名。
+        var sameItem = string.Equals(target, path, StringComparison.OrdinalIgnoreCase);
+        if (!sameItem && (File.Exists(target) || Directory.Exists(target))) return RenameResult.NameExists;
+
+        var pFrom = Marshal.StringToHGlobalUni(path + "  ");
+        var pTo = Marshal.StringToHGlobalUni(target + "  ");
+        try
+        {
+            var op = new SHFILEOPSTRUCT
+            {
+                hwnd = IntPtr.Zero,
+                wFunc = FO_RENAME,
+                pFrom = pFrom,
+                pTo = pTo,
+                fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI,
+                fAnyOperationsAborted = false,
+                hNameMappings = IntPtr.Zero,
+                lpszProgressTitle = IntPtr.Zero,
+            };
+            var rc = SHFileOperationW(ref op);
+            if (rc != 0 || op.fAnyOperationsAborted)
+            {
+                ErrorReporter.Log("DesktopCollectService.RenameItem",
+                    new InvalidOperationException($"SHFileOperation(FO_RENAME) 返回 {rc}，目标 {target}"));
+                return RenameResult.Failed;
+            }
+            if (!File.Exists(target) && !Directory.Exists(target)) return RenameResult.Failed;
+
+            newPath = target;
+            return RenameResult.Success;
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("DesktopCollectService.RenameItem", ex);
+            return RenameResult.Failed;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(pFrom);
+            Marshal.FreeHGlobal(pTo);
+        }
     }
 
     /// <summary>把文件 / 文件夹移到回收站。卡片右键菜单调用。</summary>

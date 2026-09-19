@@ -57,6 +57,9 @@ public static class WindowHelper
     /// 带超时兜底，防止 Rendering 不再触发时窗口永久不可见。
     /// </summary>
     public static void UncloakWhenRendered(Window window, Action? completed = null)
+        => WhenRendered(window, () => { SetWindowCloak(window, false); completed?.Invoke(); });
+
+    internal static void WhenRendered(Window window, Action? completed)
     {
         try
         {
@@ -73,7 +76,6 @@ public static class WindowHelper
                 if (onRendering != null)
                     Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= onRendering;
                 fallback?.Stop();
-                SetWindowCloak(window, false);
                 try { completed?.Invoke(); }
                 catch (Exception ex) { ErrorReporter.Log("WindowHelper.UncloakWhenRendered.Completed", ex); }
             }
@@ -94,7 +96,6 @@ public static class WindowHelper
         }
         catch
         {
-            SetWindowCloak(window, false);
             try { completed?.Invoke(); }
             catch (Exception ex) { ErrorReporter.Log("WindowHelper.UncloakWhenRendered.Fallback", ex); }
         }

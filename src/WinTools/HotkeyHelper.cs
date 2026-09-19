@@ -41,7 +41,16 @@ public static class HotkeyHelper
         ["F1"] = 0x70, ["F2"] = 0x71, ["F3"] = 0x72, ["F4"] = 0x73, ["F5"] = 0x74,
         ["F6"] = 0x75, ["F7"] = 0x76, ["F8"] = 0x77, ["F9"] = 0x78, ["F10"] = 0x79,
         ["F11"] = 0x7A, ["F12"] = 0x7B,
+        ["F13"] = 0x7C, ["F14"] = 0x7D, ["F15"] = 0x7E, ["F16"] = 0x7F, ["F17"] = 0x80,
+        ["F18"] = 0x81, ["F19"] = 0x82, ["F20"] = 0x83, ["F21"] = 0x84, ["F22"] = 0x85,
+        ["F23"] = 0x86, ["F24"] = 0x87,
         ["Space"] = 0x20, ["."] = 0xBE, [","] = 0xBC,
+        ["Tab"] = 0x09, ["Enter"] = 0x0D, ["Esc"] = 0x1B, ["Backspace"] = 0x08,
+        ["Insert"] = 0x2D, ["Delete"] = 0x2E, ["Home"] = 0x24, ["End"] = 0x23,
+        ["PageUp"] = 0x21, ["PageDown"] = 0x22,
+        ["Left"] = 0x25, ["Up"] = 0x26, ["Right"] = 0x27, ["Down"] = 0x28,
+        [";"] = 0xBA, ["/"] = 0xBF, ["`"] = 0xC0, ["-"] = 0xBD, ["="] = 0xBB,
+        ["["] = 0xDB, ["]"] = 0xDD, ["\\"] = 0xDC, ["'"] = 0xDE,
     };
 
     /// <summary>解析 "Ctrl+Win+W" 格式。返回 (modifiers, vk)；若解析失败则返回 null。</summary>
@@ -66,6 +75,25 @@ public static class HotkeyHelper
         }
         if (vk == 0) return null;
         return (mods, vk);
+    }
+
+    /// <summary>
+    /// 解析「要模拟按下」的快捷键。与 <see cref="Parse"/> 的区别是允许只有修饰键（如 "Ctrl+Shift"）：
+    /// 这类组合 RegisterHotKey 注册不了，但输入法的语音快捷键常用它。返回的 VirtualKey 为 0 表示没有主键。
+    /// </summary>
+    public static (HotkeyModifiers Modifiers, ushort VirtualKey)? ParseForSend(string? hotkeyString)
+    {
+        if (string.IsNullOrWhiteSpace(hotkeyString)) return null;
+        // 输入法设置页常把组合显示成「Ctrl Win Shift」，空格与 + 一样当分隔符。
+        var parts = hotkeyString.Split(new[] { '+', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return null;
+        if (parts.All(p => ModifierMap.ContainsKey(p)))
+        {
+            HotkeyModifiers mods = 0;
+            foreach (var p in parts) mods |= ModifierMap[p];
+            return (mods, 0);
+        }
+        return Parse(string.Join("+", parts));
     }
 
     /// <summary>将 HotkeyModifiers 转为 Win32 HOT_KEY_MODIFIERS。</summary>

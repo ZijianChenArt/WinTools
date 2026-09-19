@@ -83,7 +83,7 @@ public sealed partial class MainWindow
     private void UpdateAssocCount()
     {
 
-        AssocCountText.Text = _assocEntries.Count > 0 ? $"{_assocEntries.Count} 项" : "暂无关联";
+        AssocCountText.Text = _assocEntries.Count > 0 ? $"{_assocEntries.Count} 个关联" : "";
 
         AssocEmptyHint.Visibility = _assocEntries.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
 
@@ -292,8 +292,8 @@ public sealed partial class MainWindow
             var confirm = new ContentDialog
             {
 
-                Title = "导入程序关联？",
-                Content = "当前的程序关联会被文件里的内容替换。",
+                Title = "要导入程序关联吗？",
+                Content = "当前的程序关联将被文件中的内容替换。",
                 PrimaryButtonText = "导入",
                 CloseButtonText = "取消",
                 XamlRoot = MainNav.XamlRoot
@@ -363,7 +363,7 @@ public sealed partial class MainWindow
         {
 
             Title = "已导出",
-            Content = $"配置已保存到：\n{file.Path}",
+            Content = $"程序关联已保存到：\n{file.Path}",
             CloseButtonText = "确定",
             XamlRoot = MainNav.XamlRoot
         }

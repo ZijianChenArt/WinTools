@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -69,6 +69,27 @@ internal static class CardItemOrderStore
     private static string DisplayName(string path) => DesktopShellItems.IsShellItem(path)
         ? DesktopShellItems.GetDisplayName(path) ?? path
         : Path.GetFileNameWithoutExtension(path);
+
+    /// <summary>项目被重命名后，把顺序表里的旧文件名换成新的。</summary>
+    /// <remarks>顺序表按**文件名**记录（不是完整路径）。不换的话重命名等于换了个 key，
+    /// 排序时查不到名次，图标会直接掉到同类的末尾。</remarks>
+    public static void Rename(string zone, string oldPath, string newPath)
+    {
+        try
+        {
+            if (!Orders.TryGetValue(zone, out var order) || order == null) return;
+            var oldName = Path.GetFileName(oldPath);
+            var newName = Path.GetFileName(newPath);
+            var index = order.FindIndex(name => string.Equals(name, oldName, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) return;
+            order[index] = newName;
+            Save(zone, order);
+        }
+        catch (Exception ex)
+        {
+            ErrorReporter.Log("CardItemOrderStore.Rename", ex);
+        }
+    }
 
     public static bool Save(string zone, IEnumerable<string> paths)
     {

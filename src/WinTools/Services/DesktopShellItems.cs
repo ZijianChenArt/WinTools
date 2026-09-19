@@ -27,12 +27,12 @@ internal static class DesktopShellItems
         @"Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel";
 
     /// <summary>CLSID → 取不到 Shell 显示名时的兜底中文名。</summary>
-    private static readonly (string Clsid, string Fallback, uint StockIconId)[] Known =
+    private static readonly (string Clsid, string Fallback)[] Known =
     {
-        ("{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "此电脑", 15),
-        ("{645FF040-5081-101B-9F08-00AA002F954E}", "回收站", 31),
-        ("{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", "网络", 17),
-        ("{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", "控制面板", 22),
+        ("{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "此电脑"),
+        ("{645FF040-5081-101B-9F08-00AA002F954E}", "回收站"),
+        ("{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", "网络"),
+        ("{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", "控制面板"),
     };
 
     /// <summary>判断一个卡片项的 Path 是不是系统虚拟图标。</summary>
@@ -49,7 +49,7 @@ internal static class DesktopShellItems
 
         try
         {
-            foreach (var (clsid, fallback, _) in Known)
+            foreach (var (clsid, fallback) in Known)
             {
                 // 键不存在 = 用户没动过 = 按系统默认显示；值为 1 才是明确隐藏。
                 if (key?.GetValue(clsid) is int hidden && hidden != 0) continue;
@@ -89,13 +89,29 @@ internal static class DesktopShellItems
     }
 
     /// <summary>取系统图标句柄。调用方负责 <c>DestroyIcon</c>（走 CardItem 里那套 PNG 转换）。</summary>
+    /// <remarks>
+    /// 两条路，按顺序试：
+    /// 1. <c>SHGFI_PIDL | SHGFI_ICON</c> 直接要句柄；
+    /// 2. <c>SHGFI_PIDL | SHGFI_SYSICONINDEX</c> 拿系统图像列表索引，再
+    ///    <c>ImageList_GetIcon</c> 取图标——虚拟命名空间项走这条更稳。
+    ///
+    /// **不要再加 `SHGetStockIconInfo` 兜底。** 2026-09-12 之前那版就是这么干的，
+    /// 而且 SIID 给错了：控制面板写成 22（`SIID_FIND`，放大镜）、此电脑写成 15
+    /// （`SIID_SERVER`，服务器机箱）——Shell 里**根本没有**「控制面板」对应的库存图标。
+    /// 结果卡片上的控制面板变成一个放大镜，用户一眼就看出不对。
+    /// 取不到就宁可空着，也别画一个错的。
+    /// </remarks>
     public static IntPtr GetIconHandle(string parsingName)
     {
         var pidl = IntPtr.Zero;
         try
         {
             if (SHParseDisplayName(parsingName, IntPtr.Zero, out pidl, 0, out _) != 0 || pidl == IntPtr.Zero)
+            {
+                ErrorReporter.Log($"DesktopShellItems.GetIconHandle({parsingName})",
+                    new InvalidOperationException("SHParseDisplayName 失败"));
                 return IntPtr.Zero;
+            }
 
             var info = new SHFILEINFO();
             var result = SHGetFileInfo(pidl, 0, ref info, (uint)Marshal.SizeOf<SHFILEINFO>(),
@@ -103,20 +119,23 @@ internal static class DesktopShellItems
             if (result != IntPtr.Zero && info.hIcon != IntPtr.Zero)
                 return info.hIcon;
 
-            // 少数 Shell 命名空间项不会通过 PIDL 返回 HICON。系统库存图标不依赖该项当前
-            // 是否已实例化，可作为稳定兜底，避免卡片里出现只有文字的空白图标。
-            var clsid = parsingName.StartsWith("::", StringComparison.Ordinal)
-                ? parsingName[2..]
-                : parsingName;
-            foreach (var known in Known)
+            // 直接取失败，改从系统图像列表取。
+            var indexInfo = new SHFILEINFO();
+            var imageList = SHGetFileInfo(pidl, 0, ref indexInfo, (uint)Marshal.SizeOf<SHFILEINFO>(),
+                SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_LARGEICON);
+            if (imageList != IntPtr.Zero)
             {
-                if (!string.Equals(known.Clsid, clsid, StringComparison.OrdinalIgnoreCase)) continue;
-                var stock = new SHSTOCKICONINFO { cbSize = (uint)Marshal.SizeOf<SHSTOCKICONINFO>() };
-                return SHGetStockIconInfo(known.StockIconId, SHGSI_ICON | SHGSI_LARGEICON, ref stock) == 0
-                    ? stock.hIcon
-                    : IntPtr.Zero;
+                var handle = ImageList_GetIcon(imageList, indexInfo.iIcon, ILD_TRANSPARENT);
+                if (handle != IntPtr.Zero)
+                {
+                    ErrorReporter.Log($"DesktopShellItems.GetIconHandle({parsingName})",
+                        new InvalidOperationException($"SHGFI_ICON 没给句柄，已改用系统图像列表 index={indexInfo.iIcon}"));
+                    return handle;
+                }
             }
 
+            ErrorReporter.Log($"DesktopShellItems.GetIconHandle({parsingName})",
+                new InvalidOperationException("两条路径都没取到图标，卡片将只显示文字"));
             return IntPtr.Zero;
         }
         catch (Exception ex)
@@ -166,22 +185,12 @@ internal static class DesktopShellItems
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)] public string szTypeName;
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct SHSTOCKICONINFO
-    {
-        public uint cbSize;
-        public IntPtr hIcon;
-        public int iSysImageIndex;
-        public int iIcon;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szPath;
-    }
-
     private const uint SHGFI_ICON = 0x000000100;
     private const uint SHGFI_LARGEICON = 0x000000000;
     private const uint SHGFI_DISPLAYNAME = 0x000000200;
     private const uint SHGFI_PIDL = 0x000000008;
-    private const uint SHGSI_ICON = 0x000000100;
-    private const uint SHGSI_LARGEICON = 0x000000000;
+    private const uint SHGFI_SYSICONINDEX = 0x000004000;
+    private const uint ILD_TRANSPARENT = 0x00000001;
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(
@@ -191,9 +200,8 @@ internal static class DesktopShellItems
     private static extern IntPtr SHGetFileInfo(
         IntPtr pidl, uint fileAttributes, ref SHFILEINFO info, uint size, uint flags);
 
-    [DllImport("shell32.dll")]
-    private static extern int SHGetStockIconInfo(
-        uint stockIconId, uint flags, ref SHSTOCKICONINFO info);
+    [DllImport("comctl32.dll")]
+    private static extern IntPtr ImageList_GetIcon(IntPtr imageList, int index, uint flags);
 
     #endregion
 }

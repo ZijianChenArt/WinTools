@@ -454,6 +454,12 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
@@ -514,6 +520,13 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     public int DipLeft { get; private set; }
     public int DipTop { get; private set; }
 
+    /// <summary>当前网格的列数 / 行数，缩放变化时要拿它重算尺寸。</summary>
+    private int _cols = 1;
+    private int _rows = 1;
+    /// <summary>已经量到过真实内容高度：之后不再用"每行最坏情况"的估算值覆盖它。</summary>
+    private bool _hasMeasuredHeight;
+    private bool _panelHooked;
+
     public DesktopCardWindow()
     {
         InitializeComponent();
@@ -521,6 +534,15 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         ItemsGrid.ItemsSource = _items;
         _items.CollectionChanged += (_, _) => QueueItemOrderSave();
         ShellRoot.Loaded += (_, _) => _layoutReady.TrySetResult();
+        // 用 PointerPressed 而不是 Tapped：落在 GridView 空白区域的点击会被它内部的
+        // ScrollViewer 当成平移手势吃掉，Tapped 根本不会触发（2026-09-18 实测，卡片空白处
+        // 点击时处理器一次都没进来）。PointerPressed 在手势识别之前就冒泡，且必须
+        // handledEventsToo: true，否则同样收不到。
+        ShellRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(CardRoot_PointerPressed), true);
+        // 拖放处理器也用 handledEventsToo: true 挂，防止 ListViewBase 哪天把同源拖动的事件
+        // 标成已处理后我们收不到——卡片内重排完全依赖在这里接住 Drop（见 ReorderWithinCard）。
+        ItemsGrid.AddHandler(UIElement.DragOverEvent, new DragEventHandler(ItemsGrid_DragOver), true);
+        ItemsGrid.AddHandler(UIElement.DropEvent, new DragEventHandler(ItemsGrid_Drop), true);
         ConfigureWindow();
         // 每张桌面分区都是独立 HWND。启动时批量创建窗口，如果未完成首帧就 Show，
         // DWM 会先画出多个黑色/纯色矩形。先 Cloak，布局、Mica 和内容仍可正常合成，
@@ -534,6 +556,10 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     /// <summary>用户把某个项目拖进了本分区（已完成物理移动），由管理器负责写回分区配置。</summary>
     public event EventHandler<CardItemMovedEventArgs>? ItemMovedIn;
 
+    /// <summary>卡片自身高度变了（文件名行数变化导致行高变化）。管理器收到后只需重排位置，
+    /// 不要再走一遍内容同步——那会和这里的测量互相触发。</summary>
+    public event EventHandler? SizeChangedByContent;
+
     public bool HasItems => _items.Count > 0;
 
     /// <summary>等待窗口完成首次 XAML 加载，确保多显示器 DPI 缩放值可用。</summary>
@@ -545,16 +571,127 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     }
 
     /// <summary>按当前显示器的真实缩放重新应用已计算好的 DIP 尺寸。</summary>
+    /// <summary>
+    /// 卡片排版用的缩放倍数。**以主显示器的有效 DPI 为准**。
+    /// </summary>
+    /// <remarks>
+    /// 三个缩放来源在分辨率刚变完的那一两秒里会互相矛盾，选错了就会把错误尺寸永久写死在
+    /// 窗口上（表现：改完分辨率卡片变窄、每行少一个图标）：
+    /// <list type="bullet">
+    ///   <item><c>XamlRoot.RasterizationScale</c>：要等 WinUI 下一帧才更新，最慢。</item>
+    ///   <item><c>GetDpiForWindow</c>：**每个窗口各自**处理完 WM_DPICHANGED 才更新。9 张卡片
+    ///         是一张一张排的，中途还要让出消息泵，于是同一轮排版里前几张读到旧缩放、
+    ///         后几张读到新缩放，卡片被分成两组按两种尺寸摆（2026-09-17 实测）。</item>
+    ///   <item><c>GetDpiForMonitor</c>：系统一应用新设置就是新值，且对所有卡片一致。</item>
+    /// </list>
+    /// 卡片本来就固定归属主显示器（见 <see cref="GetWorkAreaDip"/>），所以直接取主显示器的
+    /// 有效 DPI，既不会前后不一致，也不用等窗口把消息消化完。
+    /// </remarks>
+    internal double CurrentScale
+    {
+        get
+        {
+            try
+            {
+                var monitor = MonitorFromPoint(default, MONITOR_DEFAULTTOPRIMARY);
+                if (monitor != IntPtr.Zero &&
+                    GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, out var dpiX, out _) == 0 && dpiX > 0)
+                    return dpiX / 96.0;
+            }
+            catch { /* 退回窗口自己的 DPI */ }
+            try
+            {
+                var dpi = GetDpiForWindow(_hwnd);
+                if (dpi > 0) return dpi / 96.0;
+            }
+            catch { /* 退回 XAML 的缩放 */ }
+            return ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
+        }
+    }
+
+    private const uint MONITOR_DEFAULTTOPRIMARY = 1;
+    private const int MDT_EFFECTIVE_DPI = 0;
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(System.Drawing.Point point, uint flags);
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+
     public void ApplyScaleAwareSize()
     {
         try
         {
-            var scale = ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
-            AppWindow.Resize(new SizeInt32(
-                (int)(DipWidth * scale),
-                (int)(DipHeight * scale)));
+            var target = TargetWindowRect(DipLeft, DipTop, CurrentScale);
+            var size = AppWindow.Size;
+            // 尺寸没变就别调 Resize。显示变化期间每一次 SetWindowPos 都要同步走一遍
+            // DWM 合成 + XAML 重排，9 张 Mica 卡片叠起来能把 UI 线程堵住好几秒。
+            if (size.Width == target.Width && size.Height == target.Height) return;
+            AppWindow.Resize(new SizeInt32(target.Width, target.Height));
         }
         catch { /* ignore */ }
+    }
+
+    /// <summary>
+    /// 把「可见卡片应该占的 DIP 矩形」换算成要下发给窗口的物理像素矩形。
+    /// </summary>
+    /// <remarks>
+    /// <c>AppWindow.Move/Resize</c> 操作的是**窗口矩形**，而 Win11 的窗口矩形比肉眼看到的
+    /// 客户区大一圈——那圈透明的拖拽边框实测在 125% 下是左右各 9px、底部 9px（窗口 335x452、
+    /// 客户区 317x443）。直接把 DIP 尺寸当窗口尺寸下发，等于内容区被这圈边框吃掉：
+    /// 卡片最后一行的选中框底边被裁掉、卡片之间的可见间距也比设置里的值大了一圈。
+    /// 所以这里按实测的边框把矩形**外扩**，让客户区正好等于布局算出来的 DIP 矩形。
+    /// 拿不到边框（窗口还没显示、GetClientRect 返回 0）时退回旧算法，不影响首帧。
+    /// </remarks>
+    private RectInt32 TargetWindowRect(int dipX, int dipY, double scale)
+    {
+        var x = (int)Math.Round(dipX * scale);
+        var y = (int)Math.Round(dipY * scale);
+        var width = (int)Math.Ceiling(DipWidth * scale);
+        var height = (int)Math.Ceiling(DipHeight * scale);
+
+        if (TryGetFrameInsets(out var left, out var top, out var right, out var bottom))
+        {
+            x -= left;
+            y -= top;
+            width += left + right;
+            height += top + bottom;
+        }
+        return new RectInt32(x, y, width, height);
+    }
+
+    /// <summary>窗口矩形与可见客户区之间那圈不可见边框（物理像素）。</summary>
+    private bool TryGetFrameInsets(out int left, out int top, out int right, out int bottom)
+    {
+        left = top = right = bottom = 0;
+        try
+        {
+            if (!GetWindowRect(_hwnd, out var window)) return false;
+            if (!GetClientRect(_hwnd, out var client)) return false;
+            var clientWidth = client.Right - client.Left;
+            var clientHeight = client.Bottom - client.Top;
+            if (clientWidth <= 0 || clientHeight <= 0) return false;
+
+            var origin = new POINT { X = 0, Y = 0 };
+            if (!ClientToScreen(_hwnd, ref origin)) return false;
+
+            left = origin.X - window.Left;
+            top = origin.Y - window.Top;
+            right = (window.Right - window.Left) - clientWidth - left;
+            bottom = (window.Bottom - window.Top) - clientHeight - top;
+
+            // 负数只可能是句柄或时序异常，按"没有边框"处理，别把窗口算成负尺寸。
+            if (left < 0 || top < 0 || right < 0 || bottom < 0)
+            {
+                left = top = right = bottom = 0;
+                return false;
+            }
+            return true;
+        }
+        catch { return false; }
     }
 
     private void ConfigureWindow()
@@ -602,6 +739,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     }
 
     /// <summary>绑定到某个分区：读取其托管文件夹内容（尺寸随之自适应）。位置由管理器排布。</summary>
+    internal DesktopCardWindow? ItemSource { get; set; }
+    internal List<string> SnapshotPaths() => _items.Select(item => item.Path).ToList();
+
     public void Bind(string zoneName, System.Collections.Generic.IReadOnlyList<string>? initialItems = null)
     {
         _zoneName = zoneName;
@@ -613,7 +753,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     {
         try
         {
-            var scale = ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
+            var scale = CurrentScale;
             // 分区卡片固定归属于 Windows 设置中的主显示器。新建 WinUI 窗口的
             // 初始位置并不稳定，多屏环境下可能先落到副屏；若按窗口位置取
             // DisplayArea，随后布局就会错误地把所有卡片留在副屏。
@@ -639,11 +779,86 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         DipTop = dipY;
         try
         {
-            var scale = ShellRoot.XamlRoot?.RasterizationScale ?? 1.0;
-            AppWindow.Move(new PointInt32((int)(dipX * scale), (int)(dipY * scale)));
+            var target = TargetWindowRect(dipX, dipY, CurrentScale);
+            var pos = AppWindow.Position;
+            var size = AppWindow.Size;
+            // 完全没变就什么都不做：分辨率来回切时大部分卡片的目标位置是一样的，
+            // 省下来的每一次 SetWindowPos 都是 UI 线程上实打实的同步合成开销。
+            if (pos.X == target.X && pos.Y == target.Y &&
+                size.Width == target.Width && size.Height == target.Height) return;
+            // 位置和尺寸合成一次调用：9 张卡片原本要走 18 次 SetWindowPos，这里减半。
+            AppWindow.MoveAndResize(target);
         }
         catch { /* ignore */ }
     }
+
+    /// <summary>
+    /// 按当前行列数重算卡片的 DIP 尺寸，使图标网格**四边留白相等**（都等于
+    /// <see cref="GridPadding"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 两个曾经算错的地方：
+    /// <list type="bullet">
+    ///   <item>宽度上原来按每列多给 <c>ItemMarginDip * 2</c> 的容器外边距，可
+    ///         <c>ItemContainerStyle</c> 已经把 GridViewItem 的 Margin/Padding 清零，
+    ///         容器实测就是 76dip（2026-09-18 量到 panel 宽正好 = 列数 × 76）。多出来的
+    ///         24dip 因为面板是左对齐的，全堆在右边——左留白 8、右留白 32，肉眼很明显。</item>
+    ///   <item>高度要按**物理像素**算。WinUI 把每个容器的高度向上取整到整像素
+    ///         （86dip@125% = 107.5px → 实占 108px = 86.4dip），按 86dip/行 算就会越算越少，
+    ///         最后一行被裁掉。所以先把一行折成像素再取整回 DIP。</item>
+    /// </list>
+    /// 缩放变了行高像素也会变，所以显示变化时要重新调一次（见
+    /// <see cref="RefreshDipSizeForScale"/>）。
+    /// </remarks>
+    private void RecomputeDipSize()
+    {
+        DipWidth = _cols * TileWidth + GridPadding * 2;
+
+        // 高度以**实测**为准（见 ApplyMeasuredContentHeight）：每一行的高度取决于这一行里
+        // 有没有两行的文件名，算不出来。测到之前先按"每行都是最坏情况"给个初值，
+        // 免得卡片第一帧是个空壳再跳一下。
+        if (_hasMeasuredHeight) return;
+
+        var scale = CurrentScale;
+        if (scale <= 0) scale = 1.0;
+        var rowDip = Math.Ceiling(TileHeight * scale) / scale;
+        DipHeight = HeaderHeight + (int)Math.Ceiling(_rows * rowDip) + GridPadding * 2;
+    }
+
+    /// <summary>
+    /// 拿图标面板量出来的真实高度当卡片高度。
+    /// </summary>
+    /// <remarks>
+    /// 行高是自适应的（<see cref="CardTilesPanel"/> 按每行最高的格子决定行高），所以卡片高度
+    /// 只能等布局跑完再读。读到以后要通知管理器重排——这张卡片矮了/高了，同一列下面的卡片
+    /// 都得跟着挪。
+    /// </remarks>
+    private void ApplyMeasuredContentHeight(double contentHeightDip)
+    {
+        if (contentHeightDip <= 0) return;
+        var wanted = HeaderHeight + (int)Math.Ceiling(contentHeightDip) + GridPadding * 2;
+        _hasMeasuredHeight = true;
+        if (wanted == DipHeight) return;
+
+        DipHeight = wanted;
+        ApplyScaleAwareSize();
+        SizeChangedByContent?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>刷新内容后把图标面板的 SizeChanged 接上，只接一次。</summary>
+    private void HookContentPanel()
+    {
+        if (_panelHooked) return;
+        if (ItemsGrid.ItemsPanelRoot is not FrameworkElement panel) return;
+
+        panel.SizeChanged += (_, args) => ApplyMeasuredContentHeight(args.NewSize.Height);
+        _panelHooked = true;
+        ApplyMeasuredContentHeight(panel.ActualHeight);
+    }
+
+    /// <summary>缩放变化后重算 DIP 尺寸。管理器排版前调用——位置是按 DipWidth/DipHeight 算的，
+    /// 顺序反了会用旧尺寸排出错位的一版。</summary>
+    public void RefreshDipSizeForScale() => RecomputeDipSize();
 
     /// <summary>按当前项数重算卡片尺寸并应用到窗口。
     /// 卡片**宽度固定**为 <see cref="Config.DesktopCardMaxColumns"/> 列的占位（不按
@@ -658,11 +873,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         var cols = wantedCols;
         var rows = itemCount == 0 ? 1 : (itemCount + cols - 1) / cols;
 
-        // 宽度 = GridPadding * 2 + cols * (TileWidth + ItemMarginDip * 2)
-        // ItemMarginDip 同时给左右，所以乘 2。GridViewItem 容器本身已 Padding=0，不另算外边距。
-        DipWidth = cols * TileWidth + cols * ItemMarginDip * 2 + GridPadding * 2;
-        DipHeight = HeaderHeight + rows * TileHeight + GridPadding + 10;
-
+        _cols = cols;
+        _rows = rows;
+        RecomputeDipSize();
         ApplyScaleAwareSize();
     }
 
@@ -864,6 +1077,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     public void HideCard()
     {
+        LibrarySurfaceReady = false;
         try { AppWindow.Hide(); }
         catch { /* ignore */ }
     }
@@ -930,6 +1144,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     /// <summary>这个 HWND 是不是本卡片自己的窗口。前台切到卡片自身时不能当成"用户点到别处"。</summary>
     public bool OwnsHandle(IntPtr hwnd) => hwnd == _hwnd;
 
+    /// <summary>本卡片的顶层窗口句柄。管理器要拿它比对右键菜单等弹出窗口的属主。</summary>
+    public IntPtr Handle => _hwnd;
+
     /// <summary>屏幕坐标（物理像素）是否落在这张卡片窗口内。用于「点到别处就收起」的判定。</summary>
     public bool ContainsScreenPoint(int x, int y)
     {
@@ -947,10 +1164,41 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         catch { return true; }
     }
 
-    public async Task RaiseAnimatedAsync(int delayMs = 0)
+    public void RaiseImmediately()
+    {
+        _fadeTimer?.Stop();
+        _fadeTimer = null;
+        ShellRoot.Opacity = 1;
+        ShellRoot.RenderTransform = null;
+        SetWindowAlpha(255);
+        SetLayered(false);
+        RaiseToFront();
+    }
+
+    internal Task WaitForLibraryIconsAsync() => Task.WhenAll((ItemSource ?? this)._iconTasks.ToArray());
+    internal bool LibrarySurfaceReady { get; private set; }
+    internal void MarkLibrarySurfaceReady() => LibrarySurfaceReady = true;
+    internal void ParkLibrary() => WindowHelper.SetWindowCloak(this, true);
+
+    internal void PrepareGroupReveal()
+    {
+        if (LibrarySurfaceReady)
+        {
+            SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            return;
+        }
+        WindowHelper.SetWindowCloak(this, true);
+        WindowHelper.DisableWindowTransitions(this);
+        // The manager releases the whole group together, never per-window callbacks.
+        _hasPresentedFirstFrame = true;
+        RaiseImmediately();
+    }
+
+    public async Task RaiseAnimatedAsync(int delayMs = 0, Func<bool>? shouldReveal = null)
     {
         await WaitUntilReadyAsync();
         if (delayMs > 0) await Task.Delay(delayMs);
+        if (shouldReveal?.Invoke() == false) return;
         try
         {
             // 顺序不能反：先把整窗透明度压到 0，再抬到最前。反过来的话窗口会以完全
@@ -1010,6 +1258,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             _itemOrderSaveQueued = false;
             if (!CardItemOrderStore.Save(_zoneName, _items.Select(item => item.Path)))
                 ShowTransientToast("图标顺序保存失败，请重试。");
+            else ContentChanged?.Invoke(this, EventArgs.Empty);
         });
     }
 
@@ -1021,39 +1270,94 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         _refreshingItems = true;
         try
         {
-            var paths = CardItemOrderStore.Apply(_zoneName,
-                knownPaths ?? DesktopCollectService.ListCardItems(_zoneName));
+            var incoming = knownPaths ?? DesktopCollectService.ListCardItems(_zoneName);
+            var sourcePaths = ItemSource?.SnapshotPaths();
+            var paths = sourcePaths != null && sourcePaths.Count == incoming.Count
+                && new HashSet<string>(sourcePaths, StringComparer.OrdinalIgnoreCase).SetEquals(incoming)
+                ? sourcePaths : CardItemOrderStore.Apply(_zoneName, incoming);
+            // Opening an unchanged library must not recreate GridView containers or rerun layout.
+            if (_items.Select(item => item.Path).SequenceEqual(paths, StringComparer.OrdinalIgnoreCase))
+            {
+                if (_cols != Math.Clamp(SettingsService.Instance.Current.DesktopCardMaxColumns, 1, MaxColumnsCap))
+                {
+                    _hasMeasuredHeight = false;
+                    ApplyAutoSize(paths.Count);
+                }
+                return;
+            }
 
             // 路径没变的项目**直接复用旧对象**，连带保留已经加载好的图标。
             // 每次刷新都 new 一遍的话，托管目录里动一个文件就要把整张卡片的图标重新走一遍
             // Shell / WScript.Shell 解析（单个 .lnk 几十毫秒），拖放和收纳时尤其明显。
             var reusable = new Dictionary<string, CardItem>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in _items) reusable.TryAdd(item.Path, item);
+            // Both windows live on the same UI thread. Share item data and decoded images,
+            // while keeping each window's collection, selection and layout independent.
+            if (ItemSource != null)
+                foreach (var item in ItemSource._items) reusable.TryAdd(item.Path, item);
 
-            _items.Clear();
+            var wanted = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+            LibrarySurfaceReady = false;
+            for (var index = _items.Count - 1; index >= 0; index--)
+                if (!wanted.Contains(_items[index].Path)) _items.RemoveAt(index);
             // 图标任务留一份句柄：首次呈现前要等它们跑完，否则卡片会先露出一批空占位。
-            _iconTasks.Clear();
-            foreach (var path in paths)
+            _iconTasks.RemoveAll(task => task.IsCompleted);
+            for (var index = 0; index < paths.Count; index++)
             {
+                var path = paths[index];
+                if (index < _items.Count && string.Equals(_items[index].Path, path, StringComparison.OrdinalIgnoreCase))
+                    continue;
                 if (reusable.TryGetValue(path, out var existing))
                 {
-                    _items.Add(existing);
+                    var oldIndex = _items.IndexOf(existing);
+                    if (oldIndex >= 0) _items.Move(oldIndex, index);
+                    else _items.Insert(index, existing);
                     continue;
                 }
 
                 var item = new CardItem(path);
-                _items.Add(item);
+                _items.Insert(index, item);
                 _iconTasks.Add(item.LoadIconAsync());
             }
 
             EmptyHint.Visibility = paths.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             ItemsGrid.Visibility = paths.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             ApplyAutoSize(paths.Count);
+            // ItemsPanelRoot 要等容器生成后才有，排到下一轮再挂。
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, HookContentPanel);
         }
         catch { /* ignore */ }
         finally { _refreshingItems = false; }
     }
 
+
+    /// <summary>本卡片里有图标被选中了。管理器用它把其它卡片的选中清掉——
+    /// 九张卡片是九个独立窗口，各自的 GridView 互不知情，不清就会同时亮好几个。</summary>
+    public event EventHandler? ItemSelected;
+
+    /// <summary>清掉本卡片的选中态。</summary>
+    public void ClearSelection()
+    {
+        try { if (ItemsGrid.SelectedIndex >= 0) ItemsGrid.SelectedIndex = -1; }
+        catch { /* ignore */ }
+    }
+
+    private void ItemsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ItemsGrid.SelectedIndex >= 0) ItemSelected?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>点在图标以外的地方（卡片空白处、边距）就取消选中，和 Windows 桌面一致。</summary>
+    private void CardRoot_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var node = e.OriginalSource as DependencyObject;
+        while (node != null)
+        {
+            if (node is GridViewItem) return;   // 点在图标上，交给 GridView 自己选中
+            node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+        }
+        ClearSelection();
+    }
 
     private void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
@@ -1101,12 +1405,8 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     {
         if (e.DataView.Properties.TryGetValue("CardItem", out var obj) && obj is string)
         {
-            if (e.DataView.Properties.TryGetValue("SourceCard", out var source) && source is string zone && zone == _zoneName)
-            {
-                // 同卡片内不接管事件：交给 CanReorderItems 产生 Fluent 插入间隙和原生让位动画。
-                return;
-            }
-
+            // 同卡片内拖动 = 调整顺序；跨卡片 = 换区。两种都要在这里接住，
+            // 否则系统显示"禁止"光标、松手也不会触发 Drop。
             e.AcceptedOperation = DataPackageOperation.Move;
             e.Handled = true;
         }
@@ -1121,9 +1421,11 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         var item = _items.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase))
             ?? new CardItem(path);
 
-        // 同卡片内不接管 Drop，由 CanReorderItems 完成最终插入。
         if (e.DataView.Properties.TryGetValue("SourceCard", out var source) && source is string zone && zone == _zoneName)
+        {
+            ReorderWithinCard(item, e);
             return;
+        }
 
         e.Handled = true;
         e.AcceptedOperation = DataPackageOperation.None;
@@ -1149,6 +1451,35 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         }
     }
 
+    /// <summary>
+    /// 卡片内拖动排序：按松手位置算出插入点，直接在集合里挪。
+    /// </summary>
+    /// <remarks>
+    /// 以前这件事交给 GridView 的 <c>CanReorderItems</c>，换成 <see cref="CardTilesPanel"/>
+    /// 之后那套内置重排不再生效（拖得动、松手不插入）。自己做反而更可控：插入点就是面板按
+    /// 自适应行高算出来的那一格，不会和实际摆放对不上。
+    /// <c>CanReorderItems</c> 本身仍要保持 True：关掉它，拖动会话就不再把 DragOver/Drop
+    /// 发回源列表，这里根本不会被调用（2026-09-18 埋点：只有 Starting → Completed(None)）。
+    /// 挪完之后 <c>DragItemsCompleted</c> 看到 DropResult=Move 会把顺序落盘。
+    /// </remarks>
+    private void ReorderWithinCard(CardItem item, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.AcceptedOperation = DataPackageOperation.None;
+        if (ItemsGrid.ItemsPanelRoot is not CardTilesPanel panel) return;
+
+        var oldIndex = _items.IndexOf(item);
+        if (oldIndex < 0) return;
+
+        var insertion = panel.GetInsertionIndex(e.GetPosition(panel));
+        // 先把自己拿掉，插入点在它后面的都要往前挪一位。
+        var newIndex = insertion > oldIndex ? insertion - 1 : insertion;
+        newIndex = Math.Clamp(newIndex, 0, _items.Count - 1);
+
+        e.AcceptedOperation = DataPackageOperation.Move;
+        if (newIndex != oldIndex) _items.Move(oldIndex, newIndex);
+    }
+
     /// <summary>拖放结束后保存顺序，再合并拖动期间的目录变化。</summary>
     private void ItemsGrid_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e)
     {
@@ -1159,6 +1490,8 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             ShowTransientToast("图标顺序保存失败，请重试。");
         }
         RefreshContent();
+        if (e.DropResult == DataPackageOperation.Move)
+            ContentChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>右键菜单「打开」：走默认 Shell 启动（.exe 直接运行、.doc 走关联软件等）。</summary>
@@ -1166,6 +1499,127 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     {
         if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
         OpenItem(item);
+    }
+
+    /// <summary>右键菜单「重命名」：在图标上弹出输入框，回车确认、Esc 取消。</summary>
+    /// <remarks>
+    /// 不做资源管理器那种"就地编辑文件名"：卡片格子只有 76dip 宽，塞一个输入框既看不全名字，
+    /// 按下去还会先被 GridView 当成拖动起手。弹出层能给够宽度，也有地方显示报错原因。
+    /// </remarks>
+    private void ItemMenu_Rename_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
+        if (item.IsShellItem)
+        {
+            ShowTransientToast("系统图标不能重命名。");
+            return;
+        }
+        // 右键菜单还在关闭过程中，这一轮直接弹第二个 Flyout 会被吞掉（和「显示系统右键菜单」
+        // 同款处理），排到下一轮再弹。
+        DispatcherQueue.TryEnqueue(() => ShowRenameFlyout(item));
+    }
+
+    private void ShowRenameFlyout(CardItem item)
+    {
+        try
+        {
+            if (ItemsGrid.ContainerFromItem(item) is not FrameworkElement anchor) return;
+
+            var box = new TextBox
+            {
+                Text = item.DisplayName,
+                Width = 240,
+                SelectionStart = 0,
+                SelectionLength = item.DisplayName.Length,
+            };
+            var error = new TextBlock
+            {
+                Visibility = Visibility.Collapsed,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorCriticalBrush"],
+            };
+            var panel = new StackPanel { Spacing = 6 };
+            panel.Children.Add(box);
+            panel.Children.Add(error);
+
+            var flyout = new Flyout
+            {
+                Content = panel,
+                Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Bottom,
+            };
+
+            void Commit()
+            {
+                var message = TryRename(item, box.Text);
+                if (message == null)
+                {
+                    flyout.Hide();
+                    return;
+                }
+                error.Text = message;
+                error.Visibility = Visibility.Visible;
+                box.Focus(FocusState.Programmatic);
+                box.SelectAll();
+            }
+
+            box.KeyDown += (_, args) =>
+            {
+                if (args.Key == Windows.System.VirtualKey.Enter)
+                {
+                    args.Handled = true;
+                    Commit();
+                }
+                else if (args.Key == Windows.System.VirtualKey.Escape)
+                {
+                    args.Handled = true;
+                    flyout.Hide();
+                }
+            };
+            flyout.Opened += (_, _) =>
+            {
+                box.Focus(FocusState.Programmatic);
+                box.SelectAll();
+            };
+
+            flyout.ShowAt(anchor);
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("DesktopCard.ShowRenameFlyout", ex);
+            ShowTransientToast("打不开重命名输入框。");
+        }
+    }
+
+    /// <summary>执行重命名。成功返回 null，失败返回给用户看的原因。</summary>
+    private string? TryRename(CardItem item, string newDisplayName)
+    {
+        var trimmed = (newDisplayName ?? string.Empty).Trim();
+        if (trimmed.Length == 0) return "名字不能为空。";
+        if (string.Equals(trimmed, item.DisplayName, StringComparison.Ordinal)) return null;  // 没改，当成取消
+
+        // 卡片上显示的是不含扩展名的名字（和资源管理器隐藏扩展名时一致），
+        // 所以拼回原扩展名，用户不会因为改个名字把 .lnk 弄丢。
+        var extension = System.IO.Path.GetExtension(item.Path);
+        var result = DesktopCollectService.RenameItem(item.Path, trimmed + extension, out var newPath);
+        switch (result)
+        {
+            case DesktopCollectService.RenameResult.Success:
+                // 顺序表按文件名记录，不同步改的话图标会掉到同类的末尾。
+                CardItemOrderStore.Rename(_zoneName, item.Path, newPath);
+                // 改完名字可能已经不属于本分区了（分区是按关键字实时匹配的），
+                // 所以除了刷新自己，还要通知管理器做一次同步。
+                RefreshContent();
+                ContentChanged?.Invoke(this, EventArgs.Empty);
+                return null;
+            case DesktopCollectService.RenameResult.NotFound:
+                return "原文件已经不在了，可能刚被移走或删除。";
+            case DesktopCollectService.RenameResult.InvalidName:
+                return "名字里含有 Windows 不允许的字符（冒号、斜杠、星号、问号、竖线、尖括号），或者以空格 / 点结尾。";
+            case DesktopCollectService.RenameResult.NameExists:
+                return "这个名字已经被同目录下的其它项目占用了。";
+            default:
+                return "重命名失败，可能没有权限（公共桌面上的项目需要管理员）。";
+        }
     }
 
     /// <summary>右键菜单「删除到回收站」：通过 SHFileOperation + FOF_ALLOWUNDO 移到回收站。</summary>

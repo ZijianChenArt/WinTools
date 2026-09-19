@@ -138,6 +138,31 @@ public class DesktopZone
 /// <summary>应用程序完整配置，序列化为 config.json；实现 INotifyPropertyChanged 以便 UI 双向绑定。</summary>
 public class Config : ObservableObject
 {
+    private bool _enableTaskbarInfo = true;
+    private string _taskbarInfoPlacement = "left";
+    [JsonPropertyName("taskbarInfoPlacement")]
+    public string TaskbarInfoPlacement { get => _taskbarInfoPlacement; set => SetProperty(ref _taskbarInfoPlacement, value); }
+    private bool _taskbarInfoBackground;
+    [JsonPropertyName("taskbarInfoBackground")]
+    public bool TaskbarInfoBackground { get => _taskbarInfoBackground; set => SetProperty(ref _taskbarInfoBackground, value); }
+    private bool _taskbarInfoActions = true;
+    [JsonPropertyName("taskbarInfoActions")]
+    public bool TaskbarInfoActions { get => _taskbarInfoActions; set => SetProperty(ref _taskbarInfoActions, value); }
+    [JsonPropertyName("enableTaskbarInfo")]
+    public bool EnableTaskbarInfo { get => _enableTaskbarInfo; set => SetProperty(ref _enableTaskbarInfo, value); }
+
+    private string _taskbarInfoMode = "codex";
+    [JsonPropertyName("taskbarInfoMode")]
+    public string TaskbarInfoMode { get => _taskbarInfoMode; set => SetProperty(ref _taskbarInfoMode, value); }
+
+    private string _taskbarInfoText = "今天也要专注";
+    [JsonPropertyName("taskbarInfoText")]
+    public string TaskbarInfoText { get => _taskbarInfoText; set => SetProperty(ref _taskbarInfoText, value); }
+
+    private int _taskbarInfoOffset;
+    [JsonPropertyName("taskbarInfoOffset")]
+    public int TaskbarInfoOffset { get => _taskbarInfoOffset; set => SetProperty(ref _taskbarInfoOffset, value); }
+
     private List<ConfigEntry> _entries = new();
     [JsonPropertyName("entries")]
     public List<ConfigEntry> Entries { get => _entries; set => SetProperty(ref _entries, value); }
@@ -231,6 +256,24 @@ public class Config : ObservableObject
     private bool _enableSpotlight = true;
     [JsonPropertyName("enableSpotlight")]
     public bool EnableSpotlight { get => _enableSpotlight; set => SetProperty(ref _enableSpotlight, value); }
+
+    // 默认关闭：语音小球要常驻一个全局焦点钩子，并对前台程序做 UIA 查询，只给主动开启的用户用。
+    private bool _enableVoiceBall;
+    [JsonPropertyName("enableVoiceBall")]
+    public bool EnableVoiceBall { get => _enableVoiceBall; set => SetProperty(ref _enableVoiceBall, value); }
+
+    // 用户拖出来的小球位置：小球中心相对输入光标底端的偏移（DIP）。未拖过时用默认的光标正下方。
+    private bool _voiceBallCustomOffset;
+    [JsonPropertyName("voiceBallCustomOffset")]
+    public bool VoiceBallCustomOffset { get => _voiceBallCustomOffset; set => SetProperty(ref _voiceBallCustomOffset, value); }
+
+    private double _voiceBallOffsetX;
+    [JsonPropertyName("voiceBallOffsetX")]
+    public double VoiceBallOffsetX { get => _voiceBallOffsetX; set => SetProperty(ref _voiceBallOffsetX, value); }
+
+    private double _voiceBallOffsetY;
+    [JsonPropertyName("voiceBallOffsetY")]
+    public double VoiceBallOffsetY { get => _voiceBallOffsetY; set => SetProperty(ref _voiceBallOffsetY, value); }
 
     // 字段缺失时（首次启动、config.json 被外部工具简化、跨版本迁移）回退到默认 7 个分区。
     // 显式写 "desktopZones": [] 仍会被反序列化为空 list（尊重用户清空操作）。

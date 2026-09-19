@@ -23,6 +23,12 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <Style x:Key="AudioPickerSurfaceStyle" TargetType="Border">
+        <Setter Property="Padding" Value="20"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+
     <!--
         间距不设独立令牌：值直接写在下面的样式里，改样式即可。
         （之前留过一组 PageSpacing* 的 x:Double，没有任何样式引用它们，

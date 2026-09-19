@@ -29,6 +29,27 @@ public static class DesktopZoneMatcher
             }
         }
 
+        // 目录的「文件夹」规则要排在名称关键词**之前**。
+        // 2026-09-12 用户反馈：桌面上一个叫「AI Project Unity」的工程文件夹被分到了
+        // 「三维与引擎」，因为名字里含 Unity。但对文件夹来说，名字里出现某个软件名，
+        // 多半说明它是那个软件的**工程 / 数据目录**，而不是那个软件本身——用户的预期是
+        // 「它是个文件夹，就该进文件夹分区」。想让某个文件夹归到软件分区，把它拖过去即可：
+        // 显式清单的优先级仍然最高（上面那一段），不受这条影响。
+        if (isDirectory)
+        {
+            for (var i = 0; i < zones.Count; i++)
+            {
+                var folderKeywords = zones[i].Keywords;
+                if (folderKeywords == null) continue;
+                foreach (var raw in folderKeywords)
+                {
+                    var kw = raw?.Trim();
+                    if (!string.IsNullOrEmpty(kw) && IsFolderKeyword(kw))
+                        return i;
+                }
+            }
+        }
+
         // 其次：名称关键词。软件分类优先于通用 .lnk/.url 扩展名。
         for (var i = 0; i < zones.Count; i++)
         {

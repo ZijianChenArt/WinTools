@@ -125,6 +125,9 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         public const string Spotlight = "Spotlight";
 
+        public const string VoiceBall = "VoiceBall";
+        public const string TaskbarInfo = "TaskbarInfo";
+
         public const string AppSettings = "AppSettings";
 
 
@@ -264,6 +267,9 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         MainNav.MenuItems.Add(NavItemSpotlight);
 
+        MainNav.MenuItems.Add(NavItemVoiceBall);
+        MainNav.MenuItems.Add(NavItemTaskbarInfo);
+
         MainNav.MenuItems.Add(NavItemDragStash);
 
         MainNav.MenuItems.Add(NavItemPerAppIme);
@@ -285,6 +291,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _contentPanels[NavTags.DesktopOrganize] = ContentDesktopOrganize;
         _contentPanels[NavTags.DesktopClick] = ContentDesktopClick;
         _contentPanels[NavTags.Spotlight] = ContentSpotlight;
+        _contentPanels[NavTags.VoiceBall] = ContentVoiceBall;
+        _contentPanels[NavTags.TaskbarInfo] = FeaturePages.GetControl<Grid>("ContentTaskbarInfo");
         _contentPanels[NavTags.AppSettings] = ContentAppSettings;
 
 
@@ -478,9 +486,18 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
                 break;
 
+            case NavTags.VoiceBall:
+                LoadVoiceBallFromConfig();
+
+                break;
+
             case NavTags.AppSettings:
                 LoadAppSettingsFromConfig();
 
+                break;
+
+            case NavTags.TaskbarInfo:
+                LoadTaskbarInfoSettings();
                 break;
 
 
@@ -519,6 +536,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     /// </summary>
     private void SyncAllControlsFromConfig()
     {
+        LoadTaskbarInfoSettings();
         if (DragStashToggle != null) DragStashToggle.IsOn = _config.EnableDragStash;
         if (ThreeFingerDragToggle != null) ThreeFingerDragToggle.IsOn = _config.EnableThreeFingerDrag;
         if (ProgramAssocToggle != null) ProgramAssocToggle.IsOn = _config.EnableProgramAssoc;
@@ -526,6 +544,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (DesktopClickToggle != null) DesktopClickToggle.IsOn = _config.EnableDesktopClickToShow;
         if (SpotlightToggle != null) SpotlightToggle.IsOn = _config.EnableSpotlight;
         if (HotkeySpotlightBox != null) HotkeySpotlightBox.Text = GetSpotlightHotkey();
+        if (VoiceBallToggle != null) VoiceBallToggle.IsOn = _config.EnableVoiceBall;
+        if (HotkeyVoiceBallBox != null) HotkeyVoiceBallBox.Text = GetVoiceBallHotkey();
         if (AutoStartToggle != null) AutoStartToggle.IsOn = AutostartService.IsEnabled();
         SyncThemeRadioFromConfig();
         var offsetX = _config.StashOffsetX > 0 ? _config.StashOffsetX : 150;
@@ -543,6 +563,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _config.Hotkeys ??= new Dictionary<string, string>();
         if (HotkeyDesktopCardBox != null) _config.Hotkeys[DesktopCardHotkeyKey] = HotkeyDesktopCardBox.Text?.Trim() ?? "";
         if (HotkeySpotlightBox != null) _config.Hotkeys[SpotlightHotkeyKey] = HotkeySpotlightBox.Text?.Trim() ?? "";
+        if (HotkeyVoiceBallBox?.Text?.Trim() is { } voiceHotkey && HotkeyHelper.ParseForSend(voiceHotkey) != null)
+            _config.Hotkeys[VoiceBallHotkeyKey] = voiceHotkey;
 
         if (_assocListInitialized)
         {
@@ -623,7 +645,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         if (ThreeFingerDragToggle != null) ThreeFingerDragToggle.IsOn = _config.EnableThreeFingerDrag;
 
-        if (ThreeFingerCalibrationStatusText != null) ThreeFingerCalibrationStatusText.Text = string.IsNullOrWhiteSpace(_config.ThreeFingerCalibrationUtc) ? "尚未校准 · 使用默认曲线" : "已完成本机速度校准";
+        if (ThreeFingerCalibrationStatusText != null) ThreeFingerCalibrationStatusText.Text = string.IsNullOrWhiteSpace(_config.ThreeFingerCalibrationUtc) ? "尚未校准，正在使用默认速度" : "已根据此设备完成校准";
 
         _isLoadingDragStashSettings = false;
 
@@ -647,8 +669,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         {
 
             Title = "校准三指拖拽速度",
-            Content = "接下来依次进行慢速、正常和快速三档校准。每一档都只需用单指从触控板最左侧完整滑到最右侧，然后抬起；程序会自动进入下一档。无需按下触控板。",
-            PrimaryButtonText = "开始校准",
+            Content = "将依次校准慢速、正常和快速三档。每一档请用一根手指从触摸板最左侧滑到最右侧后抬起，完成后会自动进入下一档，无需按下触摸板。",
+            PrimaryButtonText = "开始",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = MainNav.XamlRoot
@@ -664,7 +686,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         ThreeFingerCalibrationProgress.Value = 0;
 
-        ThreeFingerCalibrationStatusText.Text = "校准中：请按提示完成慢速、正常和快速三次完整滑动……";
+        ThreeFingerCalibrationStatusText.Text = "正在校准，请依次完成慢速、正常和快速三次滑动…";
 
         var result = await RunGuidedThreeFingerCalibrationAsync();
 
@@ -675,7 +697,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (result == null)
         {
 
-            ThreeFingerCalibrationStatusText.Text = "校准已取消，原有速度曲线未改变。";
+            ThreeFingerCalibrationStatusText.Text = "已取消校准，速度设置未更改";
 
             return;
 
@@ -685,13 +707,13 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (!result.Value.Success || result.Value.FitQuality < 0.25)
         {
 
-            ThreeFingerCalibrationStatusText.Text = "本次有效移动数据不足，原有速度曲线未改变。";
+            ThreeFingerCalibrationStatusText.Text = "有效滑动数据不足，速度设置未更改";
 
             var failed = new ContentDialog
             {
 
                 Title = "校准未完成",
-                Content = "没有采集到足够完整的慢速和快速单指移动。请重试，并尽量避免光标碰到屏幕边缘。",
+                Content = "未采集到足够的慢速和快速滑动数据。请重试，并避免光标碰到屏幕边缘。",
                 CloseButtonText = "确定",
                 XamlRoot = MainNav.XamlRoot
             };
@@ -722,14 +744,14 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _touchpadInputHost.ConfigurePointerCurve(calibrated.LowSpeedGain, calibrated.HighSpeedGain, calibrated.AccelerationStart, calibrated.AccelerationEnd);
 
         ThreeFingerCalibrationStatusText.Text =
-            $"校准完成：已分析 {calibrated.SampleCount} 个有效移动样本。";
+            "已根据此设备完成校准";
 
         var completed = new ContentDialog
         {
 
             Title = "校准完成",
-            Content = "已在稳定的基础速度上应用本机微调，并立即生效。校准结果设有安全范围，不会因一次异常滑动而大幅偏离默认手感。",
-            CloseButtonText = "完成",
+            Content = "已根据此设备调整三指拖拽速度，更改已生效。",
+            CloseButtonText = "确定",
             XamlRoot = MainNav.XamlRoot
         };
 
@@ -935,6 +957,9 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         SetNavDot(NavDotDesktopClick, _config.EnableDesktopClickToShow, onBrush, offBrush);
 
         SetNavDot(NavDotSpotlight, _config.EnableSpotlight, onBrush, offBrush);
+
+        SetNavDot(NavDotVoiceBall, _config.EnableVoiceBall, onBrush, offBrush);
+        SetNavDot(NavDotTaskbarInfo, _config.EnableTaskbarInfo, onBrush, offBrush);
 
 
     }

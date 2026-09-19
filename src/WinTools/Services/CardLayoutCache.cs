@@ -65,6 +65,7 @@ internal static class TopologyKey
 internal static class CardLayoutCache
 {
     private static readonly object _lock = new();
+    private static string? _lastSavedKey, _lastSavedSnapshot;
     private static readonly string _path = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "WinTools", "card-layout-cache.json");
@@ -133,9 +134,13 @@ internal static class CardLayoutCache
         var key = TopologyKey.Get();
         lock (_lock)
         {
+            var snapshot = JsonSerializer.Serialize(placements.OrderBy(pair => pair.Key, StringComparer.Ordinal), _json);
+            if (_lastSavedKey == key && _lastSavedSnapshot == snapshot) return;
             var all = LoadAll();
             all[key] = new Dictionary<string, CardPlacement>(placements);
             SaveAll(all);
+            _lastSavedKey = key;
+            _lastSavedSnapshot = snapshot;
         }
     }
 }

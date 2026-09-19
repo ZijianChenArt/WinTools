@@ -22,13 +22,24 @@ internal static class ErrorReporter
     public static void Log(string scope, Exception ex)
     {
         if (ex == null) return;
+        Write(scope, $"{ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+    }
+
+    /// <summary>
+    /// 记一条不带异常的诊断信息。给"难复现、只能靠日志回溯"的路径用
+    /// （例如桌面双击到底是被哪一条判定放行 / 拦下的），调用点请自觉保持稀疏。
+    /// </summary>
+    public static void Log(string scope, string message) => Write(scope, message);
+
+    private static void Write(string scope, string detail)
+    {
         try
         {
             var path = Path.Combine(
                 Path.GetTempPath(),
                 $"WinTools-error-{DateTime.Now:yyyyMMdd}.log");
             var line = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"[{DateTime.Now:HH:mm:ss.fff}] [{scope}] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n\n");
+                $"[{DateTime.Now:HH:mm:ss.fff}] [{scope}] {detail}\n\n");
             lock (_lock)
             {
                 File.AppendAllText(path, line, Encoding.UTF8);

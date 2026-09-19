@@ -81,7 +81,7 @@
                     </ListView>
                     <StackPanel x:Name="EmptyHint" Spacing="5"
                                 HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE8E5;" FontSize="20"
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.DragStash}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}" FontSize="20"
                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                   HorizontalAlignment="Center"/>
                         <TextBlock Text="拖放到此处暂存" FontSize="14" FontWeight="SemiBold"

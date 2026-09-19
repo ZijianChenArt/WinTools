@@ -49,6 +49,35 @@ public partial class App : Application, IWindowRegistry
     private PerAppImeService? _perAppImeService;
     private DesktopClickService? _desktopClickService;
     private SpotlightWindow? _spotlightWindow;
+    private VoiceBallService? _voiceBallService;
+    internal TaskbarInfoService? TaskbarInfo { get; private set; }
+
+    internal void ApplyTaskbarInfo(Config config)
+    {
+        if (TaskbarInfo == null && config.EnableTaskbarInfo)
+        {
+            TaskbarInfo = new TaskbarInfoService();
+            TaskbarInfo.StatusChanged += () =>
+            {
+                (_window as MainWindow)?.UpdateTaskbarInfoStatus();
+                _trayIcon?.SetStatusText(TaskbarInfo.TraySummary);
+            };
+            TaskbarInfo.ActionRequested += action =>
+            {
+                if (action == "library") (_window as MainWindow)?.ToggleDesktopLibrary();
+                else if (action == "stash") ShowDragStashWindow();
+                else if (action == "voice")
+                {
+                    SettingsService.Instance.Current.Hotkeys.TryGetValue(MainWindow.VoiceBallHotkeyKey, out var hotkey);
+                    VoiceBallService.TriggerHotkey(hotkey);
+                }
+                else _trayIcon?.ShowQuickMenu();
+            };
+        }
+        TaskbarInfo?.Apply(config);
+    }
+    // UI 线程的队列：语音小球的回调来自后台线程，不能在那里访问 Window.DispatcherQueue。
+    private Microsoft.UI.Dispatching.DispatcherQueue? _uiQueue;
 
     #region Win32 错误弹窗
 
@@ -83,6 +112,21 @@ public partial class App : Application, IWindowRegistry
             var ex = (Exception)e.ExceptionObject;
             ReportFatal("App.UnhandledException", ex);
         };
+        // WinUI 的 UI 线程异常**不走** AppDomain 那条：XAML 侧未处理就直接 failfast
+        // （事件查看器里表现为 Microsoft.UI.Xaml.dll + 0xc000027b，托管日志里一个字都没有）。
+        // 对一个常驻托盘的小工具来说，「记下来继续跑」永远好过「窗口凭空消失」，
+        // 所以这里统一接住并标记已处理；真正致命的启动失败仍走 ReportFatal 弹窗。
+        UnhandledException += (_, e) =>
+        {
+            ErrorReporter.Log("App.XamlUnhandledException", e.Exception);
+            e.Handled = true;
+        };
+        // 后台 Task 里没被 await 的异常，终结器线程上抛出来同样会带走整个进程。
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            ErrorReporter.Log("App.UnobservedTaskException", e.Exception);
+            e.SetObserved();
+        };
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             // 退出路径（托盘退出 / 会话结束）已经各自落过盘了。会话结束那条还处在
@@ -116,6 +160,7 @@ public partial class App : Application, IWindowRegistry
         TraceStartup("OnLaunchedCore: entered");
         // 在 UI 线程初始化 SettingsService，确保订阅和事件回调都跑在 UI 线程。
         SettingsService.Initialize();
+        _uiQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         var startupConfig = SettingsService.Instance.Current;
 
         // 单一实例：若已有实例，则转交启动参数后退出
@@ -170,6 +215,8 @@ public partial class App : Application, IWindowRegistry
             catch (Exception ex) { ErrorReporter.Log("App.InitPerAppIme", ex); }
             try { InitDesktopClick(startupConfig); }
             catch (Exception ex) { ErrorReporter.Log("App.InitDesktopClick", ex); }
+            try { InitVoiceBall(startupConfig); }
+            catch (Exception ex) { ErrorReporter.Log("App.InitVoiceBall", ex); }
             // 旧“桌面整理”已并入桌面分区卡片，清理此前可能注册的右键菜单。
             try { DesktopContextMenuService.SetEnabled(false); }
             catch (Exception ex) { ErrorReporter.Log("App.DisableLegacyDesktopContextMenu", ex); }
@@ -183,6 +230,8 @@ public partial class App : Application, IWindowRegistry
         {
             TraceStartup("OnLaunchedCore: before EnsureTrayIcon");
             EnsureTrayIcon();
+            try { ApplyTaskbarInfo(startupConfig); }
+            catch (Exception ex) { ErrorReporter.Log("App.TaskbarInfo", ex); }
             TraceStartup("OnLaunchedCore: before InitFloatingStash");
             InitFloatingStash(startupConfig);
             TraceStartup("OnLaunchedCore: ui init done");
@@ -204,10 +253,13 @@ public partial class App : Application, IWindowRegistry
         if (_trayIcon != null || _window == null) return;
         _trayIcon = new TrayIcon();
         _trayIcon.ShowMainRequested += (_, _) => BringWindowToForeground();
+        _trayIcon.SpotlightRequested += (_, _) => ToggleSpotlight();
         _trayIcon.DragStashToggleRequested += (_, _) => ShowDragStashWindow();
         _trayIcon.SyncDesktopRequested += (_, _) => (_window as MainWindow)?.SyncDesktopCardsFromTray();
+        _trayIcon.ShowDesktopCardsRequested += (_, _) => (_window as MainWindow)?.ShowDesktopCardsFromTray(fromLeft: _trayIcon.QuickMenuFromLeft);
         _trayIcon.SettingsRequested += (_, _) => OpenSettingsWindow();
         _trayIcon.ExitRequested += (_, _) => ShutdownNow();
+        _trayIcon.QuotaRefreshRequested += (_, _) => TaskbarInfo?.Refresh();
     }
 
     private void HideToTray()
@@ -335,6 +387,36 @@ public partial class App : Application, IWindowRegistry
 
     #endregion
 
+    #region 语音小球
+
+    private void InitVoiceBall(Config config)
+    {
+        if (!config.EnableVoiceBall) return;
+        config.Hotkeys.TryGetValue(MainWindow.VoiceBallHotkeyKey, out var hotkey);
+        SetVoiceBallEnabled(true, hotkey, MainWindow.GetVoiceBallOffset(config));
+    }
+
+    /// <summary>开关语音小球；服务内部自带后台线程，UI 线程调用只做启停。</summary>
+    internal void SetVoiceBallEnabled(bool enabled, string? hotkey, (double X, double Y)? offset)
+    {
+        if (_voiceBallService == null)
+        {
+            _voiceBallService = new VoiceBallService();
+            // 拖动松手的回调来自小球的后台线程，配置与设置页都只能在 UI 线程上动。
+            _voiceBallService.OffsetDragged += (x, y) =>
+                _uiQueue?.TryEnqueue(() => (_window as MainWindow)?.OnVoiceBallOffsetDragged(x, y));
+        }
+        _voiceBallService.SetHotkey(hotkey);
+        _voiceBallService.SetCustomOffset(offset);
+        _voiceBallService.SetEnabled(enabled);
+    }
+
+    internal void SetVoiceBallOffset((double X, double Y)? offset) => _voiceBallService?.SetCustomOffset(offset);
+
+    internal void SetVoiceBallHotkey(string? hotkey) => _voiceBallService?.SetHotkey(hotkey);
+
+    #endregion
+
     #region 悬浮搜索
 
     /// <summary>全局快捷键入口：呼出 / 收起悬浮搜索窗口。</summary>
@@ -419,6 +501,7 @@ public partial class App : Application, IWindowRegistry
         {
             IsShuttingDown = true;
             SaveConfigOnExit();
+            (Current as App)?.TaskbarInfo?.Dispose();
             RestoreDesktopIcons();
             // 托盘图标由 Shell 持有，进程直接结束会在通知区域留下幽灵图标。
             try { (Current as App)?._trayIcon?.Dispose(); }
