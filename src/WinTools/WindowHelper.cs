@@ -16,6 +16,9 @@ namespace WinTools;
 /// <summary>窗口通用辅助：标题栏、尺寸适配与 Mica 材质。</summary>
 public static class WindowHelper
 {
+    /// <summary>任务栏弹出窗口（暂存、音频设备）下沿到任务栏上沿的间距，统一取 Win11 弹出面板的 12 DIP。</summary>
+    internal const int TaskbarPopupGapDip = 12;
+
     private const int DwmwaBorderColor = 34;
     private const int DwmwaWindowCornerPreference = 33;
     private const int DwmwcpRound = 2;

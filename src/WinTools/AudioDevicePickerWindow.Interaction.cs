@@ -9,13 +9,15 @@ public sealed partial class AudioDevicePickerWindow
     private IntPtr _mouseHook;
     private MouseHook? _mouseCallback;
     internal Func<int, int, bool>? IsToggleButtonAt { get; set; }
-    internal bool IsOpen => !_closed && IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(this));
+    /// <summary>正在播放收起动画时视为已关闭，这样再点一次任务栏按钮会重新打开而不是被当成“关闭”。</summary>
+    internal bool IsOpen => !_closed && !(_animatorInstance?.IsHiding ?? false) && IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(this));
 
     internal void HidePicker()
     {
         StopOutsideClicks();
         Output.IsDropDownOpen = Input.IsDropDownOpen = false;
-        AppWindow.Hide();
+        if (!IsOpen) return;
+        PlayDismiss();
     }
 
     private void StartOutsideClicks()

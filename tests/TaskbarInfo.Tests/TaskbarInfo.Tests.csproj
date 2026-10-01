@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/WinTools/Services/CodexProcessNetwork.cs" Link="CodexProcessNetwork.cs"/>
     <Compile Include="../../src/WinTools/Services/CodexQuotaReader.cs" Link="CodexQuotaReader.cs"/>
+    <Compile Include="../../src/WinTools/Services/ClaudeOAuthProtocol.cs" Link="ClaudeOAuthProtocol.cs"/>
   </ItemGroup>
 </Project>

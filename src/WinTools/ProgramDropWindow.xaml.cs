@@ -424,10 +424,37 @@ public sealed partial class ProgramDropWindow : Window, IUiStyleShell
         catch { /* ignore */ }
     }
 
+    /// <summary>
+    /// 将此窗口叠放在暂存窗口正上方（同宽同左边），空间不足时贴住工作区顶部。
+    /// 用于暂存窗口贴靠任务栏快捷图标的场景。
+    /// </summary>
+    /// <param name="stashPosition">暂存窗口位置（物理像素）。</param>
+    /// <param name="stashSize">暂存窗口尺寸（物理像素）。</param>
+    /// <param name="scale">DPI 缩放比例。</param>
+    public void PositionAboveWindow(PointInt32 stashPosition, SizeInt32 stashSize, double scale)
+    {
+        try
+        {
+            if (scale < 0.5) scale = 1.0;
+            _lastScale = scale;
+
+            var visibleCount = GetVisibleProgramCount();
+            if (visibleCount <= 0) visibleCount = 1;
+            var heightDip = Math.Max(88, Math.Min(visibleCount * 52 + 60, 420));
+            var heightPx = (int)(heightDip * scale);
+            AppWindow.Resize(new SizeInt32(stashSize.Width, heightPx));
+
+            var work = DisplayArea.GetFromPoint(stashPosition, DisplayAreaFallback.Nearest).WorkArea;
+            var y = Math.Max(work.Y, stashPosition.Y - heightPx - (int)(8 * scale));
+            AppWindow.Move(new PointInt32(stashPosition.X, y));
+        }
+        catch { /* ignore */ }
+    }
+
     /// <summary>读取配置中的偏移与间距，值无效时回退默认。</summary>
     private static (int GapX, int GapY, int WindowGap) GetOffsets()
     {
-        var cfg = ConfigService.Load();
+        var cfg = Services.SettingsService.Instance.Current; // 拖拽热路径上不读盘
         var gapX = cfg.ProgramOffsetX > 0 ? cfg.ProgramOffsetX : 80;
         var gapY = cfg.ProgramOffsetY > 0 ? cfg.ProgramOffsetY : 40;
         var windowGap = cfg.WindowGap >= 0 ? cfg.WindowGap : 0;

@@ -230,6 +230,16 @@ public sealed partial class MainWindow
 
     }
 
+    internal void DesktopCardAlignment_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isLoadingDragStashSettings) return;
+        var v = ((ComboBox)sender).SelectedIndex == 0 ? "left" : "right";
+        if (_config.DesktopCardAlignment == v) return;
+        _config.DesktopCardAlignment = v;
+        ConfigService.Update(c => c.DesktopCardAlignment = v);
+        _desktopCardManager?.ApplyAlignment();
+    }
+
     /// <summary>刷新「桌面 N 项」提示。</summary>
     /// <remarks>
     /// 新机制下文件不会被搬走，所以这里显示的是「桌面上有多少项由卡片接管显示」，
@@ -428,6 +438,8 @@ public sealed partial class MainWindow
         SetNumberBoxValue(DesktopCardMaxColumnsBox, _config.DesktopCardMaxColumns);
 
         SetNumberBoxValue(DesktopCardMarginBox, _config.DesktopCardMargin);
+
+        if (DesktopCardAlignmentBox != null) DesktopCardAlignmentBox.SelectedIndex = _config.DesktopCardAlignment == "left" ? 0 : 1;
 
         _isLoadingDragStashSettings = false;
 

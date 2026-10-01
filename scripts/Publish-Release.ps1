@@ -1,14 +1,16 @@
 param(
     [ValidateSet('win-x64', 'win-x86', 'win-arm64')]
     [string]$Runtime = 'win-x64',
-    [string]$WindowsSdkVersion = ''
+    [string]$WindowsSdkVersion = '',
+    [string]$OutputRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $projectRoot 'src\WinTools\WinTools.csproj'
 $explorerProject = Join-Path $projectRoot 'src\WinToolsExplorerCommand\WinToolsExplorerCommand.vcxproj'
-$publishRoot = Join-Path $projectRoot 'artifacts\release'
+$publishRoot = if ($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { Join-Path $projectRoot 'artifacts\release' }
+New-Item -ItemType Directory -Path $publishRoot -Force | Out-Null
 $publishDir = Join-Path $publishRoot $Runtime
 $stagingDir = Join-Path $publishRoot ".$Runtime-staging"
 

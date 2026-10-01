@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -80,12 +80,11 @@ public sealed class SettingsService
     {
         var defaults = ConfigService.GetDefault();
         Current.EnableTaskbarInfo = defaults.EnableTaskbarInfo;
-        Current.TaskbarInfoPlacement = defaults.TaskbarInfoPlacement;
-        Current.TaskbarInfoBackground = defaults.TaskbarInfoBackground;
+        Current.TaskbarInfoAlignment = defaults.TaskbarInfoAlignment;
         Current.TaskbarInfoActions = defaults.TaskbarInfoActions;
-        Current.TaskbarInfoMode = defaults.TaskbarInfoMode;
-        Current.TaskbarInfoText = defaults.TaskbarInfoText;
-        Current.TaskbarInfoOffset = defaults.TaskbarInfoOffset;
+        Current.TaskbarShowLibrary = defaults.TaskbarShowLibrary;
+        Current.TaskbarShowVoice = defaults.TaskbarShowVoice;
+        Current.TaskbarShowAudio = defaults.TaskbarShowAudio;
         Current.Entries = defaults.Entries;
         Current.Hotkeys = defaults.Hotkeys;
         Current.EnableDragStash = defaults.EnableDragStash;
@@ -101,8 +100,7 @@ public sealed class SettingsService
         Current.AutoStart = defaults.AutoStart;
         Current.AppTheme = defaults.AppTheme;
         Current.AppUiStyle = defaults.AppUiStyle;
-        Current.StashOffsetX = defaults.StashOffsetX;
-        Current.StashOffsetY = defaults.StashOffsetY;
+        Current.EnableAutoUpdateCheck = defaults.EnableAutoUpdateCheck;
         Current.ProgramOffsetX = defaults.ProgramOffsetX;
         Current.ProgramOffsetY = defaults.ProgramOffsetY;
         Current.WindowGap = defaults.WindowGap;
@@ -118,6 +116,7 @@ public sealed class SettingsService
         Current.DesktopCardGap = defaults.DesktopCardGap;
         Current.DesktopCardMargin = defaults.DesktopCardMargin;
         Current.DesktopCardMaxColumns = defaults.DesktopCardMaxColumns;
+        Current.DesktopCardAlignment = defaults.DesktopCardAlignment;
         Current.PerAppImeRules = defaults.PerAppImeRules;
         Current.ImeCategoryDefaultsInitialized = defaults.ImeCategoryDefaultsInitialized;
     }

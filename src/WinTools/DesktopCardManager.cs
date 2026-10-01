@@ -35,6 +35,8 @@ public sealed class DesktopCardManager : IDisposable
     private readonly DispatcherQueueTimer _layoutTimer;
     private FileSystemWatcher? _desktopWatcher;
     private bool _raisedByHotkey;
+    /// <summary>这次是靠左时当分区库抬起来的：收起也要和分区库一样直接放回，不播动画。</summary>
+    private bool _raisedAsLibrary;
     private bool _hotkeyAnimating;
     private IntPtr _raisedFromForeground;
     private bool _animateAllCardsOnNextSync;
@@ -391,15 +393,17 @@ public sealed class DesktopCardManager : IDisposable
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             if (string.IsNullOrWhiteSpace(desktop) || !Directory.Exists(desktop)) return;
 
+            // 只听增删和改名：卡片只按名字和属性分组，已加载的图标也按路径复用，
+            // 文件内容 / 大小变了对卡片没有任何影响。以前带着 Size，桌面上的文件一写盘
+            // （下载、导出、Office 自动保存）就每块数据都往 UI 线程投一次事件。
             _desktopWatcher = new FileSystemWatcher(desktop)
             {
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName,
                 EnableRaisingEvents = true,
             };
             FileSystemEventHandler changed = (_, _) => QueueDesktopSync();
             RenamedEventHandler renamed = (_, _) => QueueDesktopSync();
             _desktopWatcher.Created += changed;
-            _desktopWatcher.Changed += changed;
             _desktopWatcher.Deleted += changed;
             _desktopWatcher.Renamed += renamed;
         }
@@ -574,8 +578,8 @@ public sealed class DesktopCardManager : IDisposable
     }
 
     /// <summary>
-    /// 按设置里的水平 / 垂直间距把卡片排成网格：从右上角起自上而下，
-    /// 一列排不下就往左新开一列。卡片本身不可拖动，位置完全由这里决定。
+    /// 按设置里的水平 / 垂直间距把卡片排成网格：从右上角（或设置为靠左时的左上角）起自上而下，
+    /// 一列排不下就往屏幕内侧新开一列。卡片本身不可拖动，位置完全由这里决定。
     /// 多显示器时按每张卡所在显示器分别排版，避免跨屏把卡片算到错误工作区。
     /// </summary>
     public void Layout(List<DesktopZone>? zones = null)
@@ -614,23 +618,24 @@ public sealed class DesktopCardManager : IDisposable
         // 写入。X/Y 不再信任 cache 里的旧值——margin / maxCols 等
         // 设置用户随时会改，按当前 workDip 和 margin 重新计算坐标。
 
-        // Desktop windows always stay on the right; the separate library stays on the left.
+        // 桌面卡片按设置靠左或靠右；独立的分区库始终在左侧。
+        var fromLeft = _sourceManager != null || config.DesktopCardAlignment == "left";
         foreach (var group in zonesToLayout)
-            LayoutMonitorGroup(group, gap, margin, plan);
+            LayoutMonitorGroup(group, gap, margin, fromLeft, plan);
 
         return plan;
     }
 
     private void LayoutMonitorGroup(
         IGrouping<string, DesktopZone> group,
-        int gap, int margin,
+        int gap, int margin, bool fromLeft,
         List<(DesktopCardWindow Card, int X, int Y)> plan)
     {
         if (!_cards.TryGetValue(group.First().Name, out var anchor)) return;
         var workDip = anchor.GetWorkAreaDip();
         var cards = group.Where(zone => _cards.ContainsKey(zone.Name)).Select(zone => _cards[zone.Name]).ToList();
         var positions = DesktopCardLayout.Calculate(workDip.X, workDip.Y, workDip.Width, workDip.Height,
-            margin, gap, cards.Select(card => (card.DipWidth, card.DipHeight)).ToList(), _sourceManager != null);
+            margin, gap, cards.Select(card => (card.DipWidth, card.DipHeight)).ToList(), fromLeft);
         for (var index = 0; index < cards.Count; index++)
             plan.Add((cards[index], positions[index].X, positions[index].Y));
     }
@@ -717,9 +722,10 @@ public sealed class DesktopCardManager : IDisposable
     /// </summary>
     public void ShowAll(bool fromLeft = false)
     {
-        if (fromLeft) { _ = ShowLibraryAsync(); return; }
+        if (fromLeft && !LibraryReusesDesktopCards) { _ = ShowLibraryAsync(); return; }
         if (_hotkeyAnimating) return;
         if (_enabled && _raisedByHotkey) return;
+        if (fromLeft) { RaiseDesktopCardsAsLibrary(); return; }
         RaiseAll();
     }
 
@@ -737,8 +743,57 @@ public sealed class DesktopCardManager : IDisposable
             foreach (var card in library._cards.Values) card.ParkLibrary();
             return;
         }
+        if (LibraryReusesDesktopCards) { ToggleDesktopCardsAsLibrary(); return; }
         if (library?._hotkeyAnimating == true) return;
         _ = ShowLibraryAsync();
+    }
+
+    /// <summary>
+    /// 桌面卡片靠左时，分区库那组窗口的位置和桌面卡片完全重合，另建一组纯属重复。
+    /// 2026-09-24 交替 A/B 实测（9 个分区、71 项）：省下 9 个 WinUI 窗口、约 22MB 私有内存、
+    /// 约 480 个句柄，启动 CPU 少 1.4 秒。这时分区库直接把桌面卡片抬到最前面，
+    /// 靠右时才另备一组左侧窗口（换来点击即开，约 0.1 秒，冷建要 2 秒多）。
+    /// </summary>
+    private bool LibraryReusesDesktopCards => _sourceManager == null && _enabled
+        && SettingsService.Instance.Current.DesktopCardAlignment == "left";
+
+    /// <summary>靠左时的分区库入口：和原来的左侧浮层一样直接显示、直接收起，不播放过渡动画。</summary>
+    private void ToggleDesktopCardsAsLibrary()
+    {
+        if (_hotkeyAnimating) return;
+        if (_raisedByHotkey) LowerDesktopCardsNow();
+        else RaiseDesktopCardsAsLibrary();
+    }
+
+    private void RaiseDesktopCardsAsLibrary()
+    {
+        foreach (var card in _cards.Values) card.RaiseImmediately();
+        _raisedAsLibrary = true;
+        MarkRaisedFromCurrentForeground();
+    }
+
+    private void LowerDesktopCardsNow()
+    {
+        ClearAllSelections();
+        foreach (var card in _cards.Values) card.LowerFromFront();
+        ClearRaisedState();
+    }
+
+    /// <summary>设置页改了靠左 / 靠右：重排卡片，并按新位置决定分区库要不要另备一组窗口。</summary>
+    public void ApplyAlignment()
+    {
+        Layout();
+        if (_disposed || _sourceManager != null || !_enabled) return;
+        if (_libraryPreparation.IsCompleted) _libraryPreparation = PrepareLibraryAsync();
+    }
+
+    /// <summary>释放预备好但没在显示的分区库窗口。</summary>
+    private void ReleaseIdleLibrary()
+    {
+        var library = _libraryManager;
+        if (library == null || library._enabled || library._hotkeyAnimating) return;
+        _libraryManager = null;
+        library.Dispose();
     }
 
     private async Task ShowLibraryAsync()
@@ -799,8 +854,10 @@ public sealed class DesktopCardManager : IDisposable
         {
             await _revealTask;
             if (_disposed || !_enabled) return;
+            if (LibraryReusesDesktopCards) { ReleaseIdleLibrary(); return; }
             var library = _libraryManager ??= new DesktopCardManager(_registerWindow, this);
-            while (!_disposed && _enabled && !library._enabled && library._preparedVersion != _contentVersion)
+            while (!_disposed && _enabled && !LibraryReusesDesktopCards && !library._disposed
+                && !library._enabled && library._preparedVersion != _contentVersion)
             {
                 var version = _contentVersion;
                 var snapshot = _cards.ToDictionary(pair => pair.Key, pair => pair.Value.SnapshotPaths(), StringComparer.Ordinal);
@@ -809,15 +866,19 @@ public sealed class DesktopCardManager : IDisposable
                 {
                     for (var index = 0; index < Math.Max(1, snapshot.Count); index++)
                     {
-                        if (_disposed || !_enabled || version != _contentVersion) break;
+                        if (_disposed || !_enabled || LibraryReusesDesktopCards || library._disposed
+                            || version != _contentVersion) break;
                         library.SyncCards(snapshot, newWindowBudget: 1);
                         await library._revealTask;
                         await Task.Delay(25);
                     }
-                    if (!_disposed && _enabled && version == _contentVersion) library._preparedVersion = version;
+                    if (!_disposed && _enabled && !LibraryReusesDesktopCards && !library._disposed
+                        && version == _contentVersion) library._preparedVersion = version;
                 }
                 finally { library._preparingHidden = false; }
             }
+            // 准备途中改成了靠左：已经建出来的那几个隐藏窗口也用不上了。
+            if (LibraryReusesDesktopCards) ReleaseIdleLibrary();
         }
         catch (Exception ex) { ErrorReporter.Log("DesktopLibrary.Prepare", ex); }
     }
@@ -889,6 +950,8 @@ public sealed class DesktopCardManager : IDisposable
 
         if (!clickedAway && (current == IntPtr.Zero || current == _raisedFromForeground)) return;
 
+        if (_raisedAsLibrary) { LowerDesktopCardsNow(); return; }
+
         _hotkeyAnimating = true;
         try
         {
@@ -949,7 +1012,8 @@ public sealed class DesktopCardManager : IDisposable
             if (!pressed) return false;
             if (!GetCursorPos(out var point)) return true;
             // The library button owns this click; let its release toggle the group once.
-            if (_sourceManager != null && (Application.Current as App)?.TaskbarInfo?.IsLibraryButtonAt(point.X, point.Y) == true)
+            if ((_sourceManager != null || LibraryReusesDesktopCards)
+                && (Application.Current as App)?.TaskbarInfo?.IsLibraryButtonAt(point.X, point.Y) == true)
                 return false;
 
             foreach (var card in _cards.Values)
@@ -1012,6 +1076,7 @@ public sealed class DesktopCardManager : IDisposable
     private void ClearRaisedState()
     {
         _raisedByHotkey = false;
+        _raisedAsLibrary = false;
         _raisedFromForeground = IntPtr.Zero;
         _foregroundWatchTimer.Stop();
     }

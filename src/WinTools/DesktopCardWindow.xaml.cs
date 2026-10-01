@@ -234,6 +234,10 @@ public sealed class CardItem : INotifyPropertyChanged
 
     private const int IconCacheCapacity = 512;
 
+    /// <summary>右键菜单「刷新」：丢掉缓存，下次 <see cref="LoadIconAsync"/> 重新向 Shell 取图标。</summary>
+    /// <remarks>缓存按最后写入时间失效，但应用升级后常常只换了 exe 的图标、快捷方式本身没变。</remarks>
+    internal static void ForgetCachedIcon(string path) => IconCache.TryRemove(path, out _);
+
     private readonly record struct CachedIcon(DateTime Stamp, IconLoadResult Result);
 
     private static DateTime IconStamp(string path)
@@ -317,7 +321,7 @@ public sealed class CardItem : INotifyPropertyChanged
     }
 
     /// <summary>按快捷方式记录的图标索引直接提取资源，支持 exe/dll/ico 以及无扩展名的 Installer 图标。</summary>
-    private static byte[]? ReadExtractedIconPng(string path, int index)
+    internal static byte[]? ReadExtractedIconPng(string path, int index)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
         var large = new IntPtr[1];
@@ -543,6 +547,10 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         // 标成已处理后我们收不到——卡片内重排完全依赖在这里接住 Drop（见 ReorderWithinCard）。
         ItemsGrid.AddHandler(UIElement.DragOverEvent, new DragEventHandler(ItemsGrid_DragOver), true);
         ItemsGrid.AddHandler(UIElement.DropEvent, new DragEventHandler(ItemsGrid_Drop), true);
+        // 右键菜单和快捷键都挂在 GridView 上：键盘（菜单键 / Shift+F10）发起的请求从获得焦点的
+        // GridViewItem 往上冒泡，挂在模板里的元素上收不到。见 DesktopCardWindow.ItemMenu.cs。
+        ItemsGrid.ContextRequested += ItemsGrid_ContextRequested;
+        ItemsGrid.PreviewKeyDown += ItemsGrid_PreviewKeyDown;
         ConfigureWindow();
         // 每张桌面分区都是独立 HWND。启动时批量创建窗口，如果未完成首帧就 Show，
         // DWM 会先画出多个黑色/纯色矩形。先 Cloak，布局、Mica 和内容仍可正常合成，
@@ -1396,7 +1404,26 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             e.Data.Properties["SourceCard"] = _zoneName;
             // Properties 只是元数据；至少提供一个真实数据格式，系统才会启动 OLE 拖放。
             e.Data.SetData("WinTools.DesktopCardItem", item.Path);
-            e.Data.RequestedOperation = DataPackageOperation.Move;
+            // 同时放行「复制」：暂存窗口、资源管理器等目标只接受复制；只声明 Move 的话它们一律显示禁止光标。
+            // 卡片之间的换区 / 排序仍按 Move 处理（目标窗口 DragOver 里返回 Move）。
+            e.Data.RequestedOperation = DataPackageOperation.Move | DataPackageOperation.Copy;
+            if (item.IsShellItem) return; // 「此电脑」这类系统图标没有文件可交给别的程序
+
+            // 再带上真实的文件 / 文件夹项，拖到暂存窗口或其他程序里才能落下；目标真正要数据时才异步取。
+            var path = item.Path;
+            e.Data.SetDataProvider(StandardDataFormats.StorageItems, async request =>
+            {
+                var deferral = request.GetDeferral();
+                try
+                {
+                    IStorageItem? storageItem = null;
+                    if (File.Exists(path)) storageItem = await StorageFile.GetFileFromPathAsync(path);
+                    else if (Directory.Exists(path)) storageItem = await StorageFolder.GetFolderFromPathAsync(path);
+                    if (storageItem != null) request.SetData(new[] { storageItem });
+                }
+                catch (Exception ex) { ErrorReporter.Log("DesktopCard.DragStorageItem", ex); }
+                finally { deferral.Complete(); }
+            });
         }
     }
 
@@ -1429,7 +1456,10 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
         e.Handled = true;
         e.AcceptedOperation = DataPackageOperation.None;
-        var result = DesktopCollectService.CanAssignToZone(item.Path, _zoneName);
+        // 系统图标（此电脑等）没有文件，按显示名归属即可，和右键菜单「移动到分区」一致。
+        var result = item.IsShellItem
+            ? DesktopCollectService.MoveZoneResult.Success
+            : DesktopCollectService.CanAssignToZone(item.Path, _zoneName);
         switch (result)
         {
             case DesktopCollectService.MoveZoneResult.Success:
@@ -1494,21 +1524,13 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             ContentChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>右键菜单「打开」：走默认 Shell 启动（.exe 直接运行、.doc 走关联软件等）。</summary>
-    private void ItemMenu_Open_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
-        OpenItem(item);
-    }
-
-    /// <summary>右键菜单「重命名」：在图标上弹出输入框，回车确认、Esc 取消。</summary>
+    /// <summary>「重命名」（右键菜单 / F2）：在图标上弹出输入框，回车确认、Esc 取消。</summary>
     /// <remarks>
     /// 不做资源管理器那种"就地编辑文件名"：卡片格子只有 76dip 宽，塞一个输入框既看不全名字，
     /// 按下去还会先被 GridView 当成拖动起手。弹出层能给够宽度，也有地方显示报错原因。
     /// </remarks>
-    private void ItemMenu_Rename_Click(object sender, RoutedEventArgs e)
+    private void BeginRename(CardItem item)
     {
-        if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
         if (item.IsShellItem)
         {
             ShowTransientToast("系统图标不能重命名。");
@@ -1622,10 +1644,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         }
     }
 
-    /// <summary>右键菜单「删除到回收站」：通过 SHFileOperation + FOF_ALLOWUNDO 移到回收站。</summary>
-    private void ItemMenu_Delete_Click(object sender, RoutedEventArgs e)
+    /// <summary>「删除」（右键菜单 / Delete 键）：通过 SHFileOperation + FOF_ALLOWUNDO 移到回收站。</summary>
+    private void DeleteItem(CardItem item)
     {
-        if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
         // 系统虚拟图标（此电脑 / 回收站…）没有文件可删，SHFileOperation 对它无意义。
         // 想让它从桌面消失，得去「个性化 → 主题 → 桌面图标设置」里关。
         if (item.IsShellItem)
@@ -1652,32 +1673,38 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         }
     }
 
-    /// <summary>显示该项目由 Windows Shell 和已安装扩展共同提供的完整原生右键菜单。</summary>
-    private void ItemMenu_SystemMenu_Click(object sender, RoutedEventArgs e)
+    /// <summary>「显示更多选项」（右键菜单 / Shift+F10）：Windows Shell 和已安装扩展提供的完整原生菜单。</summary>
+    /// <param name="screenPoint">键盘呼出时弹在图标旁边；鼠标呼出时为空，弹在光标处。</param>
+    private void ShowSystemMenu(CardItem item, (int X, int Y)? screenPoint = null)
     {
-        if (sender is not MenuFlyoutItem { Tag: CardItem item }) return;
-        // MenuFlyout 的 Click 回调执行时原菜单仍在关闭过程中；此处同步进入 TrackPopupMenuEx
+        // 右键菜单的点击回调执行时原菜单仍在关闭过程中；此处同步进入 TrackPopupMenuEx
         // 会形成两个嵌套菜单消息循环，表现为窗口卡死。排到下一轮，让 WinUI 先完整收起菜单。
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            if (!ShellContextMenu.Show(item.Path, _hwnd))
+            if (!ShellContextMenu.Show(item.Path, _hwnd, screenPoint))
                 ShowTransientToast("无法打开系统右键菜单。");
         });
     }
 
+    private Microsoft.UI.Xaml.Controls.InfoBar? _toast;
+
     /// <summary>短暂的轻量提示。卡片是桌面浮层，没必要弹模态 ContentDialog。</summary>
-    private void ShowTransientToast(string message)
+    private void ShowTransientToast(string message,
+        Microsoft.UI.Xaml.Controls.InfoBarSeverity severity = Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning)
     {
         try
         {
+            // 新提示顶掉旧的：「正在压缩」后紧跟「已压缩」这类连续提示不能叠在同一个位置。
+            if (_toast != null && ShellRoot.Children.Contains(_toast)) ShellRoot.Children.Remove(_toast);
             var flyout = new Microsoft.UI.Xaml.Controls.InfoBar
             {
                 Title = "桌面卡片",
                 Message = message,
                 IsOpen = true,
                 IsClosable = true,
-                Severity = Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning,
+                Severity = severity,
             };
+            _toast = flyout;
             // 简单做法：把它放在 ShellRoot 里覆盖卡片底部，3 秒后自动关闭。
             flyout.Closed += (_, _) => { if (ShellRoot.Children.Contains(flyout)) ShellRoot.Children.Remove(flyout); };
             ShellRoot.Children.Add(flyout);
@@ -1759,6 +1786,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     public void Cleanup()
     {
         try { _fadeTimer?.Stop(); _fadeTimer = null; } catch { /* ignore */ }
+        ReleaseShareHandler();
         try
         {
             if (_micaController != null)

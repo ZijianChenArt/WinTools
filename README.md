@@ -139,10 +139,34 @@ powershell -NoProfile -Command "Set-ItemProperty 'HKCU:\Software\Microsoft\Windo
     </Grid>
 
     <!-- 主体二选一 -->
-    <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">…</ScrollViewer>
+    <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+        <StackPanel>
+            <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+            <StackPanel Style="{StaticResource PageCardStackStyle}">…卡片…</StackPanel>
+            <TextBlock Text="使用方法" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+            <StackPanel Style="{StaticResource PageCardStackStyle}">…卡片…</StackPanel>
+        </StackPanel>
+    </ScrollViewer>
     <Grid         Grid.Row="1" Style="{StaticResource PageBodyGridStyle}">…</Grid>
 </Grid>
 ```
+
+**所有页面结构一致**（2026-09-25 统一）：表头只用 `PageHeaderStyle`；主体第一块永远是一个
+40 高的小节标题行，卡片组上方用 `PageSectionHeaderFirstTextStyle` / `PageSectionHeaderTextStyle`，
+列表上方用 `PageToolbarFirstStyle` / `PageToolbarStyle`。两者高度都是 40、文字落在同一条线上，
+所以切页时第一块内容的位置不会跳。
+
+小节命名固定：**常规**（功能自身的设置）→ 具体分组（如「额度账户」「分区」「规则」）→
+**使用方法**（固定放最后，平铺成卡片，不用 `SettingsExpander` 折叠）。按键提示用
+`PageKeyCapStyle` + `PageKeyCapTextStyle` 画成键帽；鼠标操作（"单击小球"）用 `PageCaptionTextStyle`。
+
+列表工具条三页同一写法：`[新建] [编辑] [删除] … [⋯ 更多]`。主要命令是 `PageToolbarButtonStyle`
+按钮（内容固定为 `FontIcon PageToolbarIconStyle` + `TextBlock PageToolbarLabelTextStyle`，
+必须写 ToolTip），次要命令（导入 / 导出 / 恢复默认 / 刷新）一律放进 `PageToolbarIconButtonStyle`
+的「更多」菜单。**不再使用 `CommandBar`**（其 MoreButton 是直角顶对齐模板，还会接管命令项样式）。
+
+卡片右侧的输入控件用统一宽度样式：快捷键框 `PageHotkeyBoxStyle`（200，右侧跟「应用」按钮）、
+`PageSettingNumberBoxStyle` / `PageSettingComboBoxStyle`（160）。
 
 - **设置型页面**（三指拖拽 / 悬浮暂存 / 点击桌面 / 设置）：主体是
   `PageBodyScrollStyle` + `PageCardStackStyle` 卡片堆。
@@ -151,6 +175,10 @@ powershell -NoProfile -Command "Set-ItemProperty 'HKCU:\Software\Microsoft\Windo
   （列表 + 右侧编辑面板），**列表高度由行撑满，不写 MinHeight / MaxHeight**。
 - 每个列表都要有空状态提示：列表容器里叠一个 `PageEmptyHintTextStyle` 的 TextBlock，
   在 `UpdateXxxCount()` 里跟着条数切换可见性。
+- **输入法切换页是例外**：不用列表，改成图标看板。上方是“未设置”的运行中应用（只显示图标，
+  名称在悬停提示里），下方左右两栏 = 中文 / 英文。图标可拖到目标栏（拖回上方 = 取消设置），
+  也可点一下在菜单里选。图标由 `ImeAppTile` / `AppIconLoader` 按进程名取 exe 的 Shell 图标；
+  规则里多存了一个 `exePath`，应用没运行时也能显示图标，取不到就退回首字母占位。
 
 ### 5.2 间距（4px 栅格）
 
@@ -159,8 +187,8 @@ powershell -NoProfile -Command "Set-ItemProperty 'HKCU:\Software\Microsoft\Windo
 | 页面四周留白 | `40,24,40,32`（窄窗口 `20,16,20,20`） | `PageRootStyle` / `FeaturePagesHost.ApplyDensity` |
 | 内容列最大宽度 | `1000`，窗口更宽时**居中** | `FeaturePagesHost` 的列定义 + `PageColumns_SizeChanged` |
 | 标题 → 副标题 | 6 | `PageHeaderTextStackStyle` |
-| 表头 → 主体（主体**第一块**就是小节标题 + 列表） | 40 | `PageHeaderStyle` |
-| 表头 → 主体（主体第一块是卡片） | 64 | `PageHeaderLooseStyle` |
+| 表头 → 主体（所有页面） | 40 | `PageHeaderStyle` |
+| 小节标题行高度（卡片组标题 / 列表工具条） | 40 | `PageSectionHeaderTextStyle` 的 `Padding 0,8` / `PageToolbarStyle` 的 `MinHeight` |
 | 二级小节之间 | 32 | `PageToolbarStyle` / `PageSectionHeaderTextStyle` |
 | 小节标题 → 内容 | 12 | 同上 |
 | 卡片之间 | 4 | `PageCardStackStyle` |
@@ -169,21 +197,22 @@ powershell -NoProfile -Command "Set-ItemProperty 'HKCU:\Software\Microsoft\Windo
 | 一行里的控件之间 | 8 | `PageInlineControlsStyle` |
 | 列表行内边距 | `8,10`（行高 48） | `PageListRowStyle` |
 
-层级靠间距体现：**64 / 40（表头 → 主体） > 32（二级小节） > 16（组内） > 4（同类卡片）**。
-主体里的第一个工具条用 `PageToolbarFirstStyle`，避免和表头的间距叠加。
+层级靠间距体现：**40（表头 → 主体） > 32（二级小节） > 16（组内） > 4（同类卡片）**。
+主体里的第一个小节标题 / 工具条用 `…First…` 样式，避免和表头的间距叠加。
 
 `DataTemplate` 内部同样不许写死 `Padding` / `FontSize`：列表行用 `PageListRowStyle` +
 `PageListTitleTextStyle`，行首徽标用 `PageRowBadgeStyle` + `PageRowBadgeTextStyle`，
 行尾强调按钮用 `PageRowChipButtonStyle`，分区磁贴用 `PageTileIconStyle` /
 `PageTileTitleTextStyle` / `PageTileCaptionTextStyle`。
 
-看的是**主体第一块内容**，不是整页有没有列表：桌面分区页有分区列表，但列表上面先放了
-「呼出快捷键」「卡片布局」两张卡片，所以它和纯卡片页一样用 64。
+原来卡片页用 64、列表页用 40（`PageHeaderLooseStyle`），切页时第一块内容上下跳 24px；
+现在每页主体都以小节标题行开头，由它接住表头，统一 40，`PageHeaderLooseStyle` 已删除。
 
 表头与小节标题的对齐方式不同，别改混：
 - 页面表头（标题 + 副标题）**顶对齐**（`PageHeaderTextStackStyle` 的 `VerticalAlignment=Top`），
   和下面第一个模块的上边缘成一条线；
-- 小节标题（"分区""关联""规则"）在工具条里**上下居中**，因为它要和右侧命令栏对齐。
+- 小节标题（"分区""关联""规则"）在工具条里**上下居中**，因为它要和右侧命令按钮对齐；
+  卡片组上方的独立小节标题用 `Padding 0,8` 撑到同样 40 高，效果相同。
 
 ### 5.3 页面宽度与左边距（踩过的坑，别改回去）
 
@@ -202,7 +231,7 @@ powershell -NoProfile -Command "Set-ItemProperty 'HKCU:\Software\Microsoft\Windo
 ### 5.3.1 窄窗口（紧凑模式）
 
 `FeaturePagesHost.PageColumns_SizeChanged` 在宽度 < 760 时切换紧凑排版：页面留白收到 20，
-命令栏切成 `DefaultLabelPosition="Collapsed"`（只留图标）。标题栏只保留侧栏开关、应用图标
+列表工具条按钮的文字收起（只留图标，靠 ToolTip 说明）。标题栏只保留侧栏开关、应用图标
 与“WinTools”文字，不再放置搜索框，因此窄窗口无需额外的标题栏搜索降级逻辑。
 
 侧栏由 NavigationView 自己在 640 / 840 两个阈值收放，收起态有两个坑：
@@ -300,9 +329,8 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 用 8px；Tooltip、Flyout 等浮层用 12px。对应资源在 `App.xaml` 全局覆盖，禁止各页面复制模板
 或留下 WinUI 默认的近方形 3～4px 圆角。仅设置 `ControlCornerRadius` 不足以覆盖
 `AppBarButton`，还要给 `Button`、`AppBarButton`、`ToggleButton`、`DropDownButton` 与
-`RepeatButton` 设置隐式 `CornerRadius` 样式。页面 `CommandBar` 里的命令项还必须显式使用
-`PageAppBarButtonStyle`：`CommandBar` 会接管命令项的默认样式，只靠全局隐式样式会让“新建”等
-按钮在悬浮时退回直角底框。
+`RepeatButton` 设置隐式 `CornerRadius` 样式。页面里不再使用 `CommandBar`（它会接管命令项的默认样式，
+让“新建”等按钮在悬浮时退回直角底框），列表工具条统一用 `PageToolbarButtonStyle`。
 
 `NavigationViewContentGridCornerRadius` 必须保持 `0`：圆角只由 `ContentFrame` 裁一次，
 裁两次会在拐角留下缝。侧栏左下角那个圆角是窗口自身的 DWM 圆角，不是控件画的。
@@ -319,7 +347,7 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 - 每加一个控件都要能回答"没有它用户会怎样"。纯说明性的卡片、只显示不操作的状态文字，
   合并进页面副标题或工具条的计数里，不要单独占一张卡片。
 - 数值设置只保留会改变布局结果的，并且**同一维度只给一个输入框**：卡片离屏幕边缘、卡片之间、
-  每行图标数、暂存窗口水平 / 垂直偏移。
+  每行图标数。
 
 ### 5.6 其它硬性约定
 
@@ -333,6 +361,8 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 ### 5.7 改完 UI 的检查清单
 
 - [ ] 页面用的是 `PageRootStyle` + `PageHeaderStyle`（表头 Auto，主体 `*`）
+- [ ] 主体第一块是小节标题行（`PageSectionHeaderFirstTextStyle` 或 `PageToolbarFirstStyle`），帮助内容在最后的「使用方法」小节
+- [ ] 列表工具条是 `PageToolbarButtonStyle` 按钮 + 「更多」菜单，没有 `CommandBar`
 - [ ] 页面里没有写死的 `Margin` / `Padding` / `CornerRadius` / `FontSize`，也没有 `MaxWidth`
 - [ ] 列表撑满主体高度，且有空状态提示
 - [ ] 圆角：内容区 12（仅左上）、卡片 10、内部小块 8
@@ -414,6 +444,10 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 **整个程序只有一个 `FileSystemWatcher`**，在 `DesktopCardManager` 里盯着桌面目录，
 650ms 防抖后 `SyncAsync()` → 重新枚举桌面 → 刷新所有卡片。
 
+它只听 `FileName | DirectoryName`（增删、改名），**不要加回 `Size` / `Changed`**：分组只看名字和
+属性，已加载的图标按路径复用，文件内容变了卡片不会有任何变化。以前带着 `Size`，桌面上的文件
+一写盘（下载、导出、Office 自动保存）就每块写入都往 UI 线程投一次事件，写完还要白同步一遍。
+
 2026-09-07 之前是两个：桌面目录一个，外加**每张卡片各自监视自己的托管目录**。
 后者随物理收纳机制一起删了——现在卡片的内容全部来自桌面这一个目录，再给 9 张卡片各挂一个
 监视同一个目录的 watcher 纯属浪费，而且旧结构里卡片会在目录事件后**立即**
@@ -440,9 +474,29 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   刷新和重启按上述分组及组内顺序显示，不改文件名或归属规则。
   当前顺序按分区名保存，分区改名后尚不迁移这份顺序；预设也暂不包含它。
 - **图标交互**：文件、文件夹与系统虚拟图标都必须双击打开，单击只用于选择或准备拖动。
-  卡片的简化右键菜单保留「打开 / 重命名 / 删除到回收站」，并提供「显示系统右键菜单」入口；后者通过
-  Shell `IContextMenu` 显示项目原生菜单，不能用跳转到资源管理器代替，否则打开方式、发送到、
-  压缩扩展、属性等 Shell 功能会丢失。系统虚拟图标没有文件实体，不显示自定义删除结果。
+- **右键菜单**（2026-09-24 重做，`DesktopCardWindow.ItemMenu.cs`）：结构和文案对齐 Windows 11 新式菜单，
+  外加一组卡片功能。
+  - `CommandBarFlyout`（`AlwaysExpanded`）：顶部图标行是剪切 / 复制 / 重命名 / 共享（仅文件）/ 删除；
+    列表按 Windows 的顺序排：打开、打开方式（普通文件）、以管理员身份运行（exe / bat / cmd / com / msc
+    及指向它们的快捷方式）、打开文件所在的位置（快捷方式）、固定到“开始”、清空回收站（仅回收站）、
+    压缩为 ZIP 文件、复制文件地址、属性、在终端中打开（文件夹，装了 Windows 终端时）。分隔线后是卡片功能：
+    移动到分区（与拖到另一张卡片等效，系统图标按显示名归属）、在桌面文件夹中显示、恢复默认排序、刷新
+    （重取本卡图标并同步）、分区设置。最后一项永远是「显示更多选项」，弹出 Shell `IContextMenu` 原生菜单，
+    不能用跳转到资源管理器代替，否则发送到、各种第三方扩展会丢失。
+  - **文案取自系统资源**（`Windows.UI.FileExplorer.dll.mui`、`shell32.dll.mui`、`windows.storage.dll.mui`、
+    `explorerframe.dll.mui`），例如「复制文件地址」「固定到“开始”」「显示更多选项」「剪切(Ctrl+X)」，不要自己改说法。
+  - 快捷键与资源管理器一致：Enter 打开、F2、Delete、Ctrl+C / Ctrl+X、Ctrl+Shift+C、Alt+Enter；
+    菜单键出新式菜单，Shift+F10 直接出完整系统菜单（新式菜单里就标着它）。挂在 `ItemsGrid` 上，
+    键盘发起的请求从获得焦点的 `GridViewItem` 冒泡，挂在模板元素上收不到。
+  - **不要先枚举整套系统菜单再挑项**：第三方扩展太多，桌面 .lnk 实测冷启动 1.6 秒、之后每次约 0.95 秒。
+    只有「固定到“开始”」「共享」借用系统扩展，且只创建那一个处理器（`ShellContextMenu.QueryHandler`，
+    首次约 90ms、之后 1–15ms）；固定状态由处理器当场给出文字（已固定时是「从“开始”菜单取消固定」）。
+    其余动作直接调 Shell API（`Services/ShellItemActions.cs`）。剪切 / 复制用 WinRT 剪贴板放入文件
+    并标明移动 / 复制，资源管理器粘贴时照此处理。
+  - 做不到、留给「显示更多选项」的：固定到任务栏（系统只允许资源管理器自己调用）、
+    固定到快速访问 / 添加到收藏夹（取消固定的命令是动态提供的，拿不到可靠状态）。
+  - 菜单**每次右键现建**，关闭即释放。**不要放回 DataTemplate**：每个图标各带一份菜单，
+    71 个图标实测多占约 4MB。
 - **重命名**（2026-09-18）：弹出一个 240dip 宽的输入框（回车确认、Esc 取消），不做资源管理器式
   的就地编辑——格子只有 76dip 宽看不全名字，按下去还会先被 GridView 当成拖动起手。编辑的是
   **不含扩展名**的名字（与卡片显示一致），提交时拼回原扩展名，`.lnk` 不会被改丢。实际改名走
@@ -876,6 +930,25 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 - 卡片改走 `ConfigureChromelessWindow` + 跳过必然算错的首次排版：每张卡片省 ~35ms，
   端到端约 **-200~300ms**（冷启动run 间抖动 ±150ms，这个量级要多跑几次才看得出来）。
 
+### 内存与 CPU 基线（2026-09-24）
+
+Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 个分区、71 个桌面项目，卡片靠左）：
+
+| 版本 | 私有内存 | 句柄 | WinUI 窗口 | 启动 CPU |
+| --- | --- | --- | --- | --- |
+| 不创建卡片（对照） | 135 MB | ~1,700 | 3 | 2.8 s |
+| 当前：9 张卡片，分区库复用卡片，右键菜单共用 | 176 MB | ~2,420 | 12 | 5.0 s |
+| 当前改回每个图标各带一份右键菜单 | 180 MB | ~2,400 | 12 | 6.0 s |
+| 再加上另建 9 个分区库隐藏窗口（= 本次改动前） | 201 MB | ~2,880 | 21 | 7.2 s |
+
+- **托管堆只有约 9MB**（`dotnet-dump` 的 `eeheap -gc`），其余全是 WinUI / 合成的原生内存，
+  所以抠集合、缓存这类托管对象没有意义；**每多一个卡片窗口约 2.5MB、50 个句柄**，窗口数才是大头。
+- 卡片空闲时不耗 CPU（没有常驻定时器）。整个进程空闲约 0.6% 单核，动鼠标时会升到 2~3%，
+  来自「点击桌面」的 `WH_MOUSE_LL` 钩子和语音小球的 WinEvent 钩子，每个鼠标事件都要切到钩子线程。
+- 测内存看**私有提交（Private Bytes）**，不要看工作集：整机内存紧张时系统会把工作集换出，
+  任务管理器里只剩几 MB，看起来很省，其实提交量没变。
+- 图标提示框（每个图标一个 `ToolTip`）约 2MB，延迟创建会导致第一次悬停不弹提示，没做。
+
 ### 已经删掉的东西（别再加回来）
 
 - **物理收纳那一整套**：`CollectAll` / `RestoreAll` / `ReclassifyManagedItems` /
@@ -920,10 +993,7 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 
 功能图标由 `FeatureIcons.cs` 统一定义，沿用 [Segoe Fluent Icons](https://learn.microsoft.com/en-us/windows/apps/design/iconography/segoe-fluent-icons-font)，缺少该字体时回退 MDL2。侧栏、托盘菜单、搜索与暂存浮窗、语音小球和任务栏使用同一功能映射；桌面卡片用分区网格、暂存用图钉、关联用链接、语音用麦克风；音频设备选择独立为宽文字按钮，不混入功能图标。通用新增、删除、刷新等动作保留原有标准图标。原生任务栏缓存字体矢量轮廓，只在 DPI 改变时重建，并在服务释放时回收。
 
-左侧独立「任务栏信息」功能页：默认开启主屏幕底部任务栏左侧的 Codex 剩余额度；可切换为自定义文字、
-调整向右偏移或关闭。左侧仍是独立分层窗口，不是注入 Explorer 的系统组件；默认不绘制底色，
-可开启「显示底色」提升对比度。主屏幕底部横向任务栏隐藏或前台全屏时，左侧信息也会隐藏。
-位置可手动调整以避开已有按钮；信息区域响应点击，不抢前台输入焦点。
+左侧独立「任务栏信息」功能页：默认开启 Codex / Claude 剩余额度，可整体关闭；不再提供显示内容或自定义文字选项。显示位置支持偏左、居中两个选项，默认偏左；透明线框，不提供底色或偏移设置。旧版位置字段被忽略，新位置使用 taskbarInfoAlignment 保存。主屏幕底部横向任务栏隐藏或前台全屏时，左侧信息也会隐藏。左侧仍是独立分层窗口，不注入 Explorer；信息区域响应点击，不抢前台输入焦点。
 左侧窗口通过 popup owner 跟随任务栏层级；仅在显示或位置尺寸变化时定位，不再每秒重新置顶，避免点击任务栏时反复遮挡。隐藏操作也仅在可见状态改变时执行。
 
 快捷图标默认开启：四宫格调用现有 ShowDesktopCardsFromTray 呼出图标库，不最小化应用或切回桌面；
@@ -936,11 +1006,16 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 可呼出悬浮搜索、桌面分区与刷新额度；菜单不再提供「任务栏信息」或「显示 / 恢复桌面」项。
 设置页不再单列「快捷按钮」卡片，保留独立任务栏信息页中的额度与外观选项。
 左侧信息区弹出的菜单向上、向右展开；从四宫格或该菜单呼出桌面图标库时，按需创建一组
-独立的左侧浮层窗口，满列后向右排。右侧常驻桌面卡片始终保持右侧布局，不再搬动原窗口。
+独立的左侧浮层窗口，满列后向右排。常驻桌面卡片的左右位置由桌面分区页「卡片布局 → 位置」决定
+（`desktopCardAlignment`，`"right"` 默认 / `"left"`，靠左时从左上角排、满列后向右排）。
+**卡片靠左时不另建左侧浮层**：两组位置完全重合，四宫格 / 托盘菜单直接把常驻卡片抬到最前
+（`LibraryReusesDesktopCards`），同样不播动画，再次点击或点到外面就放回桌面；切到靠左时释放
+已预备的浮层窗口，切回靠右时重新预备。实测省下 9 个 WinUI 窗口、约 22MB 私有内存（见第 10 节）。
+卡片关闭时从左侧呼出，仍按下文单独建浮层。
 左侧浮层直接显示、直接收起，不播放过渡动画；点击浮层外部后将其隐藏，再次打开复用窗口；浮层不更改桌面图标显隐或桌面布局缓存。
 日常收起使用 DWM 遮蔽，保留已准备的窗口表面；内容不变时再次打开跳过 Show 和渲染等待，整组解除遮蔽。
 两组共用分区配置、排序存储和桌面监视器，同步时复用一次桌面枚举结果；排序和文件变动
-通知两组同步。右侧桌面完成显示后，左侧窗口逐张提前创建并隐藏，点击时直接显示；内容变化后更新隐藏窗口，主管理器释放时一起回收。悬浮暂存保持原来的位置逻辑。
+通知两组同步。卡片靠右时，右侧桌面完成显示后，左侧窗口逐张提前创建并隐藏，点击时直接显示；内容变化后更新隐藏窗口，主管理器释放时一起回收。悬浮暂存保持原来的位置逻辑。
 左侧打开时复用右侧现有分组快照、项目对象和已解码图标；两侧的窗口、集合和选中态独立。
 内容未改变时跳过列表重建；左侧整组等待共享图标准备及统一渲染屏障后一起解除遮蔽，避免逐张出现和图标后闪；打开耗时写入 DesktopLibrary.Open 日志。
 卡片内容变化采用增量插入、移动、删除，保留未变项目的界面容器；左侧复用右侧排序结果，避免重复查询 Shell 名称和文件类型。隐藏预备阶段也完成布局，布局快照不变时跳过磁盘读写。
@@ -955,6 +1030,10 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 底色观感、按钮点击与自动隐藏效果仍需用户实际确认。
 
 `TaskbarInfoService.cs` 管理显示与两分钟刷新，`MainWindow.TaskbarInfo.cs` 管理设置。
+
+任务栏快捷入口：「任务栏信息」页的「快捷入口」可分别开关桌面库、语音小球、音频设备三个入口（配置项 `taskbarShowLibrary` / `taskbarShowStash` / `taskbarShowVoice` / `taskbarShowAudio`，默认全开）。桌面库入口还要求桌面分区已开启；语音小球的入口独立于功能本身，功能关着也能单独显示在任务栏（语音入口直接发送快捷键）。**悬浮暂存没有单独的入口开关（2026-09-30）**：「悬浮暂存」功能开关就是任务栏暂存图标的开关，开则显示图标并可拖文件到图标上方弹出的窗口，关则图标消失；`taskbarShowStash` 配置项已不再使用。入口附带状态：暂存图标右上角显示暂存文件数，语音图标在听写中显示红点，音频入口显示当前默认输出设备名。
+
+小分辨率避让：`TaskbarInfoService.Layout.cs` 每 3 秒（任务栏尺寸变化时立即）用 UI Automation 只读扫描任务栏上的图标位置，把信息区放进图标之间的空隙，放不下时按级别收缩：完整 → 额度文字缩成百分比 → 音频只留图标 → 去掉 Claude 气泡 → 去掉全部额度 → 折叠成一个按钮（点击打开托盘快捷菜单）。空隙优先选放得下额度气泡的；扫描失败时回退到「不超过任务栏一半宽度」的旧规则。Claude 未连接时不占位。
 `Services/CodexQuotaReader.cs` 启动本机 `codex.exe app-server`，完成握手后只调用
 `account/rateLimits/read`，请求结束即回收进程；不会创建模型任务或消费重置额度。
 优先显示 `rateLimitsByLimitId.codex`，兼容旧 `rateLimits`；按真实周期标注，缺失窗口不虚构。
@@ -1014,3 +1093,32 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 设备浮层外观补充：任务栏设备与 Codex 采用透明圆角细线框，不填底色；设备弹窗恢复最初的默认 MicaBackdrop，不设置 TintOpacity、LuminosityOpacity 或着色覆盖；不要与 DesktopAcrylicBackdrop 混用。标题使用不带章节外边距的样式，避免滚动和裁切。已通过限定范围实际截图检查（artifacts/ui-check/outline-default.png），未选择音频设备。
 
 音频入口支持再次点击收起；弹窗打开期间监听外部鼠标按下，排除入口按钮和自身下拉菜单，收起即卸载监听。线框高度 34 DIP；图标组左内距 8 DIP、按钮宽 36 DIP、到音频入口间隔 4 DIP；耳麦与音频设备文字采用固定间距。已实际验证切换收起与点击 WinTools 信息区收起，并截图检查间距。
+
+任务栏信息页新增 Codex 验证和 Claude / Claude Code 验证。Codex 使用官方 app-server `account/login/start`，在 Chrome 打开服务返回的授权网址；保持 app-server 存活等待 `account/login/completed`，5 分钟超时，可取消；成功后返回主窗口并读取额度。需要本机已安装 Codex 与 Chrome。不会为检测启动模型会话。
+
+Claude 使用独立 OAuth + PKCE 的兼容流程（参考 https://github.com/ipangdz/claudexbar/blob/main/docs/AUTH.md ），在 Chrome 手动授权后，将官方回调页显示的 `code#state` 粘贴回软件。软件校验 state 与 5 分钟有效期，向固定的 platform.claude.com 令牌端点换取凭证，并向 api.anthropic.com/api/oauth/usage 验证权限。验证成功后凭证保存到 Windows PasswordVault 的 WinTools.ClaudeQuota 项；后台每 5 分钟查询，并在到期时刷新独立凭证。断开只删除 WinTools 的凭据，不影响浏览器或 Claude。此兼容登录使用 Claude Code 的公共客户端及其权限范围；没有官方 WinTools 集成保证，服务端变更可能使它不可用。实际账户授权需用户手动完成。
+
+上述操作不修改 Claude 配置，不安装状态栏脚本，不扫描浏览器 Cookie；旧的 Claude statusLine 缓存方案已移除。检测失败不会显示伪造的百分比。Claude 气泡与 Codex 分开，支持五小时和每周剩余额度，兼容传统字段与 limits 数组；不使用 context_window 或本地 token 总数估算订阅额度。授权码、令牌及完整授权网址不写入日志。
+Codex 登录与额度子进程现在继承已启用的 Windows 静态 HTTPS 代理（统一代理或 https= 条目），只在没有显式代理环境变量时补充；不修改系统设置。localhost 回调加入子进程 NO_PROXY。换取凭证失败时提示检查代理并重新授权，不直接展示可能含敏感内容的服务端错误。
+
+Codex 和 Claude 气泡在未连接、读取失败、超时或没有有效额度窗口时，统一显示「额度暂不可用」；实际剩余额度为 0 时仍显示 0%，具体失败原因保留在验证设置中。
+
+任务栏设置将 Codex 额度与验证合并为同一卡片，只保留 Codex、Claude 两个账户区域；刷新并检测与浏览器授权放在各自卡片中。授权/检测期间，后台额度刷新不会覆盖正在进行的状态提示。
+
+任务栏信息页沿用共享页面标题、设置卡片、账户图标和表单样式；入口精简为连接、刷新、断开。卡片优先显示额度摘要，重置时间和诊断详情放入悬停提示；Claude 授权表单只在连接时展开，使用主题卡片和强调按钮。
+
+额度气泡悬停显示刷新（宽度按额度原文保持），单击只刷新相应账户，进行中显示刷新中并合并重复点击。托盘提示固定为 WinTools；单击/右键显示菜单，双击打开主界面，单击采用系统双击等待以避免抢先弹菜单。
+
+悬浮暂存与任务栏快捷图标联动（2026-09-23）：任务栏「悬浮暂存」图标可见时，拖文件弹出与点击图标打开都固定在图标正上方（水平以图标为中心、越界贴边，偏左布局即左下角，居中布局随之居中），窗口变大时底边不动、向上生长；用户手动拖动窗口后不再拉回。**2026-09-30 起暂存窗口不再跟随鼠标**：无论功能开关，窗口只出现在任务栏「悬浮暂存」图标正上方；图标不可见（覆盖层隐藏、全屏、入口关闭）时固定在屏幕右上角。设置页已删除「跟随鼠标时的位置」，配置项 `stashOffsetX/Y` 与 `MoveBelowCursor` 已移除。程序选择窗口始终叠放在暂存窗口正上方。
+
+暂存图标与托盘菜单再次点击会收起暂存窗口（保留已暂存的文件），与音频按钮一致。点击打开的暂存窗口和音频设备弹窗共用 `PopupAnimator`：250ms 减速滑入淡入、150ms 加速下沉淡出，透明度通过仅在动画期间挂上的 WS_EX_LAYERED 实现（与 Mica 不能共存）。拖拽中弹出的暂存窗口仍不播放动画，避免拖动预览闪动。两个弹窗下沿到任务栏上沿统一为 12 DIP（`WindowHelper.TaskbarPopupGapDip`）。
+
+暂存窗口尺寸与偏移改为读写共享的 `SettingsService.Current`：此前尺寸绕过它直接写文件，设置页任何改动或退出时整份保存 Current 都会把尺寸覆盖回旧值。Codex 额度自动刷新间隔由 2 分钟改为 5 分钟（每次读取都要启动 codex app-server 子进程），与 Claude 一致。
+
+快捷键录制（2026-09-30）：悬浮搜索、桌面分区、语音小球的快捷键输入框都是「录制」模式（`HotkeyRecorder.cs`）：聚焦后直接按组合键，Esc 取消、退格 / Delete 清除。用 `WH_KEYBOARD_LL` 钩子而不是 KeyDown，因为 Win、Alt+Space 在窗口层面拦不住；钩子只在输入框获得焦点期间存在。只有语音小球允许纯修饰键组合（如 Ctrl+Win）；其余要求至少一个修饰键（F 键等除外）。
+
+任务栏信息条自扫描图标位置时必须排除本进程的元素（UIA 树里会含有它自己），否则会在左右两个空隙之间每 3 秒横跳一次。
+
+卡片项目的拖动数据（2026-09-30）：`DesktopCardWindow.ItemsGrid_DragItemsStarting` 除了自定义格式 `WinTools.DesktopCardItem`，还必须带真实的 `StorageItems`（`SetDataProvider` 延迟取）并声明 `Move | Copy`。只声明 Move 且没有文件项时，暂存窗口、资源管理器等目标全部显示「禁止」光标。卡片之间换区 / 排序的目标在 DragOver 里仍返回 Move。
+
+暂存窗口高度随文件数自适应（2026-10-02）：高度 = 固定部分 54 DIP + 文件数（最多 6 行，超过后列表内滚动）× 50 DIP；宽度仍可拖动并保存，高度不再持久化。窗口底部不再有提示文字。音频设备弹窗与暂存窗口同一版式（36 高标题栏 + 左右下等距 8 的内卡片，圆角 8）；任务栏音频入口始终是只有耳机图标的圆形按钮，不再显示设备名，也不随空间分级变化。暂存窗口内框圆角由 XAML 控制，代码里不要再 `ContentBorder.CornerRadius = ...` 覆盖。

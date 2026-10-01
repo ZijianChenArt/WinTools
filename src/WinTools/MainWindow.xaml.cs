@@ -197,6 +197,10 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         InitializeComponent();
 
         FeaturePages.Owner = this;
+        InitializeQuotaConnections();
+        HotkeyRecorder.Attach(HotkeySpotlightBox, allowModifierOnly: false);
+        HotkeyRecorder.Attach(HotkeyDesktopCardBox, allowModifierOnly: false);
+        HotkeyRecorder.Attach(HotkeyVoiceBallBox, allowModifierOnly: true);
 
         App.TraceStartup("MainWindow: after InitializeComponent");
 
@@ -513,20 +517,13 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     /// <summary>把主窗口的导航切到"应用设置"内嵌页。供托盘菜单、全局快捷键和     /// <see cref = "App.OpenSettingsWindow"/> 调用。     /// <para>设置 UI 已经统一在主窗口 <c>MainNav.NavItemAppSettings</c> 下面，不再使用独立的设置窗口（2026-08-31 删除了上一版     /// <c>SettingsWindow</c> 方案及 <c>_diff_backup\Settings\</c> 备份）。</para>     </summary>
     internal void NavigateToSettings()
     {
-        if (App.Current is App app)
-        {
-
-            app.OpenSettingsWindow();
-
-            return;
-
-
-        }
-
-        // 极端情况下 App 还没初始化完成，直接选中导航项兜底。
+        // 只切页面。窗口前置由调用方 App.OpenSettingsWindow 负责；以前这里又回调
+        // App.OpenSettingsWindow，两边互相调用，托盘菜单点「设置」会无限递归直到栈溢出崩溃。
         MainNav.SelectedItem = NavItemAppSettings;
-
     }
+
+    /// <summary>切到桌面分区页。窗口前置由调用方 <see cref="App.OpenDesktopZoneSettings"/> 负责。</summary>
+    internal void NavigateToDesktopOrganize() => MainNav.SelectedItem = NavItemDesktopOrganize;
 
     /// <summary>
     /// 启动时把 config.json 同步到所有控件，避免关闭时把 XAML 默认值写回配置。
@@ -547,11 +544,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (VoiceBallToggle != null) VoiceBallToggle.IsOn = _config.EnableVoiceBall;
         if (HotkeyVoiceBallBox != null) HotkeyVoiceBallBox.Text = GetVoiceBallHotkey();
         if (AutoStartToggle != null) AutoStartToggle.IsOn = AutostartService.IsEnabled();
+        LoadUpdateSettings();
         SyncThemeRadioFromConfig();
-        var offsetX = _config.StashOffsetX > 0 ? _config.StashOffsetX : 150;
-        var offsetY = _config.StashOffsetY > 0 ? _config.StashOffsetY : 40;
-        SetNumberBoxValue(StashOffsetXBox, offsetX);
-        SetNumberBoxValue(StashOffsetYBox, offsetY);
     }
 
     /// <summary>将当前 UI 状态同步到配置并写入 config.json（关闭窗口或退出时调用）。</summary>
@@ -590,7 +584,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
                 ProcessName = r.ProcessName,
                 DisplayName = r.DisplayName,
-                UseChinese = r.UseChinese
+                UseChinese = r.UseChinese,
+                ExePath = r.ExePath
             }
 
 ).ToList();
@@ -618,20 +613,6 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _isLoadingDragStashSettings = true;
 
         if (DragStashToggle != null) DragStashToggle.IsOn = _config.EnableDragStash;
-
-        var offsetX = _config.StashOffsetX > 0 ? _config.StashOffsetX : 150;
-
-        var offsetY = _config.StashOffsetY > 0 ? _config.StashOffsetY : 40;
-
-        SetNumberBoxValue(StashOffsetXBox, offsetX);
-
-        SetNumberBoxValue(StashOffsetYBox, offsetY);
-
-        _config.ProgramOffsetX = offsetX;
-
-        _config.ProgramOffsetY = offsetY;
-
-        _config.WindowGap = offsetY;
 
         _isLoadingDragStashSettings = false;
 
@@ -960,6 +941,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         SetNavDot(NavDotVoiceBall, _config.EnableVoiceBall, onBrush, offBrush);
         SetNavDot(NavDotTaskbarInfo, _config.EnableTaskbarInfo, onBrush, offBrush);
+        SyncTaskbarInfoEntries();
 
 
     }

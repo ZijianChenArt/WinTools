@@ -17,6 +17,7 @@ public static class FeatureIcons
     public static string TaskbarInfo => "\uE9D9";
     public static string Settings => "\uE713";
     public static string AudioDevices => "\uE95B";
+    public static string More => "\uE712";
 
     public static string FontName { get; } = ResolveFont();
     public static Microsoft.UI.Xaml.Media.FontFamily FontFamily => new(FontName);

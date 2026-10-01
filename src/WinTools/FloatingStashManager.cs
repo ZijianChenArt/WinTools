@@ -29,6 +29,12 @@ public sealed class FloatingStashManager : IDisposable
     private int _dragDecisionToken;
     private readonly HashSet<IntPtr> _winToolsHwnds = new();
 
+    /// <summary>
+    /// 任务栏“悬浮暂存”快捷图标的屏幕位置（图标中心 X，任务栏上沿 Y）；快捷图标不可见时返回 null。
+    /// 有值时暂存窗口固定弹在图标正上方，否则回退为跟随鼠标。
+    /// </summary>
+    internal Func<(int CenterX, int Top)?>? StashAnchorProvider { get; set; }
+
     public FloatingStashManager(DispatcherQueue dispatcher, Window mainWindow)
     {
         _dispatcher = dispatcher;
@@ -69,8 +75,24 @@ public sealed class FloatingStashManager : IDisposable
     public void ShowWindow()
     {
         EnsureWindow();
-        _window?.PositionToTopRight();
-        _window?.ShowWindow(activate: true, animate: false);
+        // 点击任务栏图标时弹在图标正上方；图标不可见（如从托盘菜单打开且覆盖层被隐藏）时才放右上角。
+        if (StashAnchorProvider?.Invoke() is { } anchor)
+            _window?.PositionAboveAnchor(anchor.CenterX, anchor.Top);
+        else
+            _window?.PositionToTopRight();
+        _window?.ShowWindow(activate: true, animate: true);
+    }
+
+    /// <summary>当前暂存的文件数（窗口尚未创建时为 0），供任务栏入口显示角标。</summary>
+    internal int ItemCount => _window?.Items.Count ?? 0;
+
+    /// <summary>已打开则带动画收起（暂存的文件保留），否则打开。</summary>
+    public void ToggleWindow()
+    {
+        if (_window?.IsShown == true)
+            _window.HideAnimated();
+        else
+            ShowWindow();
     }
 
     /// <summary>注册 WinTools 窗口句柄，避免拖拽自身窗口时触发悬浮暂存。</summary>
@@ -115,7 +137,7 @@ public sealed class FloatingStashManager : IDisposable
                 {
                     // 悬浮窗刻意避开光标，避免动态窗口切换导致系统拖动预览闪动。
                     EnsureWindow();
-                    _window?.MoveBelowCursor(currentX, currentY);
+                    PositionStashWindow();
                     _window?.ShowWindow(activate: false, animate: false);
                 }
             });
@@ -133,21 +155,20 @@ public sealed class FloatingStashManager : IDisposable
         EnsureWindow();
         if (_window == null) return;
 
-        _window.MoveBelowCursor(_lastDragX, _lastDragY);
+        PositionStashWindow();
         _window.ShowWindow(activate: false);
 
         if (!_programAssociationEnabled) return;
         if (_programWindowShownForThisDrag) return;
 
-        // 检查是否有匹配的程序，有则同时显示程序选择窗口（光标右上方）
+        // 检查是否有匹配的程序，有则同时显示程序选择窗口（暂存窗口正上方）
         EnsureProgramWindow();
         if (_programWindow != null && _programWindow.RebuildPrograms()
             && _programWindow.HasMatchingPrograms(extensions))
         {
             _programWindow.FilterByExtensions(extensions);
             var scale = (_window.Content as FrameworkElement)?.XamlRoot?.RasterizationScale ?? 1.0;
-            var stashWidth = _window.AppWindow.Size.Width;
-            _programWindow.PositionAboveCursor(_lastDragX, _lastDragY, stashWidth, scale);
+            _programWindow.PositionAboveWindow(_window.AppWindow.Position, _window.AppWindow.Size, scale);
             _programWindow.ShowWindow(activate: false);
         }
 
@@ -174,6 +195,19 @@ public sealed class FloatingStashManager : IDisposable
                 _window.HideWindow();
         };
         timer.Start();
+    }
+
+    /// <summary>
+    /// 摆放暂存窗口：只出现在任务栏「悬浮暂存」图标正上方，不再跟随鼠标。
+    /// 图标不可见（覆盖层被隐藏、全屏、入口关闭）时退回屏幕右上角固定位置。
+    /// </summary>
+    private void PositionStashWindow()
+    {
+        if (_window == null) return;
+        if (StashAnchorProvider?.Invoke() is { } anchor)
+            _window.PositionAboveAnchor(anchor.CenterX, anchor.Top);
+        else
+            _window.PositionToTopRight();
     }
 
     private void OnWindowBecameEmpty(object? sender, EventArgs e) => _window?.HideWindow();
@@ -323,22 +357,28 @@ public sealed class FloatingStashManager : IDisposable
     {
         try
         {
+            var root = GetAncestor(sourceHwnd, GA_ROOT);
+            var rootClass = GetWindowClassName(root);
+            if (rootClass is not ("WorkerW" or "Progman")) return false;
+
+            // 桌面图标被隐藏时，WindowFromPoint 命中 SHELLDLL_DefView，而非
+            // SysListView32。此时没有可拖拽的桌面图标，应直接视为空白处。
             var listView = sourceHwnd;
             while (listView != IntPtr.Zero
                    && !string.Equals(GetWindowClassName(listView), "SysListView32", StringComparison.Ordinal))
                 listView = GetParent(listView);
 
-            if (listView == IntPtr.Zero) return false;
+            if (listView == IntPtr.Zero) return true;
             var parent = GetParent(listView);
             if (parent == IntPtr.Zero
                 || !string.Equals(GetWindowClassName(parent), "SHELLDLL_DefView", StringComparison.Ordinal))
-                return false;
+                return true;
 
             var point = new POINT { X = screenX, Y = screenY };
-            if (!ScreenToClient(listView, ref point)) return false;
-            return HitTestDesktopItem(listView, point) == -1;
+            if (!ScreenToClient(listView, ref point)) return true;
+            return HitTestDesktopItem(listView, point) < 0;
         }
-        catch { return false; }
+        catch { return true; }
     }
 
     private static string GetWindowClassName(IntPtr hwnd)
@@ -348,7 +388,7 @@ public sealed class FloatingStashManager : IDisposable
         return sb.ToString();
     }
 
-    /// <summary>跨进程命中桌面图标；失败时保守地允许拖拽，避免破坏正常文件拖放。</summary>
+    /// <summary>跨进程命中桌面图标；失败时返回负值，不把空白处误判为文件拖拽。</summary>
     private static int HitTestDesktopItem(IntPtr listView, POINT clientPoint)
     {
         GetWindowThreadProcessId(listView, out var processId);

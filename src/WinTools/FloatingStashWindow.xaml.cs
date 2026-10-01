@@ -44,14 +44,18 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
 
     #region 窗口配置
 
-    private const int DefaultWidthDip = 420;
-    private const int DefaultHeightDip = 400;
-    private const int MinWidthDip = 300;
-    private const int MinHeightDip = 250;
+    private const int DefaultWidthDip = 360;
+    private const int MinWidthDip = 260;
+    private const int MinHeightDip = 100;
+
+    // 高度随文件数自适应：固定部分（标题栏 + 内外边距）加上每个文件一行，超过 MaxRows 行后列表内滚动。
+    private const int FixedHeightDip = 54;
+    private const int RowHeightDip = 50;
+    private const int MaxRows = 6;
 
     // 空列表时保留完整标题栏、均衡外边距和紧凑的投放提示。
-    private const int MiniWidthDip = 280;
-    private const int MiniHeightDip = 168;
+    private const int MiniWidthDip = 240;
+    private const int MiniHeightDip = 132;
 
     private bool _everActivated;
     private bool _sizePersistAllowed;
@@ -101,6 +105,9 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
             _sizeSaveTimer.Tick += (_, _) => SaveWindowSize();
             AppWindow.Changed += (_, e) =>
             {
+                // 用户自己拖动了窗口：不再强行拉回任务栏快捷图标上方。
+                if (e.DidPositionChange && _anchor != null && !Animator.IsBusy && AppWindow.Position != _anchorPosition)
+                    _anchor = null;
                 if (!e.DidSizeChange) return;
                 EnforceItemStateMinSize();
                 _sizeSaveTimer?.Stop();
@@ -119,9 +126,10 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
             int dipW, dipH;
             if (HasItems)
             {
-                var cfg = ConfigService.Load();
+                // 读共享配置对象，而不是每次拖拽都读盘；也保证与设置页写回的是同一份数据。
+                var cfg = Services.SettingsService.Instance.Current;
                 dipW = cfg.StashWindowWidth > 0 ? cfg.StashWindowWidth : DefaultWidthDip;
-                dipH = cfg.StashWindowHeight > 0 ? cfg.StashWindowHeight : DefaultHeightDip;
+                dipH = Math.Max(MinHeightDip, FixedHeightDip + Math.Min(Items.Count, MaxRows) * RowHeightDip);
             }
             else
             {
@@ -132,6 +140,7 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
             _isAutoResizing = true;
             AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(dipW * scale), (int)(dipH * scale)));
             _isAutoResizing = false;
+            ApplyAnchor(); // 尺寸变化后仍贴着任务栏，向上生长
         }
         catch { _isAutoResizing = false; }
     }
@@ -168,7 +177,6 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
         AppTitleBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
         ContentBorder.Background = WindowHelper.GetMicaPopupBrush(theme, isMica, elevated: true);
         ContentBorder.BorderBrush = WindowHelper.GetCodexBorderBrush(theme);
-        ContentBorder.CornerRadius = new CornerRadius(12);
         WindowHelper.ApplyWindowBackdrop(this);
         WindowHelper.ApplyTitleBarButtonColors(this, theme);
     }
@@ -185,14 +193,45 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
 
             var scale = (Content as FrameworkElement)?.XamlRoot?.RasterizationScale ?? 1.0;
             var dipW = (int)(AppWindow.Size.Width / scale);
-            var dipH = (int)(AppWindow.Size.Height / scale);
-            if (dipW < 100 || dipH < 100) return; // 忽略异常小尺寸
-            ConfigService.Update(cfg =>
-            {
-                if (cfg.StashWindowWidth == dipW && cfg.StashWindowHeight == dipH) return;
-                cfg.StashWindowWidth = dipW;
-                cfg.StashWindowHeight = dipH;
-            });
+            if (dipW < 100) return; // 忽略异常小尺寸；高度由文件数决定，不再持久化
+            // 必须写进共享的 SettingsService.Current（由它防抖落盘）。直接写文件的话，
+            // 设置页任何一次改动或退出时整份保存 Current，都会把这里的尺寸覆盖回旧值。
+            var cfg = Services.SettingsService.Instance.Current;
+            cfg.StashWindowWidth = dipW;
+        }
+        catch { /* ignore */ }
+    }
+
+    // 暂存窗口贴靠任务栏快捷图标：水平以图标为中心，下沿与任务栏上沿留出统一的弹窗间距。
+    private (int CenterX, int TaskbarTop)? _anchor;
+    private Windows.Graphics.PointInt32 _anchorPosition;
+
+    /// <summary>定位到任务栏快捷图标正上方；越出屏幕边缘时贴边（默认布局下即左下角）。</summary>
+    /// <param name="centerX">快捷图标中心的屏幕 X（物理像素）。</param>
+    /// <param name="taskbarTop">任务栏上沿的屏幕 Y（物理像素）。</param>
+    internal void PositionAboveAnchor(int centerX, int taskbarTop)
+    {
+        _anchor = (centerX, taskbarTop);
+        ApplyAnchor();
+    }
+
+    private void ApplyAnchor()
+    {
+        if (_anchor is not { } anchor) return;
+        try
+        {
+            var scale = (Content as FrameworkElement)?.XamlRoot?.RasterizationScale ?? 1.0;
+            var gap = (int)(WindowHelper.TaskbarPopupGapDip * scale);
+            var work = DisplayArea.GetFromPoint(
+                new Windows.Graphics.PointInt32(anchor.CenterX, anchor.TaskbarTop - 1),
+                DisplayAreaFallback.Nearest).WorkArea;
+            var size = AppWindow.Size;
+            var minX = work.X + gap;
+            var maxX = Math.Max(minX, work.X + work.Width - size.Width - gap);
+            var x = Math.Clamp(anchor.CenterX - size.Width / 2, minX, maxX);
+            var y = Math.Max(work.Y, anchor.TaskbarTop - gap - size.Height);
+            _anchorPosition = new Windows.Graphics.PointInt32(x, y);
+            AppWindow.Move(_anchorPosition);
         }
         catch { /* ignore */ }
     }
@@ -200,6 +239,7 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
     /// <summary>将窗口定位到屏幕右上角。</summary>
     internal void PositionToTopRight()
     {
+        _anchor = null;
         try
         {
             var display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
@@ -220,6 +260,7 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
     internal void EnsureInitialized()
     {
         if (_everActivated) return;
+        var anchor = _anchor; // 移到屏幕外不算用户拖动，保留贴靠状态
         try
         {
             AppWindow.Move(new Windows.Graphics.PointInt32(-10000, -10000));
@@ -228,18 +269,37 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
             AppWindow.Hide();
         }
         catch { /* ignore */ }
+        _anchor = anchor;
     }
+
+    private PopupAnimator? _animatorInstance;
+    private PopupAnimator Animator => _animatorInstance ??= new PopupAnimator(this);
+
+    /// <summary>窗口可见且不在收起动画中。</summary>
+    internal bool IsShown => AppWindow.IsVisible && !Animator.IsHiding;
 
     /// <summary>显示悬浮窗。</summary>
     /// <param name="activate">是否抢焦点（拖拽触发时应为 false）。</param>
-    /// <param name="animate">保留参数（当前不播放入场动画）。</param>
+    /// <param name="animate">
+    /// 是否播放与音频弹窗一致的滑入淡入。仅用于点击打开；拖拽中弹出不要动画，
+    /// 窗口在拖动预览下方改变形态会让系统拖动预览闪动。
+    /// </param>
     public void ShowWindow(bool activate = false, bool animate = false)
     {
         try
         {
             _sizePersistAllowed = true;
             EnsureInitialized();
+            Animator.Reset(); // 打断可能正在进行的收起动画，恢复为普通不透明窗口
             ApplySizeForItemState();
+
+            if (animate)
+            {
+                var scale = (Content as FrameworkElement)?.XamlRoot?.RasterizationScale ?? 1.0;
+                var rest = AppWindow.Position;
+                Animator.PrepareReveal(rest.Y, scale);
+                AppWindow.Move(new Windows.Graphics.PointInt32(rest.X, Animator.RevealStartY));
+            }
 
             // 先 Cloak 隐藏，渲染完成后再显示，避免白色闪动
             WindowHelper.SetWindowCloak(this, true);
@@ -247,51 +307,24 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
                 Activate();
             else
                 AppWindow.Show();
-            WindowHelper.UncloakWhenRendered(this);
-
-            // 悬浮暂存窗口禁用入场动画，避免影响拖拽体验
+            WindowHelper.UncloakWhenRendered(this, animate ? Animator.PlayReveal : null);
         }
-        catch { /* ignore */ }
+        catch { Animator.Reset(); }
     }
 
-    /// <summary>将悬浮窗移动到鼠标光标右下方。</summary>
-    public void MoveBelowCursor(int screenX, int screenY)
+    /// <summary>带下沉淡出动画地隐藏（点击任务栏图标收起时使用），暂存的文件保留。</summary>
+    public void HideAnimated()
     {
-        try
-        {
-            var (gapX, gapY) = GetOffsets();
-            var display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
-            var work = display.WorkArea;
-            var w = AppWindow.Size.Width;
-            var h = AppWindow.Size.Height;
-            var x = screenX + gapX;  // 光标右侧
-            var y = screenY + gapY;  // 光标下方
-            // 超出右边界则翻到左侧
-            if (x + w > work.X + work.Width)
-                x = screenX - w - gapX;
-            // 超出下边界则翻到上方
-            if (y + h > work.Y + work.Height)
-                y = screenY - h - gapY;
-            x = Math.Max(work.X, x);
-            y = Math.Max(work.Y, y);
-            AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
-        }
-        catch { /* ignore */ }
-    }
-
-    /// <summary>读取配置中的偏移量，若值无效则使用默认值。</summary>
-    private static (int GapX, int GapY) GetOffsets()
-    {
-        var cfg = ConfigService.Load();
-        var gapX = cfg.StashOffsetX > 0 ? cfg.StashOffsetX : 150;
-        var gapY = cfg.StashOffsetY > 0 ? cfg.StashOffsetY : 40;
-        return (gapX, gapY);
+        if (!IsShown) return;
+        var scale = (Content as FrameworkElement)?.XamlRoot?.RasterizationScale ?? 1.0;
+        Animator.PlayDismiss(scale, () => AppWindow.Hide());
     }
 
     /// <summary>隐藏悬浮窗。</summary>
     public void HideWindow()
     {
         try { AppWindow.Hide(); } catch { /* ignore */ }
+        _animatorInstance?.Reset();
     }
 
     #endregion
@@ -327,8 +360,6 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
         var empty = Items.Count == 0;
         if (EmptyHint != null)
             EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
-        if (BottomBar != null)
-            BottomBar.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
     }
 
     #endregion

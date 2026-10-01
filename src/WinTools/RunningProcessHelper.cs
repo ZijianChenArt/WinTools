@@ -11,6 +11,7 @@ public sealed class RunningAppInfo
 {
     public string ProcessName { get; init; } = "";
     public string WindowTitle { get; init; } = "";
+    public string ExePath { get; init; } = "";
     public string DisplayName => string.IsNullOrEmpty(WindowTitle)
         ? ProcessName
         : $"{ProcessName} — {WindowTitle}";
@@ -40,9 +41,13 @@ internal static class RunningProcessHelper
                 if (pid == 0) return true;
 
                 string processName;
+                var exePath = "";
                 try
                 {
-                    processName = Process.GetProcessById((int)pid).ProcessName;
+                    using var process = Process.GetProcessById((int)pid);
+                    processName = process.ProcessName;
+                    try { exePath = process.MainModule?.FileName ?? ""; }
+                    catch { /* 管理员进程等读不到路径，图标退回首字母 */ }
                 }
                 catch
                 {
@@ -55,7 +60,8 @@ internal static class RunningProcessHelper
                 result.Add(new RunningAppInfo
                 {
                     ProcessName = processName,
-                    WindowTitle = title.Trim()
+                    WindowTitle = title.Trim(),
+                    ExePath = exePath
                 });
             }
             catch

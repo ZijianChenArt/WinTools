@@ -91,10 +91,26 @@ internal static class CardItemOrderStore
         }
     }
 
+    /// <summary>这个分区是否存过自定义顺序（右键菜单据此决定「恢复默认排序」是否可用）。</summary>
+    public static bool HasCustomOrder(string zone) =>
+        Orders.TryGetValue(zone, out var order) && order is { Count: > 0 };
+
+    /// <summary>丢掉这个分区的自定义顺序，回到默认的分组 + 名称顺序。</summary>
+    public static bool Reset(string zone)
+    {
+        if (!Orders.Remove(zone)) return true;
+        return Persist();
+    }
+
     public static bool Save(string zone, IEnumerable<string> paths)
     {
         Orders[zone] = paths.Select(path => Path.GetFileName(path))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return Persist();
+    }
+
+    private static bool Persist()
+    {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);

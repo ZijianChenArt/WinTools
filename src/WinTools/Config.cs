@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -46,6 +46,10 @@ public class ImeRuleEntry
 
     [JsonPropertyName("useChinese")]
     public bool UseChinese { get; set; }
+
+    /// <summary>程序完整路径，只用来显示图标；应用没在运行时靠它取图标。可为空。</summary>
+    [JsonPropertyName("exePath")]
+    public string ExePath { get; set; } = "";
 
     [JsonIgnore]
     public string ModeLabel => UseChinese ? "中文" : "英文";
@@ -139,29 +143,27 @@ public class DesktopZone
 public class Config : ObservableObject
 {
     private bool _enableTaskbarInfo = true;
-    private string _taskbarInfoPlacement = "left";
-    [JsonPropertyName("taskbarInfoPlacement")]
-    public string TaskbarInfoPlacement { get => _taskbarInfoPlacement; set => SetProperty(ref _taskbarInfoPlacement, value); }
-    private bool _taskbarInfoBackground;
-    [JsonPropertyName("taskbarInfoBackground")]
-    public bool TaskbarInfoBackground { get => _taskbarInfoBackground; set => SetProperty(ref _taskbarInfoBackground, value); }
+    private string _taskbarInfoAlignment = "left";
+    [JsonPropertyName("taskbarInfoAlignment")]
+    public string TaskbarInfoAlignment { get => _taskbarInfoAlignment; set => SetProperty(ref _taskbarInfoAlignment, value == "center" ? "center" : "left"); }
     private bool _taskbarInfoActions = true;
     [JsonPropertyName("taskbarInfoActions")]
     public bool TaskbarInfoActions { get => _taskbarInfoActions; set => SetProperty(ref _taskbarInfoActions, value); }
+    // 任务栏快捷入口：每个入口单独开关；实际显示还要求对应功能本身已开启（音频设备除外）。
+    private bool _taskbarShowLibrary = true, _taskbarShowStash = true, _taskbarShowVoice = true, _taskbarShowAudio = true;
+    [JsonPropertyName("taskbarShowLibrary")]
+    public bool TaskbarShowLibrary { get => _taskbarShowLibrary; set => SetProperty(ref _taskbarShowLibrary, value); }
+    [JsonPropertyName("taskbarShowStash")]
+    public bool TaskbarShowStash { get => _taskbarShowStash; set => SetProperty(ref _taskbarShowStash, value); }
+    [JsonPropertyName("taskbarShowVoice")]
+    public bool TaskbarShowVoice { get => _taskbarShowVoice; set => SetProperty(ref _taskbarShowVoice, value); }
+    [JsonPropertyName("taskbarShowAudio")]
+    public bool TaskbarShowAudio { get => _taskbarShowAudio; set => SetProperty(ref _taskbarShowAudio, value); }
     [JsonPropertyName("enableTaskbarInfo")]
     public bool EnableTaskbarInfo { get => _enableTaskbarInfo; set => SetProperty(ref _enableTaskbarInfo, value); }
 
-    private string _taskbarInfoMode = "codex";
-    [JsonPropertyName("taskbarInfoMode")]
-    public string TaskbarInfoMode { get => _taskbarInfoMode; set => SetProperty(ref _taskbarInfoMode, value); }
 
-    private string _taskbarInfoText = "今天也要专注";
-    [JsonPropertyName("taskbarInfoText")]
-    public string TaskbarInfoText { get => _taskbarInfoText; set => SetProperty(ref _taskbarInfoText, value); }
 
-    private int _taskbarInfoOffset;
-    [JsonPropertyName("taskbarInfoOffset")]
-    public int TaskbarInfoOffset { get => _taskbarInfoOffset; set => SetProperty(ref _taskbarInfoOffset, value); }
 
     private List<ConfigEntry> _entries = new();
     [JsonPropertyName("entries")]
@@ -223,14 +225,6 @@ public class Config : ObservableObject
     [JsonPropertyName("appUiStyle")]
     public string AppUiStyle { get => _appUiStyle; set => SetProperty(ref _appUiStyle, value); }
 
-    private int _stashOffsetX = 150;
-    [JsonPropertyName("stashOffsetX")]
-    public int StashOffsetX { get => _stashOffsetX; set => SetProperty(ref _stashOffsetX, value); }
-
-    private int _stashOffsetY = 40;
-    [JsonPropertyName("stashOffsetY")]
-    public int StashOffsetY { get => _stashOffsetY; set => SetProperty(ref _stashOffsetY, value); }
-
     private int _programOffsetX = 150;
     [JsonPropertyName("programOffsetX")]
     public int ProgramOffsetX { get => _programOffsetX; set => SetProperty(ref _programOffsetX, value); }
@@ -250,6 +244,25 @@ public class Config : ObservableObject
     private bool _enableDesktopClickToShow;
     [JsonPropertyName("enableDesktopClickToShow")]
     public bool EnableDesktopClickToShow { get => _enableDesktopClickToShow; set => SetProperty(ref _enableDesktopClickToShow, value); }
+
+    // 记住在音频设备弹窗里选过的扬声器 / 麦克风（端点 ID）。系统经常在插拔、睡眠唤醒后把默认设备改掉，
+    // 开启锁定后后台会把它切回来；设备不在线时不动。
+    private string _audioPreferredOutputId = "";
+    [JsonPropertyName("audioPreferredOutputId")]
+    public string AudioPreferredOutputId { get => _audioPreferredOutputId; set => SetProperty(ref _audioPreferredOutputId, value ?? ""); }
+
+    private string _audioPreferredInputId = "";
+    [JsonPropertyName("audioPreferredInputId")]
+    public string AudioPreferredInputId { get => _audioPreferredInputId; set => SetProperty(ref _audioPreferredInputId, value ?? ""); }
+
+    private bool _audioLockDevices = true;
+    [JsonPropertyName("audioLockDevices")]
+    public bool AudioLockDevices { get => _audioLockDevices; set => SetProperty(ref _audioLockDevices, value); }
+
+    // 默认开启：启动时静默查一次 GitHub Release，只在设置页提示，从不自动安装。
+    private bool _enableAutoUpdateCheck = true;
+    [JsonPropertyName("enableAutoUpdateCheck")]
+    public bool EnableAutoUpdateCheck { get => _enableAutoUpdateCheck; set => SetProperty(ref _enableAutoUpdateCheck, value); }
 
     // 默认开启：悬浮搜索是纯按需呼出的功能，不注册快捷键就完全用不了，
     // 而它本身不常驻任何 hook / 定时器，默认打开不会带来额外开销。
@@ -312,6 +325,12 @@ public class Config : ObservableObject
     /// 用户无需在设置里分别调 3 个 margin。字段缺失时回退到 16。</summary>
     [JsonPropertyName("desktopCardMargin")]
     public int DesktopCardMargin { get => _desktopCardMargin; set => SetProperty(ref _desktopCardMargin, Math.Max(0, value)); }
+
+    private string _desktopCardAlignment = "right";
+    /// <summary>桌面卡片靠屏幕哪一侧排布："right"（默认）或 "left"。
+    /// 只影响常驻桌面的卡片；从任务栏打开的分区库始终在左侧。</summary>
+    [JsonPropertyName("desktopCardAlignment")]
+    public string DesktopCardAlignment { get => _desktopCardAlignment; set => SetProperty(ref _desktopCardAlignment, value == "left" ? "left" : "right"); }
 
     private List<ImeRuleEntry> _perAppImeRules = new();
     [JsonPropertyName("perAppImeRules")]

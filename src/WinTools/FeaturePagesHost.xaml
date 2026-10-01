@@ -1,14 +1,19 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <!--
     功能子页面集合。
     间距 / 圆角 / 字号一律取自 Styles/PageStyles.xaml，本文件里不要写死这些值，也不要写 MaxWidth。
 
-    每个子页面都是同一套骨架：
-      Grid  PageRootStyle          行 0 Auto = 固定表头，行 1 * = 主体
-        Grid PageHeaderStyle       大标题 + 副标题 +（可选）右侧总开关
+    每个子页面都是同一套骨架（README 5.1）：
+      Grid  PageRootStyle              行 0 Auto = 固定表头，行 1 * = 主体
+        Grid PageHeaderStyle           大标题 + 副标题 +（可选）右侧总开关；所有页面同一个样式
         主体二选一：
-          ScrollViewer PageBodyScrollStyle → 卡片堆（设置型）
+          ScrollViewer PageBodyScrollStyle → 若干「小节标题 + 卡片组」（设置型）
           Grid         PageBodyGridStyle   → 工具条 + 撑满高度的列表（列表型）
+
+    主体第一块永远是 40 高的小节标题行：
+      卡片组上方  TextBlock PageSectionHeaderFirstTextStyle / PageSectionHeaderTextStyle
+      列表上方    Grid      PageToolbarFirstStyle / PageToolbarStyle（小节标题 + 计数 + 命令按钮）
+    小节命名：常规（功能自身的设置）→ 其它具体分组 → 使用方法（固定放最后，平铺，不折叠）。
 -->
 <UserControl
     x:Class="WinTools.FeaturePagesHost"
@@ -18,6 +23,24 @@
     xmlns:tk="using:CommunityToolkit.WinUI.Controls"
     HorizontalContentAlignment="Stretch"
     VerticalContentAlignment="Stretch">
+
+    <UserControl.Resources>
+        <!-- 输入法切换页：只显示图标，名称放在悬停提示里。没有图标时用首字母占位。 -->
+        <DataTemplate x:Key="ImeAppTileTemplate" x:DataType="local:ImeAppTile">
+            <Grid Width="48" Height="48" ToolTipService.ToolTip="{x:Bind Tooltip, Mode=OneWay}">
+                <Image Source="{x:Bind Icon, Mode=OneWay}" Width="32" Height="32"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Visibility="{x:Bind IconVisibility, Mode=OneWay}"/>
+                <Border Width="32" Height="32" CornerRadius="8"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                        Visibility="{x:Bind LetterVisibility, Mode=OneWay}">
+                    <TextBlock Text="{x:Bind Letter, Mode=OneWay}" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
 
     <!--
         内容列宽度统一在这里收口：内容列 = min(可用宽度, 1000)，窗口更宽时靠左侧留白居中。
@@ -40,7 +63,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -55,27 +78,30 @@
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard Header="精确式触摸板"
-                                     Description="需要精确式触摸板，如与系统三指手势冲突，请在触摸板设置中将其关闭">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xEDA4;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <Button Content="打开触摸板设置" Click="OpenTouchpadSettings_Click"/>
-                    </tk:SettingsCard>
+                <StackPanel>
+                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="精确式触摸板"
+                                         Description="需要精确式触摸板，如与系统三指手势冲突，请在触摸板设置中将其关闭">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xEDA4;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <Button Content="打开触摸板设置" Click="OpenTouchpadSettings_Click"/>
+                        </tk:SettingsCard>
 
-                    <tk:SettingsCard Header="速度校准">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE9E9;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <tk:SettingsCard.Description>
-                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                <ProgressBar x:Name="ThreeFingerCalibrationProgress" Minimum="0" Maximum="3" Value="0" Visibility="Collapsed" Width="180" HorizontalAlignment="Left"/>
-                                <TextBlock x:Name="ThreeFingerCalibrationStatusText" Text="尚未校准，正在使用默认速度" Style="{StaticResource PageDescriptionTextStyle}"/>
-                            </StackPanel>
-                        </tk:SettingsCard.Description>
-                        <Button x:Name="ThreeFingerCalibrateButton" Content="开始校准" Click="ThreeFingerCalibrate_Click"/>
-                    </tk:SettingsCard>
+                        <tk:SettingsCard Header="速度校准">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE9E9;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <tk:SettingsCard.Description>
+                                <StackPanel Style="{StaticResource PageFieldStackStyle}">
+                                    <ProgressBar x:Name="ThreeFingerCalibrationProgress" Minimum="0" Maximum="3" Value="0" Visibility="Collapsed" Width="180" HorizontalAlignment="Left"/>
+                                    <TextBlock x:Name="ThreeFingerCalibrationStatusText" Text="尚未校准，正在使用默认速度" Style="{StaticResource PageDescriptionTextStyle}"/>
+                                </StackPanel>
+                            </tk:SettingsCard.Description>
+                            <Button x:Name="ThreeFingerCalibrateButton" Content="开始校准" Click="ThreeFingerCalibrate_Click"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -87,14 +113,14 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
                     <TextBlock Text="悬浮暂存" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="将文件拖到屏幕边缘暂存，稍后再拖到需要的位置。"
+                    <TextBlock Text="开启后任务栏显示「悬浮暂存」图标，拖动文件时在图标上方弹出暂存窗口，稍后再拖到需要的位置。"
                                Style="{StaticResource PageDescriptionTextStyle}"/>
                 </StackPanel>
                 <ToggleSwitch x:Name="DragStashToggle" Grid.Column="1" OnContent="开" OffContent="关"
@@ -102,27 +128,16 @@
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard Header="暂存窗口" Description="预览暂存窗口的外观">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE7C4;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <Button Content="预览" Click="DragStash_Show_Click"/>
-                    </tk:SettingsCard>
-
-                    <tk:SettingsExpander Header="窗口位置" Description="暂存窗口与屏幕边缘的距离">
-                        <tk:SettingsExpander.HeaderIcon>
-                            <FontIcon Glyph="&#xE8B9;"/>
-                        </tk:SettingsExpander.HeaderIcon>
-                        <tk:SettingsExpander.Items>
-                            <tk:SettingsCard Header="水平距离">
-                                <NumberBox x:Name="StashOffsetXBox" Minimum="0" SmallChange="5" Width="150" ValueChanged="PositionOffset_ValueChanged"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="垂直距离">
-                                <NumberBox x:Name="StashOffsetYBox" Minimum="0" SmallChange="5" Width="150" ValueChanged="PositionOffset_ValueChanged"/>
-                            </tk:SettingsCard>
-                        </tk:SettingsExpander.Items>
-                    </tk:SettingsExpander>
+                <StackPanel>
+                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="暂存窗口" Description="预览暂存窗口的外观">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7C4;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <Button Content="预览" Click="DragStash_Show_Click"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -134,7 +149,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <StackPanel Style="{StaticResource PageHeaderTextStackStyle}">
                     <TextBlock Text="设置" Style="{StaticResource PageTitleTextStyle}"/>
                     <TextBlock Text="更改 WinTools 的外观和启动方式。"
@@ -143,75 +158,151 @@
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard Header="应用主题" Description="选择 WinTools 显示的颜色模式">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE771;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <RadioButtons x:Name="ThemeRadioButtons" SelectionChanged="ThemeRadioButtons_SelectionChanged" MaxColumns="3">
-                            <RadioButton x:Name="ThemeRadioSystem" Content="使用系统设置" Tag="system"/>
-                            <RadioButton x:Name="ThemeRadioLight" Content="浅色" Tag="light"/>
-                            <RadioButton x:Name="ThemeRadioDark" Content="深色" Tag="dark"/>
-                        </RadioButtons>
-                    </tk:SettingsCard>
+                <StackPanel>
+                    <TextBlock Text="外观" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="应用主题" Description="选择 WinTools 显示的颜色模式">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE771;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <RadioButtons x:Name="ThemeRadioButtons" SelectionChanged="ThemeRadioButtons_SelectionChanged" MaxColumns="3">
+                                <RadioButton x:Name="ThemeRadioSystem" Content="使用系统设置" Tag="system"/>
+                                <RadioButton x:Name="ThemeRadioLight" Content="浅色" Tag="light"/>
+                                <RadioButton x:Name="ThemeRadioDark" Content="深色" Tag="dark"/>
+                            </RadioButtons>
+                        </tk:SettingsCard>
+                    </StackPanel>
 
-                    <tk:SettingsCard Header="登录时启动" Description="登录 Windows 后在后台自动运行">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE7E8;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <ToggleSwitch x:Name="AutoStartToggle" Toggled="AutoStartToggle_Toggled" OnContent="开" OffContent="关"/>
-                    </tk:SettingsCard>
+                    <TextBlock Text="启动" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="登录时启动" Description="登录 Windows 后在后台自动运行">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7E8;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="AutoStartToggle" Toggled="AutoStartToggle_Toggled" OnContent="开" OffContent="关"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
+
+                    <TextBlock Text="更新" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard x:Name="UpdateCard" Header="WinTools 版本" Description="当前版本">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE895;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <Button x:Name="InstallUpdateButton" Content="下载并安装" Style="{StaticResource AccentButtonStyle}"
+                                        Visibility="Collapsed" Click="Update_Install_Click"/>
+                                <Button x:Name="CheckUpdateButton" Content="检查更新" Click="Update_Check_Click"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="启动时检查更新" Description="只在这里提示有新版本，不会自动安装">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE72C;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="AutoUpdateToggle" Toggled="AutoUpdateToggle_Toggled" OnContent="开" OffContent="关"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
 
+        <!-- ============ 任务栏信息 ============ -->
         <Grid x:Name="ContentTaskbarInfo" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <Grid Style="{StaticResource PageHeaderLooseStyle}">
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <StackPanel Style="{StaticResource PageHeaderTextStackStyle}">
+                <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
                     <TextBlock Text="任务栏信息" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="查看额度，通过快捷图标呼出图标库或悬浮暂存。" Style="{StaticResource PageDescriptionTextStyle}"/>
+                    <TextBlock Text="在任务栏查看剩余额度，快速打开常用功能。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
                 </StackPanel>
-                <ToggleSwitch x:Name="TaskbarInfoToggle" Grid.Column="1" VerticalAlignment="Center"
-                              Toggled="TaskbarInfoToggle_Toggled" OnContent="开" OffContent="关"/>
+                <ToggleSwitch x:Name="TaskbarInfoToggle" Grid.Column="1" OnContent="开" OffContent="关"
+                              VerticalAlignment="Center" Toggled="TaskbarInfoToggle_Toggled"/>
             </Grid>
+
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard Header="显示位置" Description="仅系统托盘会隐藏左侧区域，鼠标悬停 WinTools 托盘图标查看信息">
-                        <ComboBox x:Name="TaskbarInfoPlacementBox" SelectionChanged="TaskbarInfoPlacement_Changed">
-                            <ComboBoxItem Content="任务栏左下角"/>
-                            <ComboBoxItem Content="仅系统托盘"/>
-                        </ComboBox>
-                    </tk:SettingsCard>
-                    <tk:SettingsCard Header="显示内容" Description="Codex 显示各额度周期的剩余百分比">
-                        <ComboBox x:Name="TaskbarInfoModeBox" SelectionChanged="TaskbarInfoMode_SelectionChanged">
-                            <ComboBoxItem Content="Codex 剩余额度"/>
-                            <ComboBoxItem Content="自定义文字"/>
-                        </ComboBox>
-                    </tk:SettingsCard>
-                    <tk:SettingsCard x:Name="TaskbarCustomTextCard" Header="自定义文字" Description="输入希望常驻显示的内容">
-                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                            <TextBox x:Name="TaskbarInfoTextBox" Width="220" MaxLength="100"/>
-                            <Button Content="应用" Click="TaskbarInfoApply_Click"/>
+                <StackPanel>
+                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="显示位置" Description="选择信息区在任务栏上的位置">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE8B9;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ComboBox x:Name="TaskbarAlignmentBox" Style="{StaticResource PageSettingComboBoxStyle}" SelectionChanged="TaskbarAlignment_Changed">
+                                <ComboBoxItem Content="偏左"/>
+                                <ComboBoxItem Content="居中"/>
+                            </ComboBox>
+                        </tk:SettingsCard>
+                    </StackPanel>
+
+                    <TextBlock Text="快捷入口" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard x:Name="TaskbarLibraryCard" Header="桌面库" Description="在任务栏显示入口，点击展开或收起">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xF0E2;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarLibraryToggle" Tag="library" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="TaskbarVoiceCard" Header="语音小球" Description="在任务栏显示入口和听写状态">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE720;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarVoiceToggle" Tag="voice" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="TaskbarAudioCard" Header="音频设备" Description="在任务栏显示当前输出设备，点击切换">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE95B;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarAudioToggle" Tag="audio" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
+
+                    <TextBlock Text="额度账户" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard x:Name="CodexConnectionCard" Header="Codex" Description="连接账户以查看剩余额度">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE77B;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <Button x:Name="CodexConnectButton" Content="连接" Tag="codex" Click="QuotaConnect_Click"/>
+                                <Button x:Name="CodexCheckButton" Content="刷新" Tag="codex" Click="QuotaCheck_Click"/>
+                                <Button x:Name="CodexCancelButton" Content="取消" Tag="codex" Visibility="Collapsed" Click="QuotaCancel_Click"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
+
+                        <tk:SettingsCard x:Name="ClaudeConnectionCard" Header="Claude" Description="连接账户以查看剩余额度">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE77B;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <Button x:Name="ClaudeConnectButton" Content="连接" Tag="claude" Click="QuotaConnect_Click"
+                                        ToolTipService.ToolTip="使用 Claude Code 兼容授权，仅查询额度。凭证保存在 Windows 凭据管理器中。"/>
+                                <Button x:Name="ClaudeCheckButton" Content="刷新" Tag="claude" Click="QuotaCheck_Click"/>
+                                <Button x:Name="ClaudeDisconnectButton" Content="断开" Click="ClaudeDisconnect_Click"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
+
+                        <!-- 授权码输入：连接 Claude 时才出现，紧跟在 Claude 卡片下面 -->
+                        <StackPanel x:Name="ClaudeCodeEntry" Visibility="Collapsed">
+                            <Border Style="{StaticResource PageCardStyle}">
+                                <StackPanel Style="{StaticResource PageFormStackStyle}">
+                                    <TextBlock Text="在 Chrome 中完成授权，然后粘贴授权码。" Style="{StaticResource PageDescriptionTextStyle}"/>
+                                    <PasswordBox x:Name="ClaudeAuthorizationCode" Header="授权码" PlaceholderText="粘贴浏览器中的完整授权码" PasswordRevealMode="Hidden"/>
+                                    <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                        <Button x:Name="ClaudeCompleteButton" Content="完成连接" Style="{ThemeResource AccentButtonStyle}" Click="ClaudeComplete_Click"/>
+                                        <Button x:Name="ClaudeCancelButton" Content="取消" Tag="claude" Click="QuotaCancel_Click"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
-                    </tk:SettingsCard>
-                    <tk:SettingsCard x:Name="TaskbarBackgroundCard" Header="显示底色" Description="关闭后只显示文字和快捷按钮">
-                        <ToggleSwitch x:Name="TaskbarInfoBackgroundToggle" Toggled="TaskbarInfoAppearance_Toggled" OnContent="开" OffContent="关"/>
-                    </tk:SettingsCard>
-                    <tk:SettingsCard x:Name="TaskbarOffsetCard" Header="向右偏移" Description="调整位置，避开任务栏现有按钮">
-                        <NumberBox x:Name="TaskbarInfoOffsetBox" Minimum="0" Maximum="1200" SmallChange="8" Width="140"
-                                   SpinButtonPlacementMode="Inline" ValueChanged="TaskbarInfoOffset_ValueChanged"/>
-                    </tk:SettingsCard>
-                    <tk:SettingsCard x:Name="TaskbarQuotaStatusCard" Header="Codex 额度" Description="每 2 分钟自动刷新">
-                        <Button Content="立即刷新" Click="TaskbarInfoRefresh_Click"/>
-                    </tk:SettingsCard>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -249,76 +340,113 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Style="{StaticResource PageInlineControlsStyle}">
-                        <TextBlock Text="规则" Style="{StaticResource PageSubtitleTextStyle}"/>
+                        <TextBlock Text="应用" Style="{StaticResource PageSubtitleTextStyle}"/>
                         <TextBlock x:Name="ImeCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                     </StackPanel>
-                    <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
-                        <AppBarButton Icon="Add" Label="添加" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_Add_Click"/>
-                        <AppBarButton Icon="Delete" Label="删除" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_Delete_Click"/>
-                        <AppBarButton Icon="Refresh" Label="刷新" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RefreshApps_Click"/>
-                        <AppBarButton Icon="Import" Label="添加推荐规则" Style="{StaticResource PageAppBarButtonStyle}" Click="Ime_RestoreDefaults_Click"
-                                      ToolTipService.ToolTip="添加内置的推荐规则，不会覆盖已有规则"/>
-                    </CommandBar>
+                    <StackPanel Grid.Column="1" Style="{StaticResource PageInlineControlsStyle}">
+                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Ime_RefreshApps_Click" ToolTipService.ToolTip="重新读取正在运行的应用">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <FontIcon Glyph="&#xE72C;" Style="{StaticResource PageToolbarIconStyle}"/>
+                                <TextBlock Text="刷新" Style="{StaticResource PageToolbarLabelTextStyle}"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PageToolbarIconButtonStyle}" ToolTipService.ToolTip="更多">
+                            <FontIcon Glyph="&#xE712;" Style="{StaticResource PageToolbarIconStyle}"/>
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Icon="Import" Text="添加推荐规则" Click="Ime_RestoreDefaults_Click"
+                                                    ToolTipService.ToolTip="添加内置的推荐规则，不会覆盖已有规则"/>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
-                <Grid Grid.Row="1" Style="{StaticResource PageWorkAreaStyle}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition x:Name="ImeEditColumn" Width="0"/>
-                    </Grid.ColumnDefinitions>
+                <Grid Grid.Row="1" Style="{StaticResource PageWorkAreaStyle}" RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
 
-                    <Border Grid.Column="0" Style="{StaticResource PageListPanelStyle}">
-                        <Grid>
-                            <ListView x:Name="ImeRulesListView" SelectionMode="Single">
-                                <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="local:ImeRuleEntry">
-                                        <Grid Style="{StaticResource PageListRowStyle}">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-                                                <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource PageListTitleTextStyle}"/>
-                                                <TextBlock Text="{x:Bind ProcessName}" Style="{StaticResource PageCaptionTextStyle}"/>
-                                            </StackPanel>
-                                            <Button Grid.Column="1" Click="ImeModeChip_Click" Content="{x:Bind ModeLabel}" Tag="{x:Bind}"
-                                                    Style="{StaticResource PageRowChipButtonStyle}"
-                                                    ToolTipService.ToolTip="切换输入语言"/>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
-                            <TextBlock x:Name="ImeEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
-                                       Text="尚无规则。选择“添加”为正在运行的应用指定输入语言。"/>
+                    <!-- 上方：还没设置输入语言的应用（正在运行的）。把图标拖到下方两栏，或点一下选择。 -->
+                    <Border Grid.Row="0" x:Name="ImePoolPanel" Tag="pool" Style="{StaticResource PageListPanelStyle}"
+                            VerticalAlignment="Top" AllowDrop="True"
+                            DragOver="ImePanel_DragOver" Drop="ImePanel_Drop">
+                        <Grid RowSpacing="4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Style="{StaticResource PageInlineControlsStyle}" Margin="4,2,0,0">
+                                <TextBlock Text="未设置" Style="{StaticResource PageListTitleTextStyle}"/>
+                                <TextBlock Text="点击图标选择语言，或拖到下方；把图标拖回这里可取消设置"
+                                           Style="{StaticResource PageCaptionTextStyle}"/>
+                            </StackPanel>
+                            <Grid Grid.Row="1" MinHeight="56">
+                                <GridView x:Name="ImePoolGridView" SelectionMode="None" IsItemClickEnabled="True"
+                                          CanDragItems="True" MaxHeight="112"
+                                          ItemClick="ImeGrid_ItemClick" DragItemsStarting="ImeGrid_DragItemsStarting"
+                                          DragItemsCompleted="ImeGrid_DragItemsCompleted"
+                                          ItemTemplate="{StaticResource ImeAppTileTemplate}"/>
+                                <TextBlock x:Name="ImePoolEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
+                                           Text="没有未设置的应用。打开要设置的软件后点“刷新”。"/>
+                            </Grid>
                         </Grid>
                     </Border>
 
-                    <Border Grid.Column="1" x:Name="ImeEditPanel" Visibility="Collapsed" Style="{StaticResource PageEditPanelStyle}">
-                        <StackPanel Style="{StaticResource PageFormStackStyle}">
-                            <TextBlock Text="新建规则" Style="{StaticResource PageSubtitleTextStyle}"/>
-                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                <TextBlock Text="应用"/>
-                                <ComboBox x:Name="ImeAppComboBox" PlaceholderText="选择正在运行的应用" HorizontalAlignment="Stretch">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="local:RunningAppInfo">
-                                            <TextBlock Text="{x:Bind DisplayName}" TextTrimming="CharacterEllipsis"/>
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </StackPanel>
-                            <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                <TextBlock Text="输入语言"/>
-                                <ComboBox x:Name="ImeModeComboBox" HorizontalAlignment="Stretch" SelectedIndex="0">
-                                    <ComboBoxItem Content="中文"/>
-                                    <ComboBoxItem Content="英文"/>
-                                </ComboBox>
-                            </StackPanel>
-                            <StackPanel Style="{StaticResource PageActionsStackStyle}">
-                                <Button Content="确定" Style="{ThemeResource AccentButtonStyle}" Click="Ime_Confirm_Click"/>
-                                <Button Content="取消" Click="Ime_Cancel_Click"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
+                    <!-- 下方左右两栏：左中文，右英文 -->
+                    <Grid Grid.Row="1" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" x:Name="ImeChinesePanel" Tag="zh" Style="{StaticResource PageListPanelStyle}"
+                                AllowDrop="True" DragOver="ImePanel_DragOver" Drop="ImePanel_Drop">
+                            <Grid RowSpacing="4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0" Style="{StaticResource PageInlineControlsStyle}" Margin="4,2,0,0">
+                                    <TextBlock Text="中文" Style="{StaticResource PageListTitleTextStyle}"/>
+                                    <TextBlock x:Name="ImeChineseCountText" Style="{StaticResource PageCaptionTextStyle}"/>
+                                </StackPanel>
+                                <Grid Grid.Row="1">
+                                    <GridView x:Name="ImeChineseGridView" SelectionMode="None" IsItemClickEnabled="True"
+                                              CanDragItems="True"
+                                              ItemClick="ImeGrid_ItemClick" DragItemsStarting="ImeGrid_DragItemsStarting"
+                                              DragItemsCompleted="ImeGrid_DragItemsCompleted"
+                                              ItemTemplate="{StaticResource ImeAppTileTemplate}"/>
+                                    <TextBlock x:Name="ImeChineseEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
+                                               Text="拖到这里，切换到该应用时使用中文"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Column="1" x:Name="ImeEnglishPanel" Tag="en" Style="{StaticResource PageListPanelStyle}"
+                                AllowDrop="True" DragOver="ImePanel_DragOver" Drop="ImePanel_Drop">
+                            <Grid RowSpacing="4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0" Style="{StaticResource PageInlineControlsStyle}" Margin="4,2,0,0">
+                                    <TextBlock Text="英文" Style="{StaticResource PageListTitleTextStyle}"/>
+                                    <TextBlock x:Name="ImeEnglishCountText" Style="{StaticResource PageCaptionTextStyle}"/>
+                                </StackPanel>
+                                <Grid Grid.Row="1">
+                                    <GridView x:Name="ImeEnglishGridView" SelectionMode="None" IsItemClickEnabled="True"
+                                              CanDragItems="True"
+                                              ItemClick="ImeGrid_ItemClick" DragItemsStarting="ImeGrid_DragItemsStarting"
+                                              DragItemsCompleted="ImeGrid_DragItemsCompleted"
+                                              ItemTemplate="{StaticResource ImeAppTileTemplate}"/>
+                                    <TextBlock x:Name="ImeEnglishEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
+                                               Text="拖到这里，切换到该应用时使用英文"/>
+                                </Grid>
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Grid>
             </Grid>
         </Grid>
@@ -359,14 +487,35 @@
                         <TextBlock Text="关联" Style="{StaticResource PageSubtitleTextStyle}"/>
                         <TextBlock x:Name="AssocCountText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                     </StackPanel>
-                    <CommandBar Grid.Column="1" Style="{StaticResource PageCommandBarStyle}">
-                        <AppBarButton Icon="Add" Label="新建" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_New_Click"/>
-                        <AppBarButton Icon="Edit" Label="编辑" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Edit_Click"/>
-                        <AppBarButton Icon="Delete" Label="删除" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Delete_Click"/>
-                        <AppBarSeparator/>
-                        <AppBarButton Icon="OpenFile" Label="导入" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Import_Click"/>
-                        <AppBarButton Icon="Save" Label="导出" Style="{StaticResource PageAppBarButtonStyle}" Click="Assoc_Export_Click"/>
-                    </CommandBar>
+                    <StackPanel Grid.Column="1" Style="{StaticResource PageInlineControlsStyle}">
+                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Assoc_New_Click" ToolTipService.ToolTip="新建关联">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <FontIcon Glyph="&#xE710;" Style="{StaticResource PageToolbarIconStyle}"/>
+                                <TextBlock Text="新建" Style="{StaticResource PageToolbarLabelTextStyle}"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Assoc_Edit_Click" ToolTipService.ToolTip="编辑所选关联">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <FontIcon Glyph="&#xE70F;" Style="{StaticResource PageToolbarIconStyle}"/>
+                                <TextBlock Text="编辑" Style="{StaticResource PageToolbarLabelTextStyle}"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Assoc_Delete_Click" ToolTipService.ToolTip="删除所选关联">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <FontIcon Glyph="&#xE74D;" Style="{StaticResource PageToolbarIconStyle}"/>
+                                <TextBlock Text="删除" Style="{StaticResource PageToolbarLabelTextStyle}"/>
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource PageToolbarIconButtonStyle}" ToolTipService.ToolTip="更多">
+                            <FontIcon Glyph="&#xE712;" Style="{StaticResource PageToolbarIconStyle}"/>
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Icon="OpenFile" Text="导入关联" Click="Assoc_Import_Click"/>
+                                    <MenuFlyoutItem Icon="Save" Text="导出关联" Click="Assoc_Export_Click"/>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
                 </Grid>
 
                 <Grid Grid.Row="1" Style="{StaticResource PageWorkAreaStyle}">
@@ -434,14 +583,14 @@
             </Grid>
         </Grid>
 
-        <!-- ============ 点击桌面 ============ -->
+        <!-- ============ 双击桌面 ============ -->
         <Grid x:Name="ContentDesktopClick" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -456,13 +605,27 @@
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard Header="不会触发的情况"
-                                     Description="双击桌面图标或任务栏，以及拖动操作">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE946;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                    </tk:SettingsCard>
+                <StackPanel>
+                    <TextBlock Text="使用方法" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="显示桌面" Description="最小化所有窗口">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7F4;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <TextBlock Text="双击桌面空白处" Style="{StaticResource PageCaptionTextStyle}"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="还原窗口" Description="恢复上一次显示桌面前的窗口">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7A7;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <TextBlock Text="再次双击" Style="{StaticResource PageCaptionTextStyle}"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="不会触发的情况" Description="双击桌面图标或任务栏，以及拖动操作">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE946;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                        </tk:SettingsCard>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -474,7 +637,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -489,50 +652,55 @@
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard Header="快捷键" Description="打开搜索框的快捷键，默认 Alt+Space">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE765;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                            <TextBox x:Name="HotkeySpotlightBox" PlaceholderText="例如 Alt+Space" Width="200" VerticalAlignment="Center"/>
-                            <Button Content="应用" Click="Spotlight_ApplyHotkey_Click" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </tk:SettingsCard>
+                <StackPanel>
+                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="快捷键" Description="打开搜索框的快捷键，默认 Alt+Space">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE765;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <TextBox x:Name="HotkeySpotlightBox" PlaceholderText="例如 Alt+Space" Style="{StaticResource PageHotkeyBoxStyle}"/>
+                                <Button Content="应用" Click="Spotlight_ApplyHotkey_Click"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
 
-                    <tk:SettingsCard Header="应用索引" Description="包含开始菜单、桌面和“所有应用”中的程序，安装或卸载应用后可重建">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE721;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                            <TextBlock x:Name="SpotlightStatusText" Text="尚未建立索引，首次打开搜索时将自动建立"
-                                       Style="{StaticResource PageCaptionTextStyle}" VerticalAlignment="Center"/>
-                            <Button Content="重建索引" Click="Spotlight_RebuildIndex_Click" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </tk:SettingsCard>
+                        <tk:SettingsCard Header="应用索引" Description="包含开始菜单、桌面和“所有应用”中的程序，安装或卸载应用后可重建">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE721;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <TextBlock x:Name="SpotlightStatusText" Text="尚未建立索引，首次打开搜索时将自动建立"
+                                           Style="{StaticResource PageCaptionTextStyle}"/>
+                                <Button Content="重建索引" Click="Spotlight_RebuildIndex_Click"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
+                    </StackPanel>
 
-                    <tk:SettingsExpander Header="使用方法" Description="搜索框中可用的按键">
-                        <tk:SettingsExpander.HeaderIcon>
-                            <FontIcon Glyph="&#xE946;"/>
-                        </tk:SettingsExpander.HeaderIcon>
-                        <tk:SettingsExpander.Items>
-                            <tk:SettingsCard Header="选择搜索结果">
-                                <TextBlock Text="↑ / ↓" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="打开所选应用" Description="没有匹配结果时，将直接运行输入的内容">
-                                <TextBlock Text="Enter" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="打开文件所在位置">
-                                <TextBlock Text="Ctrl+Enter" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="关闭搜索框" Description="也可以单击搜索框以外的区域">
-                                <TextBlock Text="Esc" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="切换中英文输入" Description="中文输入模式下，输入内容会先进入输入法候选窗">
-                                <TextBlock Text="Shift" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                        </tk:SettingsExpander.Items>
-                    </tk:SettingsExpander>
+                    <TextBlock Text="使用方法" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="选择搜索结果">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="↑" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                                <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="↓" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                            </StackPanel>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="打开所选应用" Description="没有匹配结果时，将直接运行输入的内容">
+                            <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="Enter" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="打开文件所在位置">
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="Ctrl" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                                <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="Enter" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                            </StackPanel>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="关闭搜索框" Description="也可以单击搜索框以外的区域">
+                            <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="Esc" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="切换中英文输入" Description="中文输入模式下，输入内容会先进入输入法候选窗">
+                            <Border Style="{StaticResource PageKeyCapStyle}"><TextBlock Text="Shift" Style="{StaticResource PageKeyCapTextStyle}"/></Border>
+                        </tk:SettingsCard>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -544,7 +712,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -559,43 +727,42 @@
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
-                <StackPanel Style="{StaticResource PageCardStackStyle}">
-                    <tk:SettingsCard x:Name="VoiceBallHotkeyCard" Header="语音输入快捷键"
-                                     Description="点击小球时发送的快捷键，默认 Win+H 为 Windows 语音输入">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE765;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                            <TextBox x:Name="HotkeyVoiceBallBox" PlaceholderText="例如 Win+H" Width="200" VerticalAlignment="Center"/>
-                            <Button Content="应用" Click="VoiceBall_ApplyHotkey_Click" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </tk:SettingsCard>
+                <StackPanel>
+                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard x:Name="VoiceBallHotkeyCard" Header="快捷键"
+                                         Description="点击小球时发送的快捷键，默认 Win+H 为 Windows 语音输入">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE765;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <TextBox x:Name="HotkeyVoiceBallBox" PlaceholderText="例如 Win+H" Style="{StaticResource PageHotkeyBoxStyle}"/>
+                                <Button Content="应用" Click="VoiceBall_ApplyHotkey_Click"/>
+                            </StackPanel>
+                        </tk:SettingsCard>
 
-                    <tk:SettingsCard x:Name="VoiceBallPositionCard" Header="小球位置"
-                                     Description="默认显示在输入光标下方，拖动小球可调整位置">
-                        <tk:SettingsCard.HeaderIcon>
-                            <FontIcon Glyph="&#xE7B7;"/>
-                        </tk:SettingsCard.HeaderIcon>
-                        <Button x:Name="VoiceBallResetPositionButton" Content="重置" Click="VoiceBall_ResetPosition_Click"/>
-                    </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="VoiceBallPositionCard" Header="小球位置"
+                                         Description="默认显示在输入光标下方，拖动小球可调整位置">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7B7;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <Button x:Name="VoiceBallResetPositionButton" Content="重置" Click="VoiceBall_ResetPosition_Click"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
 
-                    <tk:SettingsExpander Header="使用方法" Description="小球支持的操作，以及不会显示小球的情况">
-                        <tk:SettingsExpander.HeaderIcon>
-                            <FontIcon Glyph="&#xE946;"/>
-                        </tk:SettingsExpander.HeaderIcon>
-                        <tk:SettingsExpander.Items>
-                            <tk:SettingsCard Header="开始或停止语音输入" Description="输入期间小球显示为强调色">
-                                <TextBlock Text="单击小球" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="调整位置" Description="语音输入期间不可拖动">
-                                <TextBlock Text="拖动小球" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="在当前文本框中隐藏">
-                                <TextBlock Text="右键单击小球" Style="{StaticResource PageCaptionTextStyle}"/>
-                            </tk:SettingsCard>
-                            <tk:SettingsCard Header="不显示小球的情况" Description="密码框、只读文本，以及以管理员身份运行的应用"/>
-                        </tk:SettingsExpander.Items>
-                    </tk:SettingsExpander>
+                    <TextBlock Text="使用方法" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="开始或停止语音输入" Description="输入期间小球显示为强调色">
+                            <TextBlock Text="单击小球" Style="{StaticResource PageCaptionTextStyle}"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="调整位置" Description="语音输入期间不可拖动">
+                            <TextBlock Text="拖动小球" Style="{StaticResource PageCaptionTextStyle}"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="在当前文本框中隐藏">
+                            <TextBlock Text="右键单击小球" Style="{StaticResource PageCaptionTextStyle}"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="不显示小球的情况" Description="密码框、只读文本，以及以管理员身份运行的应用"/>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -607,7 +774,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <Grid Grid.Row="0" Style="{StaticResource PageHeaderLooseStyle}">
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -625,18 +792,21 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Style="{StaticResource PageCardStackStyle}">
+                <TextBlock Grid.Row="0" Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+
+                <StackPanel Grid.Row="1" Style="{StaticResource PageCardStackStyle}">
                     <!-- 快捷键始终留在最外层，不折叠进任何面板 -->
                     <tk:SettingsCard Header="快捷键" Description="将被窗口遮挡的分区卡片显示到最前面">
                         <tk:SettingsCard.HeaderIcon>
                             <FontIcon Glyph="&#xE765;"/>
                         </tk:SettingsCard.HeaderIcon>
                         <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                            <TextBox x:Name="HotkeyDesktopCardBox" PlaceholderText="例如 Ctrl+Alt+Shift+F12" Width="200" VerticalAlignment="Center"/>
-                            <Button Content="应用" Click="DesktopCard_ApplyHotkey_Click" VerticalAlignment="Center"/>
+                            <TextBox x:Name="HotkeyDesktopCardBox" PlaceholderText="例如 Ctrl+Alt+Shift+F12" Style="{StaticResource PageHotkeyBoxStyle}"/>
+                            <Button Content="应用" Click="DesktopCard_ApplyHotkey_Click"/>
                         </StackPanel>
                     </tk:SettingsCard>
 
@@ -645,20 +815,26 @@
                             <FontIcon Glyph="&#xE80A;"/>
                         </tk:SettingsExpander.HeaderIcon>
                         <tk:SettingsExpander.Items>
+                            <tk:SettingsCard Header="位置" Description="卡片排在屏幕的哪一侧">
+                                <ComboBox x:Name="DesktopCardAlignmentBox" Style="{StaticResource PageSettingComboBoxStyle}" SelectionChanged="DesktopCardAlignment_Changed">
+                                    <ComboBoxItem Content="靠左"/>
+                                    <ComboBoxItem Content="靠右"/>
+                                </ComboBox>
+                            </tk:SettingsCard>
                             <tk:SettingsCard Header="边距" Description="卡片与屏幕左、右、上边缘的距离">
-                                <NumberBox x:Name="DesktopCardMarginBox" Minimum="0" Maximum="600" SmallChange="4" Width="150" ValueChanged="DesktopCardGap_ValueChanged"/>
+                                <NumberBox x:Name="DesktopCardMarginBox" Minimum="0" Maximum="600" SmallChange="4" Style="{StaticResource PageSettingNumberBoxStyle}" ValueChanged="DesktopCardGap_ValueChanged"/>
                             </tk:SettingsCard>
                             <tk:SettingsCard Header="卡片间距">
-                                <NumberBox x:Name="DesktopCardGapBox" Minimum="0" Maximum="200" SmallChange="4" Width="150" ValueChanged="DesktopCardGap_ValueChanged"/>
+                                <NumberBox x:Name="DesktopCardGapBox" Minimum="0" Maximum="200" SmallChange="4" Style="{StaticResource PageSettingNumberBoxStyle}" ValueChanged="DesktopCardGap_ValueChanged"/>
                             </tk:SettingsCard>
                             <tk:SettingsCard Header="每行图标数" Description="决定卡片的宽度">
-                                <NumberBox x:Name="DesktopCardMaxColumnsBox" Minimum="1" Maximum="5" SmallChange="1" LargeChange="1" SpinButtonPlacementMode="Inline" Width="150" ValueChanged="DesktopCardMaxColumns_ValueChanged"/>
+                                <NumberBox x:Name="DesktopCardMaxColumnsBox" Minimum="1" Maximum="5" SmallChange="1" LargeChange="1" SpinButtonPlacementMode="Inline" Style="{StaticResource PageSettingNumberBoxStyle}" ValueChanged="DesktopCardMaxColumns_ValueChanged"/>
                             </tk:SettingsCard>
                         </tk:SettingsExpander.Items>
                     </tk:SettingsExpander>
                 </StackPanel>
 
-                <Grid Grid.Row="1" Style="{StaticResource PageToolbarStyle}">
+                <Grid Grid.Row="2" Style="{StaticResource PageToolbarStyle}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
@@ -669,19 +845,18 @@
                         <TextBlock x:Name="CollectStatusText" Text="" Style="{StaticResource PageCaptionTextStyle}"/>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Style="{StaticResource PageInlineControlsStyle}">
-                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Zone_New_Click">
+                        <Button Style="{StaticResource PageToolbarButtonStyle}" Click="Zone_New_Click" ToolTipService.ToolTip="新建分区">
                             <StackPanel Style="{StaticResource PageInlineControlsStyle}">
-                                <FontIcon Glyph="&#xE710;"/>
-                                <TextBlock Text="新建"/>
+                                <FontIcon Glyph="&#xE710;" Style="{StaticResource PageToolbarIconStyle}"/>
+                                <TextBlock Text="新建" Style="{StaticResource PageToolbarLabelTextStyle}"/>
                             </StackPanel>
                         </Button>
-                        <Button Style="{StaticResource PageToolbarIconButtonStyle}"
-                                ToolTipService.ToolTip="更多">
-                            <FontIcon Glyph="&#xE712;"/>
+                        <Button Style="{StaticResource PageToolbarIconButtonStyle}" ToolTipService.ToolTip="更多">
+                            <FontIcon Glyph="&#xE712;" Style="{StaticResource PageToolbarIconStyle}"/>
                             <Button.Flyout>
                                 <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                    <MenuFlyoutItem Icon="Save" Text="导出分区预设" Click="Zone_PresetExport_Click"/>
                                     <MenuFlyoutItem Icon="OpenFile" Text="导入分区预设" Click="Zone_PresetImport_Click"/>
+                                    <MenuFlyoutItem Icon="Save" Text="导出分区预设" Click="Zone_PresetExport_Click"/>
                                     <MenuFlyoutSeparator/>
                                     <MenuFlyoutItem Icon="Sync" Text="同步桌面" Click="Zone_Reapply_Click"/>
                                     <MenuFlyoutItem Icon="Undo" Text="恢复默认分区" Click="Zone_ResetDefaults_Click"/>
@@ -693,7 +868,7 @@
                     </StackPanel>
                 </Grid>
 
-                <Grid Grid.Row="2" Style="{StaticResource PageWorkAreaStyle}">
+                <Grid Grid.Row="3" Style="{StaticResource PageWorkAreaStyle}">
                     <Border Style="{StaticResource PageListPanelStyle}">
                         <Grid>
                             <ListView x:Name="ZonesListView" SelectionMode="Single" CanReorderItems="True" CanDragItems="True" AllowDrop="True"

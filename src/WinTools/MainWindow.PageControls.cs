@@ -1,27 +1,22 @@
-﻿using Microsoft.UI.Xaml.Controls;
+﻿using CommunityToolkit.WinUI.Controls;
+using Microsoft.UI.Xaml.Controls;
 
 namespace WinTools;
 
 public sealed partial class MainWindow
 {
     private Border AssocEditPanel => FeaturePages.GetControl<Border>(nameof(AssocEditPanel));
-    private Border ImeEditPanel => FeaturePages.GetControl<Border>(nameof(ImeEditPanel));
     private Button ThreeFingerCalibrateButton => FeaturePages.GetControl<Button>(nameof(ThreeFingerCalibrateButton));
     private ColumnDefinition AssocEditColumn => FeaturePages.GetControl<ColumnDefinition>(nameof(AssocEditColumn));
-    private ColumnDefinition ImeEditColumn => FeaturePages.GetControl<ColumnDefinition>(nameof(ImeEditColumn));
-    private ComboBox ImeAppComboBox => FeaturePages.GetControl<ComboBox>(nameof(ImeAppComboBox));
-    private ComboBox ImeModeComboBox => FeaturePages.GetControl<ComboBox>(nameof(ImeModeComboBox));
     private Grid ContentDesktopOrganize => FeaturePages.GetControl<Grid>(nameof(ContentDesktopOrganize));
     private Grid ContentPerAppIme => FeaturePages.GetControl<Grid>(nameof(ContentPerAppIme));
     private Grid ContentProgramAssociation => FeaturePages.GetControl<Grid>(nameof(ContentProgramAssociation));
     private ListView AssocListView => FeaturePages.GetControl<ListView>(nameof(AssocListView));
-    private ListView ImeRulesListView => FeaturePages.GetControl<ListView>(nameof(ImeRulesListView));
     private ListView ZonesListView => FeaturePages.GetControl<ListView>(nameof(ZonesListView));
     private NumberBox DesktopCardGapBox => FeaturePages.GetControl<NumberBox>(nameof(DesktopCardGapBox));
     private NumberBox DesktopCardMarginBox => FeaturePages.GetControl<NumberBox>(nameof(DesktopCardMarginBox));
     private NumberBox DesktopCardMaxColumnsBox => FeaturePages.GetControl<NumberBox>(nameof(DesktopCardMaxColumnsBox));
-    private NumberBox StashOffsetXBox => FeaturePages.GetControl<NumberBox>(nameof(StashOffsetXBox));
-    private NumberBox StashOffsetYBox => FeaturePages.GetControl<NumberBox>(nameof(StashOffsetYBox));
+    private ComboBox DesktopCardAlignmentBox => FeaturePages.GetControl<ComboBox>(nameof(DesktopCardAlignmentBox));
     private ProgressBar ThreeFingerCalibrationProgress => FeaturePages.GetControl<ProgressBar>(nameof(ThreeFingerCalibrationProgress));
     private RadioButton ThemeRadioDark => FeaturePages.GetControl<RadioButton>(nameof(ThemeRadioDark));
     private RadioButton ThemeRadioLight => FeaturePages.GetControl<RadioButton>(nameof(ThemeRadioLight));
@@ -34,10 +29,17 @@ public sealed partial class MainWindow
     private Grid ContentThreeFingerDrag => FeaturePages.GetControl<Grid>(nameof(ContentThreeFingerDrag));
     private TextBlock AssocCountText => FeaturePages.GetControl<TextBlock>(nameof(AssocCountText));
     private TextBlock AssocEmptyHint => FeaturePages.GetControl<TextBlock>(nameof(AssocEmptyHint));
-    private TextBlock ImeEmptyHint => FeaturePages.GetControl<TextBlock>(nameof(ImeEmptyHint));
     private TextBlock ZoneEmptyHint => FeaturePages.GetControl<TextBlock>(nameof(ZoneEmptyHint));
     private TextBlock CollectStatusText => FeaturePages.GetControl<TextBlock>(nameof(CollectStatusText));
     private TextBlock AssocEditTitle => FeaturePages.GetControl<TextBlock>(nameof(AssocEditTitle));
+    private GridView ImePoolGridView => FeaturePages.GetControl<GridView>(nameof(ImePoolGridView));
+    private GridView ImeChineseGridView => FeaturePages.GetControl<GridView>(nameof(ImeChineseGridView));
+    private GridView ImeEnglishGridView => FeaturePages.GetControl<GridView>(nameof(ImeEnglishGridView));
+    private TextBlock ImePoolEmptyHint => FeaturePages.GetControl<TextBlock>(nameof(ImePoolEmptyHint));
+    private TextBlock ImeChineseEmptyHint => FeaturePages.GetControl<TextBlock>(nameof(ImeChineseEmptyHint));
+    private TextBlock ImeEnglishEmptyHint => FeaturePages.GetControl<TextBlock>(nameof(ImeEnglishEmptyHint));
+    private TextBlock ImeChineseCountText => FeaturePages.GetControl<TextBlock>(nameof(ImeChineseCountText));
+    private TextBlock ImeEnglishCountText => FeaturePages.GetControl<TextBlock>(nameof(ImeEnglishCountText));
     private TextBlock ImeCountText => FeaturePages.GetControl<TextBlock>(nameof(ImeCountText));
     private TextBlock ThreeFingerCalibrationStatusText => FeaturePages.GetControl<TextBlock>(nameof(ThreeFingerCalibrationStatusText));
     private TextBlock ZoneCountText => FeaturePages.GetControl<TextBlock>(nameof(ZoneCountText));
@@ -46,6 +48,10 @@ public sealed partial class MainWindow
     private TextBox AssocPathBox => FeaturePages.GetControl<TextBox>(nameof(AssocPathBox));
     private TextBox HotkeyDesktopCardBox => FeaturePages.GetControl<TextBox>(nameof(HotkeyDesktopCardBox));
     private ToggleSwitch DesktopCardToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(DesktopCardToggle));
+    private SettingsCard UpdateCard => FeaturePages.GetControl<SettingsCard>(nameof(UpdateCard));
+    private Button InstallUpdateButton => FeaturePages.GetControl<Button>(nameof(InstallUpdateButton));
+    private Button CheckUpdateButton => FeaturePages.GetControl<Button>(nameof(CheckUpdateButton));
+    private ToggleSwitch AutoUpdateToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(AutoUpdateToggle));
     private ToggleSwitch AutoStartToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(AutoStartToggle));
     private ToggleSwitch DesktopClickToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(DesktopClickToggle));
     private ToggleSwitch DragStashToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(DragStashToggle));

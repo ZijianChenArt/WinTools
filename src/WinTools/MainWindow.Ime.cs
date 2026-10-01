@@ -1,33 +1,41 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
+using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using System.Text.Json;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Media;
-using Windows.UI;
-using Windows.Storage.Pickers;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
-using Windows.Win32.UI.WindowsAndMessaging;
-using WinRT.Interop;
+using Windows.ApplicationModel.DataTransfer;
 using WinTools.Services;
 
 namespace WinTools;
 
 /// <summary>按程序切换输入法页面。</summary>
-/// <remarks>MainWindow 的分部实现，字段与壳层逻辑仍在 MainWindow.xaml.cs。</remarks>
+/// <remarks>
+/// 页面结构：上方是“未设置”的运行中应用（只显示图标），下方左右两栏 = 中文 / 英文。
+/// 图标可以拖到目标栏，也可以点一下从菜单里选。规则的持久化仍是 <see cref="_imeRules"/>，
+/// 三个 GridView 都只是它的视图（每次变更后整体重建）。
+/// MainWindow 的分部实现，字段与壳层逻辑仍在 MainWindow.xaml.cs。
+/// </remarks>
 public sealed partial class MainWindow
 {
     #region 输入法切换
+    private const string ImeTargetPool = "pool";
+    private const string ImeTargetChinese = "zh";
+    private const string ImeTargetEnglish = "en";
+
+    private readonly ObservableCollection<ImeAppTile> _imePoolTiles = new();
+    private readonly ObservableCollection<ImeAppTile> _imeChineseTiles = new();
+    private readonly ObservableCollection<ImeAppTile> _imeEnglishTiles = new();
+
+    // 按进程名缓存图标块：重建视图时复用同一个实例，图标不会闪烁、也不用重复加载。
+    private readonly Dictionary<string, ImeAppTile> _imeTiles = new(StringComparer.OrdinalIgnoreCase);
+    private List<RunningAppInfo> _imeRunningApps = new();
+    private ImeAppTile? _imeDragTile;
+    private bool _imeGridsBound;
+
     private void LoadPerAppImeFromConfig()
     {
 
@@ -73,7 +81,8 @@ public sealed partial class MainWindow
 
                 ProcessName = rule.ProcessName,
                 DisplayName = string.IsNullOrWhiteSpace(rule.DisplayName) ? rule.ProcessName : rule.DisplayName,
-                UseChinese = rule.UseChinese
+                UseChinese = rule.UseChinese,
+                ExePath = rule.ExePath ?? ""
             }
 
 );
@@ -81,19 +90,127 @@ public sealed partial class MainWindow
 
         }
 
-        ImeRulesListView.ItemsSource = _imeRules;
+        if (!_imeGridsBound)
+        {
+            ImePoolGridView.ItemsSource = _imePoolTiles;
+            ImeChineseGridView.ItemsSource = _imeChineseTiles;
+            ImeEnglishGridView.ItemsSource = _imeEnglishTiles;
+            _imeGridsBound = true;
+        }
+
+        _imeRunningApps = GetImeCandidateApps();
+        RebuildImeTiles();
+
+
+    }
+
+    /// <summary>正在运行、有可见窗口的应用（去掉 WinTools 自己）。</summary>
+    private static List<RunningAppInfo> GetImeCandidateApps()
+    {
+        string self;
+        try { self = Process.GetCurrentProcess().ProcessName; }
+        catch { self = ""; }
+
+        return RunningProcessHelper.GetRunningApps()
+            .Where(a => !string.Equals(a.ProcessName, self, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private ImeAppTile GetImeTile(string processName, string displayName, string exePath)
+    {
+        if (_imeTiles.TryGetValue(processName, out var tile))
+        {
+            tile.DisplayName = displayName;
+            if (string.IsNullOrEmpty(tile.ExePath) && !string.IsNullOrEmpty(exePath)) tile.ExePath = exePath;
+            return tile;
+        }
+
+        tile = new ImeAppTile(processName, displayName, exePath);
+        _imeTiles[processName] = tile;
+        return tile;
+    }
+
+    /// <summary>按当前规则 + 运行中的应用重排三个区域，并异步补齐图标。</summary>
+    private void RebuildImeTiles()
+    {
+        _imePoolTiles.Clear();
+        _imeChineseTiles.Clear();
+        _imeEnglishTiles.Clear();
+
+        var all = new List<ImeAppTile>();
+
+        var runningPaths = _imeRunningApps
+            .GroupBy(app => app.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().ExePath, StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in _imeRules)
+        {
+            runningPaths.TryGetValue(rule.ProcessName, out var runningPath);
+            var tile = GetImeTile(rule.ProcessName, rule.DisplayName,
+                string.IsNullOrEmpty(rule.ExePath) ? runningPath ?? "" : rule.ExePath);
+            tile.Mode = rule.UseChinese ? ImeTargetChinese : ImeTargetEnglish;
+            tile.RetryIfStale();
+            all.Add(tile); // 没装的也要参与图标 / 路径解析，装上之后才会出现
+            if (!tile.IsInstalled) continue; // 本机没有这个软件：不显示，规则仍保留在配置里
+            (rule.UseChinese ? _imeChineseTiles : _imeEnglishTiles).Add(tile);
+        }
+
+        var assigned = new HashSet<string>(_imeRules.Select(r => r.ProcessName), StringComparer.OrdinalIgnoreCase);
+        foreach (var app in _imeRunningApps)
+        {
+            if (assigned.Contains(app.ProcessName)) continue;
+
+            var tile = GetImeTile(app.ProcessName, app.DisplayName, app.ExePath);
+            tile.Mode = ImeTargetPool;
+            _imePoolTiles.Add(tile);
+            all.Add(tile);
+        }
 
         UpdateImeCount();
+        _ = LoadImeIconsAsync(all);
+    }
 
+    private async Task LoadImeIconsAsync(List<ImeAppTile> tiles)
+    {
+        var wasInstalled = tiles.ToDictionary(tile => tile, tile => tile.IsInstalled);
+        var pending = tiles.Select(async tile =>
+        {
+            await tile.EnsureIconAsync();
+            return SyncImeExePath(tile);
+        }).ToList();
 
+        var changed = await Task.WhenAll(pending);
+
+        // 刚解析出路径的规则（新装的软件，或首次探测完成）补进列表。
+        if (tiles.Any(tile => !wasInstalled[tile] && tile.IsInstalled)) RebuildImeTiles();
+
+        // 第一次解析出路径的规则存进配置，下次即使应用没在运行也能显示图标。
+        if (changed.Any(c => c) && _imeRulesListInitialized) SaveImeRules();
+    }
+
+    private bool SyncImeExePath(ImeAppTile tile)
+    {
+        if (string.IsNullOrEmpty(tile.ExePath)) return false;
+
+        var rule = _imeRules.FirstOrDefault(r =>
+            string.Equals(r.ProcessName, tile.ProcessName, StringComparison.OrdinalIgnoreCase));
+        if (rule == null || string.Equals(rule.ExePath, tile.ExePath, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        rule.ExePath = tile.ExePath;
+        return true;
     }
 
     private void UpdateImeCount()
     {
 
-        ImeCountText.Text = _imeRules.Count > 0 ? $"{_imeRules.Count} 条规则" : "";
+        ImeCountText.Text = _imeRules.Count > 0 ? $"已设置 {_imeRules.Count} 个" : "";
 
-        ImeEmptyHint.Visibility = _imeRules.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        ImeChineseCountText.Text = _imeChineseTiles.Count > 0 ? $"{_imeChineseTiles.Count}" : "";
+        ImeEnglishCountText.Text = _imeEnglishTiles.Count > 0 ? $"{_imeEnglishTiles.Count}" : "";
+
+        ImePoolEmptyHint.Visibility = _imePoolTiles.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        ImeChineseEmptyHint.Visibility = _imeChineseTiles.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
+        ImeEnglishEmptyHint.Visibility = _imeEnglishTiles.Count > 0 ? Visibility.Collapsed : Visibility.Visible;
 
 
     }
@@ -106,7 +223,8 @@ public sealed partial class MainWindow
 
             ProcessName = r.ProcessName,
             DisplayName = r.DisplayName,
-            UseChinese = r.UseChinese
+            UseChinese = r.UseChinese,
+            ExePath = r.ExePath
         }
 
 ).ToList();
@@ -120,43 +238,46 @@ public sealed partial class MainWindow
 
     }
 
-    private void ShowImeEditPanel()
+    /// <summary>把一个应用放到指定区域：pool = 取消设置，zh / en = 设置输入语言。</summary>
+    private void SetImeTarget(ImeAppTile tile, string target)
     {
+        if (tile.Mode == target) return;
 
-        ImeEditPanel.Visibility = Visibility.Visible;
+        var existing = _imeRules.FirstOrDefault(r =>
+            string.Equals(r.ProcessName, tile.ProcessName, StringComparison.OrdinalIgnoreCase));
 
-        ImeEditColumn.Width = new GridLength(316);
+        if (target == ImeTargetPool)
+        {
+            if (existing != null) _imeRules.Remove(existing);
+        }
+        else
+        {
+            var useChinese = target == ImeTargetChinese;
+            if (existing != null)
+            {
+                existing.UseChinese = useChinese;
+            }
+            else
+            {
+                _imeRules.Add(new ImeRuleEntry
+                {
+                    ProcessName = tile.ProcessName,
+                    DisplayName = tile.DisplayName,
+                    UseChinese = useChinese,
+                    ExePath = tile.ExePath
+                });
+            }
+        }
 
-        RefreshRunningAppsComboBox();
-
-
+        SaveImeRules();
+        RebuildImeTiles();
     }
 
-    private void HideImeEditPanel()
+    internal void Ime_RefreshApps_Click(object sender, RoutedEventArgs e)
     {
-
-        ImeEditPanel.Visibility = Visibility.Collapsed;
-
-        ImeEditColumn.Width = new GridLength(0);
-
-
+        _imeRunningApps = GetImeCandidateApps();
+        RebuildImeTiles();
     }
-
-    private void RefreshRunningAppsComboBox()
-    {
-
-        var apps = RunningProcessHelper.GetRunningApps();
-
-        ImeAppComboBox.ItemsSource = apps;
-
-        if (apps.Count > 0) ImeAppComboBox.SelectedIndex = 0;
-
-
-    }
-
-    internal void Ime_Add_Click(object sender, RoutedEventArgs e) => ShowImeEditPanel();
-
-    internal void Ime_RefreshApps_Click(object sender, RoutedEventArgs e) => RefreshRunningAppsComboBox();
 
     internal void Ime_RestoreDefaults_Click(object sender, RoutedEventArgs e)
     {
@@ -173,110 +294,62 @@ public sealed partial class MainWindow
 
         SaveImeRules();
 
-
-    }
-
-    internal void Ime_Delete_Click(object sender, RoutedEventArgs e)
-    {
-
-        if (ImeRulesListView.SelectedItem is not ImeRuleEntry entry) return;
-
-        _imeRules.Remove(entry);
-
-        SaveImeRules();
-
-        HideImeEditPanel();
+        RebuildImeTiles();
 
 
     }
 
-    internal void ImeModeChip_Click(object sender, RoutedEventArgs e)
+    /// <summary>点击图标：弹出菜单，选择中文 / 英文 / 取消设置。</summary>
+    internal void ImeGrid_ItemClick(object sender, ItemClickEventArgs e)
     {
+        if (e.ClickedItem is not ImeAppTile tile || sender is not GridView grid) return;
 
-        if (sender is not Button
-            {
+        var flyout = new MenuFlyout();
+        flyout.Items.Add(new MenuFlyoutItem { Text = tile.DisplayName, IsEnabled = false });
+        flyout.Items.Add(new MenuFlyoutSeparator());
 
-                Tag: ImeRuleEntry entry
-            }
-
-) return;
-
-        var index = _imeRules.IndexOf(entry);
-
-        if (index < 0) return;
-
-        _imeRules[index] = new ImeRuleEntry
+        void AddItem(string text, string target)
         {
-
-            ProcessName = entry.ProcessName,
-            DisplayName = entry.DisplayName,
-            UseChinese = !entry.UseChinese
-        };
-
-        SaveImeRules();
-
-
-    }
-
-    internal void Ime_Confirm_Click(object sender, RoutedEventArgs e)
-    {
-
-        if (ImeAppComboBox.SelectedItem is not RunningAppInfo app) return;
-
-        var useChinese = ImeModeComboBox.SelectedIndex == 0;
-
-        var existing = _imeRules.FirstOrDefault(r => string.Equals(r.ProcessName, app.ProcessName, StringComparison.OrdinalIgnoreCase));
-
-        if (existing != null)
-        {
-
-            existing.UseChinese = useChinese;
-
-            existing.DisplayName = app.DisplayName;
-
-            var index = _imeRules.IndexOf(existing);
-
-            _imeRules[index] = new ImeRuleEntry
-            {
-
-                ProcessName = existing.ProcessName,
-                DisplayName = existing.DisplayName,
-                UseChinese = existing.UseChinese
-            }
-
-;
-
-
+            var item = new MenuFlyoutItem { Text = text };
+            item.Click += (_, _) => SetImeTarget(tile, target);
+            flyout.Items.Add(item);
         }
 
-        else
-        {
+        if (tile.Mode != ImeTargetChinese) AddItem("使用中文", ImeTargetChinese);
+        if (tile.Mode != ImeTargetEnglish) AddItem("使用英文", ImeTargetEnglish);
+        if (tile.Mode != ImeTargetPool) AddItem("取消设置", ImeTargetPool);
 
-            _imeRules.Add(new ImeRuleEntry
-            {
-
-                ProcessName = app.ProcessName,
-                DisplayName = app.DisplayName,
-                UseChinese = useChinese
-            }
-
-);
-
-
-        }
-
-        ImeRulesListView.ItemsSource = null;
-
-        ImeRulesListView.ItemsSource = _imeRules;
-
-        SaveImeRules();
-
-        HideImeEditPanel();
-
-
+        flyout.ShowAt(grid.ContainerFromItem(tile) as FrameworkElement ?? grid);
     }
 
-    internal void Ime_Cancel_Click(object sender, RoutedEventArgs e) => HideImeEditPanel();
+    internal void ImeGrid_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    {
+        if (e.Items.FirstOrDefault() is not ImeAppTile tile) return;
+
+        _imeDragTile = tile;
+        e.Data.SetText(tile.ProcessName);
+        e.Data.RequestedOperation = DataPackageOperation.Move;
+    }
+
+    internal void ImeGrid_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e) => _imeDragTile = null;
+
+    internal void ImePanel_DragOver(object sender, DragEventArgs e)
+    {
+        if (_imeDragTile == null) return;
+
+        e.AcceptedOperation = DataPackageOperation.Move;
+        e.DragUIOverride.IsCaptionVisible = false;
+        e.DragUIOverride.IsGlyphVisible = false;
+    }
+
+    internal void ImePanel_Drop(object sender, DragEventArgs e)
+    {
+        if (_imeDragTile is not { } tile || sender is not FrameworkElement { Tag: string target }) return;
+
+        _imeDragTile = null;
+        e.Handled = true;
+        SetImeTarget(tile, target);
+    }
 
     #endregion
 }

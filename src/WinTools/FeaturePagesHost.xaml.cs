@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -10,13 +10,14 @@ namespace WinTools;
 public sealed partial class FeaturePagesHost : UserControl
 {
     internal MainWindow? Owner { get; set; }
-    private void TaskbarInfoPlacement_Changed(object sender, SelectionChangedEventArgs e) => Owner?.TaskbarInfoAppearance_Changed();
-    private void TaskbarInfoAppearance_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoAppearance_Changed();
+    private void TaskbarAlignment_Changed(object sender, SelectionChangedEventArgs e) => Owner?.TaskbarAlignment_Changed(sender, e);
+    private void QuotaConnect_Click(object sender, RoutedEventArgs e) => Owner?.QuotaConnect_Click(sender, e);
+    private void QuotaCheck_Click(object sender, RoutedEventArgs e) => Owner?.QuotaCheck_Click(sender, e);
+    private void QuotaCancel_Click(object sender, RoutedEventArgs e) => Owner?.QuotaCancel_Click(sender, e);
+    private void ClaudeComplete_Click(object sender, RoutedEventArgs e) => Owner?.ClaudeComplete_Click(sender, e);
+    private void ClaudeDisconnect_Click(object sender, RoutedEventArgs e) => Owner?.ClaudeDisconnect_Click(sender, e);
+    private void TaskbarEntry_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarEntry_Toggled(sender, e);
     private void TaskbarInfoToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoToggle_Toggled(sender, e);
-    private void TaskbarInfoMode_SelectionChanged(object sender, SelectionChangedEventArgs e) => Owner?.TaskbarInfoMode_SelectionChanged(sender, e);
-    private void TaskbarInfoApply_Click(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoApply_Click(sender, e);
-    private void TaskbarInfoRefresh_Click(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoRefresh_Click(sender, e);
-    private void TaskbarInfoOffset_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.TaskbarInfoOffset_ValueChanged(sender, args);
 
     public FeaturePagesHost() => InitializeComponent();
 
@@ -59,28 +60,51 @@ public sealed partial class FeaturePagesHost : UserControl
                 page.Padding = padding;
         }
 
-        foreach (var bar in FindCommandBars(PageColumns))
-        {
-            bar.DefaultLabelPosition = compact
-                ? CommandBarDefaultLabelPosition.Collapsed
-                : CommandBarDefaultLabelPosition.Right;
-        }
+        // 列表工具条：窄窗口只留图标，文字靠 ToolTip 补足（按钮结构见 PageStyles 的 PageToolbarButtonStyle 注释）。
+        var labelVisibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        foreach (var label in FindToolbarLabels(PageColumns))
+            label.Visibility = labelVisibility;
     }
 
-    private static System.Collections.Generic.IEnumerable<CommandBar> FindCommandBars(DependencyObject node)
+    /// <summary>
+    /// 找出所有 PageToolbarButtonStyle 按钮里的文字。只走 Panel.Children / Button.Content 这类逻辑子元素，
+    /// 不依赖模板是否已应用，所以当前隐藏的页面也能一起切换。
+    /// </summary>
+    private static System.Collections.Generic.IEnumerable<TextBlock> FindToolbarLabels(DependencyObject node)
     {
-        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(node);
-        for (var i = 0; i < count; i++)
+        if (!Application.Current.Resources.TryGetValue("PageToolbarButtonStyle", out var styleObj)
+            || styleObj is not Style toolbarButtonStyle)
+            yield break;
+
+        var stack = new System.Collections.Generic.Stack<DependencyObject>();
+        stack.Push(node);
+        while (stack.Count > 0)
         {
-            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(node, i);
-            if (child is CommandBar bar)
+            var current = stack.Pop();
+            if (current is Button button)
             {
-                yield return bar;
+                if (button.Style == toolbarButtonStyle && button.Content is Panel content)
+                {
+                    foreach (var child in content.Children)
+                        if (child is TextBlock text)
+                            yield return text;
+                }
                 continue;
             }
 
-            foreach (var nested in FindCommandBars(child))
-                yield return nested;
+            if (current is Panel panel)
+            {
+                foreach (var child in panel.Children)
+                    stack.Push(child);
+            }
+            else if (current is Border border && border.Child != null)
+            {
+                stack.Push(border.Child);
+            }
+            else if (current is ScrollViewer viewer && viewer.Content is DependencyObject viewerContent)
+            {
+                stack.Push(viewerContent);
+            }
         }
     }
 
@@ -95,26 +119,29 @@ public sealed partial class FeaturePagesHost : UserControl
     private void Assoc_Export_Click(object sender, RoutedEventArgs e) => Owner?.Assoc_Export_Click(sender, e);
     private void Assoc_Import_Click(object sender, RoutedEventArgs e) => Owner?.Assoc_Import_Click(sender, e);
     private void Assoc_New_Click(object sender, RoutedEventArgs e) => Owner?.Assoc_New_Click(sender, e);
+    private void Update_Check_Click(object sender, RoutedEventArgs e) => Owner?.Update_Check_Click(sender, e);
+    private void Update_Install_Click(object sender, RoutedEventArgs e) => Owner?.Update_Install_Click(sender, e);
+    private void AutoUpdateToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.AutoUpdateToggle_Toggled(sender, e);
     private void AutoStartToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.AutoStartToggle_Toggled(sender, e);
     private void DesktopCard_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.DesktopCard_ApplyHotkey_Click(sender, e);
     private void DesktopCardToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DesktopCardToggle_Toggled(sender, e);
     private void DesktopCardGap_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.DesktopCardGap_ValueChanged(sender, args);
     private void DesktopCardMaxColumns_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.DesktopCardMaxColumns_ValueChanged(sender, args);
+    private void DesktopCardAlignment_Changed(object sender, SelectionChangedEventArgs e) => Owner?.DesktopCardAlignment_Changed(sender, e);
     private void DesktopRestore_Click(object sender, RoutedEventArgs e) => Owner?.DesktopRestore_Click(sender, e);
     private void DesktopCleanupBroken_Click(object sender, RoutedEventArgs e) => Owner?.DesktopCleanupBroken_Click(sender, e);
     private void DesktopClickToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DesktopClickToggle_Toggled(sender, e);
     private void DragStash_Show_Click(object sender, RoutedEventArgs e) => Owner?.DragStash_Show_Click(sender, e);
     private void DragStashToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DragStashToggle_Toggled(sender, e);
-    private void Ime_Add_Click(object sender, RoutedEventArgs e) => Owner?.Ime_Add_Click(sender, e);
-    private void Ime_Cancel_Click(object sender, RoutedEventArgs e) => Owner?.Ime_Cancel_Click(sender, e);
-    private void Ime_Confirm_Click(object sender, RoutedEventArgs e) => Owner?.Ime_Confirm_Click(sender, e);
-    private void Ime_Delete_Click(object sender, RoutedEventArgs e) => Owner?.Ime_Delete_Click(sender, e);
+    private void ImeGrid_ItemClick(object sender, ItemClickEventArgs e) => Owner?.ImeGrid_ItemClick(sender, e);
+    private void ImeGrid_DragItemsStarting(object sender, DragItemsStartingEventArgs e) => Owner?.ImeGrid_DragItemsStarting(sender, e);
+    private void ImeGrid_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs e) => Owner?.ImeGrid_DragItemsCompleted(sender, e);
+    private void ImePanel_DragOver(object sender, DragEventArgs e) => Owner?.ImePanel_DragOver(sender, e);
+    private void ImePanel_Drop(object sender, DragEventArgs e) => Owner?.ImePanel_Drop(sender, e);
     private void Ime_RefreshApps_Click(object sender, RoutedEventArgs e) => Owner?.Ime_RefreshApps_Click(sender, e);
     private void Ime_RestoreDefaults_Click(object sender, RoutedEventArgs e) => Owner?.Ime_RestoreDefaults_Click(sender, e);
-    private void ImeModeChip_Click(object sender, RoutedEventArgs e) => Owner?.ImeModeChip_Click(sender, e);
     private void OpenTouchpadSettings_Click(object sender, RoutedEventArgs e) => Owner?.OpenTouchpadSettings_Click(sender, e);
     private void PerAppImeToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.PerAppImeToggle_Toggled(sender, e);
-    private void PositionOffset_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.PositionOffset_ValueChanged(sender, args);
     private void ProgramAssocToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.ProgramAssocToggle_Toggled(sender, e);
     private void SpotlightToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.SpotlightToggle_Toggled(sender, e);
     private void Spotlight_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_ApplyHotkey_Click(sender, e);

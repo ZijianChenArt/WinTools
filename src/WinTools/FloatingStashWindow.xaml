@@ -6,54 +6,56 @@
     xmlns:local="using:WinTools"
     Title="悬浮暂存">
 
-    <Grid x:Name="ShellRoot" MinWidth="260" Background="Transparent">
+    <Grid x:Name="ShellRoot" Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <!-- 统一透明标题栏（与 MainWindow 一致） -->
-        <Grid x:Name="AppTitleBar" Height="48" Grid.Row="0"
+        <Grid x:Name="AppTitleBar" Height="36" Grid.Row="0"
               Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="LeftPaddingColumn" Width="0"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition x:Name="RightPaddingColumn" Width="0"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="1" Text="悬浮暂存" VerticalAlignment="Center" Margin="18,0,0,0"
-                       FontSize="15" FontWeight="SemiBold"/>
+            <TextBlock Grid.Column="1" Text="悬浮暂存" VerticalAlignment="Center" Margin="14,0,0,0"
+                       FontSize="14" FontWeight="SemiBold"/>
         </Grid>
 
         <!-- 文件拖放区域 -->
-        <Grid Grid.Row="1" Padding="16,4,16,16" RowSpacing="12"
+        <Grid Grid.Row="1" Padding="8,0,8,8" RowSpacing="0"
               AllowDrop="True" DragEnter="DropArea_DragEnter" DragOver="DropArea_DragOver" Drop="DropArea_Drop">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-
             <Border x:Name="ContentBorder" Grid.Row="0"
                     Background="{ThemeResource CodexSurfaceBrush}"
                     BorderBrush="{ThemeResource CodexBorderBrush}" BorderThickness="1"
-                    CornerRadius="12" Padding="10">
+                    CornerRadius="8" Padding="4">
                 <Grid>
                     <ListView x:Name="ItemsList" ItemsSource="{x:Bind Items}"
                               CanDragItems="True" DragItemsStarting="ItemsList_DragItemsStarting" DragItemsCompleted="ItemsList_DragItemsCompleted"
                               SelectionMode="Multiple" IsItemClickEnabled="False">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                                <Setter Property="Padding" Value="4,0"/>
+                                <Setter Property="MinHeight" Value="0"/>
+                                <Setter Property="Margin" Value="0,1"/>
+                            </Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="local:StashedItem">
-                                <Grid ColumnSpacing="12" Padding="6"
+                                <Grid ColumnSpacing="10" Padding="2"
                                       PointerEntered="Item_PointerEntered" PointerExited="Item_PointerExited">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Border CornerRadius="10" Width="48" Height="48"
+                                    <Border CornerRadius="8" Width="40" Height="40"
                                             Background="{ThemeResource CodexSurfaceBrush}">
                                         <Grid>
                                             <Image Source="{x:Bind Icon, Mode=OneWay}" Stretch="Uniform"
-                                                   Width="32" Height="32" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                   Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             <Image Source="{x:Bind Preview, Mode=OneWay}" Stretch="Uniform"/>
                                         </Grid>
                                     </Border>
@@ -64,7 +66,7 @@
                                                    TextTrimming="CharacterEllipsis" MaxLines="1"/>
                                     </StackPanel>
                                     <Button Grid.Column="2" VerticalAlignment="Center"
-                                            Width="36" Height="36" MinWidth="0" MinHeight="0" Padding="0"
+                                            Width="32" Height="32" MinWidth="0" MinHeight="0" Padding="0"
                                             Opacity="0.72" Click="RemoveItem_Click"
                                             AutomationProperties.Name="移除"
                                             ToolTipService.ToolTip="移除"
@@ -92,12 +94,6 @@
                     </StackPanel>
                 </Grid>
             </Border>
-
-            <Grid x:Name="BottomBar" Grid.Row="1">
-                <TextBlock x:Name="DragOutHint" Text="拖出项目将移动原文件，不会创建副本。"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" VerticalAlignment="Center"/>
-            </Grid>
         </Grid>
     </Grid>
 </Window>

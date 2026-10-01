@@ -108,6 +108,14 @@ public static class HotkeyHelper
         return r;
     }
 
+    /// <summary>虚拟键码转显示名（如 0x48 → "H"）；不在支持列表里的键返回 null，录制时忽略。</summary>
+    public static string? KeyName(ushort virtualKey)
+    {
+        foreach (var pair in KeyMap)
+            if (pair.Value == virtualKey) return pair.Key;
+        return null;
+    }
+
     /// <summary>将修饰键与虚拟键格式化成显示字符串（如 "Ctrl+Win+W"）。</summary>
     public static string Format(HotkeyModifiers modifiers, ushort virtualKey)
     {

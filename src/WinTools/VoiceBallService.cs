@@ -508,6 +508,9 @@ public sealed class VoiceBallService : IDisposable
         TriggerHotkey(_hotkey);
     }
 
+    /// <summary>是否处于「正在听写」状态，供任务栏入口显示状态点。</summary>
+    internal bool IsListening => _listening;
+
     internal static void TriggerHotkey(string? hotkey)
     {
         var parsed = HotkeyHelper.ParseForSend(string.IsNullOrWhiteSpace(hotkey) ? DefaultHotkey : hotkey);

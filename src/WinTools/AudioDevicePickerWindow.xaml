@@ -1,15 +1,36 @@
 <Window x:Class="WinTools.AudioDevicePickerWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="音频设备">
-    <Border Style="{StaticResource AudioPickerSurfaceStyle}">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel Style="{StaticResource PageFormStackStyle}" KeyDown="Root_KeyDown">
-                <TextBlock Text="音频设备" Style="{StaticResource PageSubtitleTextStyle}"/>
-                <ComboBox x:Name="Output" Header="扬声器 · 输出" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
-                <ComboBox x:Name="Input" Header="麦克风 · 输入" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
-                <TextBlock x:Name="Status" Text="正在读取设备…" Style="{StaticResource PageDescriptionTextStyle}"/>
-                <HyperlinkButton Content="更多声音设置" Click="Settings_Click"/>
-            </StackPanel>
-        </ScrollViewer>
-    </Border>
+    <!-- 窗口外框、标题栏、边距与「悬浮暂存」窗口完全一致（同一套系统阴影 / 圆角 / 系统关闭按钮）。 -->
+    <Grid x:Name="ShellRoot" Background="Transparent" KeyDown="Root_KeyDown">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Height="36" Grid.Row="0" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="LeftPaddingColumn" Width="0"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition x:Name="RightPaddingColumn" Width="0"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="1" Text="音频设备" VerticalAlignment="Center" Margin="14,0,0,0"
+                       FontSize="14" FontWeight="SemiBold"/>
+        </Grid>
+
+        <Grid Grid.Row="1" Padding="8,0,8,8">
+            <Border Background="{ThemeResource CodexSurfaceBrush}" BorderBrush="{ThemeResource CodexBorderBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="12">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="12">
+                        <ComboBox x:Name="Output" Header="扬声器 · 输出" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
+                        <ComboBox x:Name="Input" Header="麦克风 · 输入" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
+                        <TextBlock x:Name="Status" Visibility="Collapsed" Style="{StaticResource PageDescriptionTextStyle}"/>
+                        <CheckBox x:Name="LockCheck" Content="记住所选设备，被系统改掉时自动切回" Checked="LockCheck_Changed" Unchecked="LockCheck_Changed"/>
+                        <HyperlinkButton Content="更多声音设置" Padding="0" Click="Settings_Click"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </Grid>
 </Window>

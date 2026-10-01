@@ -57,15 +57,16 @@ public partial class App : Application, IWindowRegistry
         if (TaskbarInfo == null && config.EnableTaskbarInfo)
         {
             TaskbarInfo = new TaskbarInfoService();
+            TaskbarInfo.StashCountProvider = () => _stashManager?.ItemCount ?? 0;
+            TaskbarInfo.VoiceActiveProvider = () => _voiceBallService?.IsListening ?? false;
             TaskbarInfo.StatusChanged += () =>
             {
                 (_window as MainWindow)?.UpdateTaskbarInfoStatus();
-                _trayIcon?.SetStatusText(TaskbarInfo.TraySummary);
             };
             TaskbarInfo.ActionRequested += action =>
             {
                 if (action == "library") (_window as MainWindow)?.ToggleDesktopLibrary();
-                else if (action == "stash") ShowDragStashWindow();
+                else if (action == "stash") ToggleDragStashWindow();
                 else if (action == "voice")
                 {
                     SettingsService.Instance.Current.Hotkeys.TryGetValue(MainWindow.VoiceBallHotkeyKey, out var hotkey);
@@ -234,6 +235,7 @@ public partial class App : Application, IWindowRegistry
             catch (Exception ex) { ErrorReporter.Log("App.TaskbarInfo", ex); }
             TraceStartup("OnLaunchedCore: before InitFloatingStash");
             InitFloatingStash(startupConfig);
+            AudioDeviceKeeper.Start();
             TraceStartup("OnLaunchedCore: ui init done");
         });
     }
@@ -254,7 +256,7 @@ public partial class App : Application, IWindowRegistry
         _trayIcon = new TrayIcon();
         _trayIcon.ShowMainRequested += (_, _) => BringWindowToForeground();
         _trayIcon.SpotlightRequested += (_, _) => ToggleSpotlight();
-        _trayIcon.DragStashToggleRequested += (_, _) => ShowDragStashWindow();
+        _trayIcon.DragStashToggleRequested += (_, _) => ToggleDragStashWindow();
         _trayIcon.SyncDesktopRequested += (_, _) => (_window as MainWindow)?.SyncDesktopCardsFromTray();
         _trayIcon.ShowDesktopCardsRequested += (_, _) => (_window as MainWindow)?.ShowDesktopCardsFromTray(fromLeft: _trayIcon.QuickMenuFromLeft);
         _trayIcon.SettingsRequested += (_, _) => OpenSettingsWindow();
@@ -291,6 +293,13 @@ public partial class App : Application, IWindowRegistry
         (_window as MainWindow)?.NavigateToSettings();
     }
 
+    /// <summary>桌面卡片右键菜单「分区设置」：把主窗口带到前台并切到桌面分区页。</summary>
+    internal void OpenDesktopZoneSettings()
+    {
+        BringWindowToForeground();
+        (_window as MainWindow)?.NavigateToDesktopOrganize();
+    }
+
     /// <summary>供文件选择器等需要父窗口的 API 使用。</summary>
     internal Window MainWindowForPickers => _window ?? throw new InvalidOperationException("主窗口尚未创建。");
 
@@ -304,6 +313,9 @@ public partial class App : Application, IWindowRegistry
         => _stashManager?.SetProgramAssociationEnabled(enabled);
 
     internal void ShowDragStashWindow() => _stashManager?.ShowWindow();
+
+    /// <summary>任务栏图标 / 托盘菜单：已打开则收起，否则打开（与音频设备按钮一致）。</summary>
+    internal void ToggleDragStashWindow() => _stashManager?.ToggleWindow();
 
     internal void RegisterWinToolsWindow(Window window)
     {
@@ -324,6 +336,7 @@ public partial class App : Application, IWindowRegistry
     {
         if (_window == null) return;
         _stashManager ??= new FloatingStashManager(_window.DispatcherQueue, _window);
+        _stashManager.StashAnchorProvider = () => TaskbarInfo?.GetStashAnchor();
         _stashManager.SetProgramAssociationEnabled(config.EnableProgramAssoc);
         _stashManager.SetEnabled(config.EnableDragStash);
     }

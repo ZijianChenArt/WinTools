@@ -26,6 +26,7 @@ public sealed class TrayIcon : IDisposable
     private Window? _trayWindow;
     private TaskbarIcon? _taskbarIcon;
     private bool _disposed;
+    private bool _trayWindowInitialized;
     /// <summary>「同步桌面」项：分区功能没开时置灰，见 <see cref="ShowContextMenu"/>。</summary>
     private MenuFlyoutItem? _syncDesktopItem;
     /// <summary>「悬浮搜索」项：功能在设置里关掉时置灰。</summary>
@@ -40,12 +41,6 @@ public sealed class TrayIcon : IDisposable
     public event EventHandler? ExitRequested;
     public event EventHandler? QuotaRefreshRequested;
 
-    internal void SetStatusText(string text)
-    {
-        if (_taskbarIcon == null) return;
-        var tooltip = "WinTools\n" + text;
-        _taskbarIcon.ToolTipText = tooltip.Length > 127 ? tooltip[..126] + "…" : tooltip;
-    }
 
     internal bool QuickMenuFromLeft { get; private set; }
     internal void ShowQuickMenu() => ShowContextMenuCore(fromLeft: true);
@@ -64,7 +59,10 @@ public sealed class TrayIcon : IDisposable
         try
         {
             _trayWindow.AppWindow.IsShownInSwitchers = false;
+            if (_trayWindow.AppWindow.Presenter is OverlappedPresenter presenter)
+                presenter.SetBorderAndTitleBar(false, false);
             _trayWindow.AppWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
+            _trayWindow.AppWindow.Move(new Windows.Graphics.PointInt32(-32000, -32000));
         }
         catch { /* 早期失败也不影响主流程 */ }
 
@@ -82,11 +80,16 @@ public sealed class TrayIcon : IDisposable
         _taskbarIcon = new TaskbarIcon
         {
             ToolTipText = "WinTools",
-            NoLeftClickDelay = true,
+            NoLeftClickDelay = false,
             ContextMenuMode = ContextMenuMode.SecondWindow,
             MenuActivation = PopupActivationMode.None,
             // 左右键都弹同一个菜单，不用记"左键开窗、右键菜单"两套操作。
             LeftClickCommand = new RelayCommand(ShowContextMenu),
+            DoubleClickCommand = new RelayCommand(() =>
+            {
+                _taskbarIcon?.ContextFlyout?.Hide();
+                ShowMainRequested?.Invoke(this, EventArgs.Empty);
+            }),
             RightClickCommand = new RelayCommand(ShowContextMenu)
         };
 
@@ -111,30 +114,28 @@ public sealed class TrayIcon : IDisposable
         ThemeService.Register(_trayWindow);
         // 不在这里 Activate —— 直接 Activate 会让 1×1 隐形窗口在某些 Win11 版本
         // 短暂出现在任务栏 / Alt-Tab，造成"打开软件有弹窗"的体验问题。
-        // 第一次 ShowContextMenu / ShowMainRequested 时再 Activate（见 EnsureShown 方法）。
+        // 首次弹菜单时初始化可视树，随后立即隐藏宿主窗口。
         _taskbarIcon.ForceCreate(enablesEfficiencyMode: false);
     }
 
-    /// <summary>在真正需要可见之前确保托盘窗口已 Activate + Show 过。
-    /// 重复调用是幂等的——只在第一次实际激活。</summary>
-    private void EnsureShown()
+    /// <summary>只激活一次以初始化可视树；菜单使用独立窗口，宿主无需保持可见。</summary>
+    private void EnsureTrayWindowInitialized()
     {
-        if (_trayWindow == null) return;
+        if (_trayWindow == null || _trayWindowInitialized) return;
         try
         {
-            // 1×1 窗口被创建后从未 Activate，AppWindow.Presenter 可能为 null
-            // 这里直接 Show 一次（幂等），同时把标题 / 图标 / 任务栏归属设稳。
             _trayWindow.Activate();
-
-            // Activate() 才是真正把这个宿主窗口显示出来的那一步。IsShownInSwitchers
-            // 与 1×1 尺寸是在**首次显示之前**设的，部分 Win11 版本会在窗口显示时把它们
-            // 重置，于是 Alt-Tab / 任务栏里会冒出一个标题为「WinTools Tray」的空窗口。
-            // 显示后立刻重设一次，并挪到屏幕外，避免它以任何形式露出来。
             _trayWindow.AppWindow.IsShownInSwitchers = false;
-            _trayWindow.AppWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
-            _trayWindow.AppWindow.Move(new Windows.Graphics.PointInt32(-32000, -32000));
+            _trayWindowInitialized = true;
         }
         catch { /* 早期失败也不影响主流程 */ }
+        finally
+        {
+            // 移出屏幕仍是可见窗口，系统调整显示器布局时可能把它移回来。
+            // 真正隐藏窗口，同时保留 TaskbarIcon 的可视树和独立菜单窗口。
+            try { _trayWindow.AppWindow.Hide(); }
+            catch (Exception ex) { Services.ErrorReporter.Log("TrayIcon.HideHost", ex); }
+        }
     }
 
     private static void ApplyTrayBackdrop(Window window)
@@ -166,7 +167,7 @@ public sealed class TrayIcon : IDisposable
                 menu.Placement = fromLeft
                     ? Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedLeft
                     : Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight;
-            EnsureShown();
+            EnsureTrayWindowInitialized();
             RefreshMenuState();
             var anchor = GetCursorPos(out var p)
                 ? new System.Drawing.Point(p.X, p.Y)

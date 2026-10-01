@@ -138,41 +138,5 @@ public sealed partial class MainWindow
 
     }
 
-    internal void PositionOffset_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
-    {
-
-        if (_isLoadingDragStashSettings) return;
-
-        if (sender == null) return;
-
-        var value = (int)Math.Max(0, Math.Round(sender.Value));
-
-        sender.Value = value;
-
-        if (sender.Name == nameof(StashOffsetXBox))
-        {
-
-            _config.StashOffsetX = value;
-
-            _config.ProgramOffsetX = value;
-
-
-        }
-
-        else if (sender.Name == nameof(StashOffsetYBox))
-        {
-
-            _config.StashOffsetY = value;
-
-            _config.ProgramOffsetY = value;
-
-            _config.WindowGap = value;
-
-            // 垂直距离即两窗间距
-        }
-
-
-    }
-
     #endregion
 }
