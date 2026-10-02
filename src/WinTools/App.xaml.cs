@@ -162,6 +162,7 @@ public partial class App : Application, IWindowRegistry
         // 在 UI 线程初始化 SettingsService，确保订阅和事件回调都跑在 UI 线程。
         SettingsService.Initialize();
         _uiQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        UiHangWatchdog.Start(_uiQueue);
         var startupConfig = SettingsService.Instance.Current;
 
         // 单一实例：若已有实例，则转交启动参数后退出

@@ -1122,3 +1122,5 @@ Codex 和 Claude 气泡在未连接、读取失败、超时或没有有效额度
 卡片项目的拖动数据（2026-09-30）：`DesktopCardWindow.ItemsGrid_DragItemsStarting` 除了自定义格式 `WinTools.DesktopCardItem`，还必须带真实的 `StorageItems`（`SetDataProvider` 延迟取）并声明 `Move | Copy`。只声明 Move 且没有文件项时，暂存窗口、资源管理器等目标全部显示「禁止」光标。卡片之间换区 / 排序的目标在 DragOver 里仍返回 Move。
 
 暂存窗口高度随文件数自适应（2026-10-02）：高度 = 固定部分 54 DIP + 文件数（最多 6 行，超过后列表内滚动）× 50 DIP；宽度仍可拖动并保存，高度不再持久化。窗口底部不再有提示文字。音频设备弹窗与暂存窗口同一版式（36 高标题栏 + 左右下等距 8 的内卡片，圆角 8）；任务栏音频入口始终是只有耳机图标的圆形按钮，不再显示设备名，也不随空间分级变化。暂存窗口内框圆角由 XAML 控制，代码里不要再 `ContentBorder.CornerRadius = ...` 覆盖。
+
+无响应排查（2026-10-02）：Windows 的 AppHang 报告（事件日志 Application，ID 1002 / 1001，事件名 AppHangB1）只说明「界面线程卡了」，不含堆栈。`Services/UiHangWatchdog.cs` 每 2 秒给界面线程投心跳，超过 8 秒没回应就把进程完整转储到 `%LocalAppData%\WinTools\hangs\hang-*.dmp`（保留 3 份、10 分钟一份）；用 `dotnet-dump analyze` 的 `clrstack` / `threads` 看界面线程卡在哪。`HotkeyRecorder` 的低级键盘钩子在前台窗口不是本进程时必须自动卸载，否则会吞掉全系统的按键。

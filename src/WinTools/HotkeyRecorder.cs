@@ -98,6 +98,14 @@ internal sealed class HotkeyRecorder
     private IntPtr Callback(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code < 0 || _hook == IntPtr.Zero) return CallNextHookEx(_hook, code, wParam, lParam);
+        // 录制中切到了别的程序（输入框没收到 LostFocus）：立刻卸载并放行，绝不能继续吞全系统的按键。
+        GetWindowThreadProcessId(GetForegroundWindow(), out var foregroundPid);
+        if (foregroundPid != Environment.ProcessId)
+        {
+            var hook = _hook;
+            Stop();
+            return CallNextHookEx(hook, code, wParam, lParam);
+        }
         var message = (int)wParam;
         var vk = (uint)Marshal.ReadInt32(lParam);
         var down = message is WM_KEYDOWN or WM_SYSKEYDOWN;
@@ -158,4 +166,8 @@ internal sealed class HotkeyRecorder
     private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr GetModuleHandle(string? name);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out int pid);
 }
