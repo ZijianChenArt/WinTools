@@ -34,7 +34,7 @@
                               DragItemsStarting="ItemsGrid_DragItemsStarting"
                               DragItemsCompleted="ItemsGrid_DragItemsCompleted"
                               ScrollViewer.HorizontalScrollMode="Disabled"
-                              ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                               Padding="0">
                         <GridView.Resources>
                             <!-- 选中态底色：系统主题色半透明，深浅色主题都能看清，接近 Windows

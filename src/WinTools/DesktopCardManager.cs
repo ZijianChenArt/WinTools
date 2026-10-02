@@ -634,10 +634,16 @@ public sealed class DesktopCardManager : IDisposable
         if (!_cards.TryGetValue(group.First().Name, out var anchor)) return;
         var workDip = anchor.GetWorkAreaDip();
         var cards = group.Where(zone => _cards.ContainsKey(zone.Name)).Select(zone => _cards[zone.Name]).ToList();
-        var positions = DesktopCardLayout.Calculate(workDip.X, workDip.Y, workDip.Width, workDip.Height,
-            margin, gap, cards.Select(card => (card.DipWidth, card.DipHeight)).ToList(), fromLeft);
+        // 按自然高度排；放不下时 Fit 会收紧间距、见缝插针，实在不行再给卡片限高（卡片内滚动）。
+        var placements = DesktopCardLayout.Fit(workDip.X, workDip.Y, workDip.Width, workDip.Height,
+            margin, gap, cards.Select(card => (card.DipWidth, card.NaturalDipHeight)).ToList(), fromLeft);
         for (var index = 0; index < cards.Count; index++)
-            plan.Add((cards[index], positions[index].X, positions[index].Y));
+        {
+            var placement = placements[index];
+            // 限高只在 PlaceAt 时随位置一起落到窗口上；空间够了 Height 等于自然高度，限高自动撤掉。
+            cards[index].SetHeightCap(placement.Height < cards[index].NaturalDipHeight ? placement.Height : int.MaxValue);
+            plan.Add((cards[index], placement.X, placement.Y));
+        }
     }
 
     /// <summary>把当前所有活动卡片的位置 / 尺寸写到当前 topology 的缓存条目。

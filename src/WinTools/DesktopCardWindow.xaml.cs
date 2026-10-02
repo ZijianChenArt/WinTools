@@ -518,7 +518,11 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     /// <summary>当前卡片的自适应尺寸（DIP），由内容项数算出，供管理器排布。</summary>
     public int DipWidth { get; private set; } = MinCardWidthDip;
-    public int DipHeight { get; private set; } = HeaderHeight + TileHeight + GridPadding * 2;
+    /// <summary>卡片实际占用的高度：自然高度，被限高时取限高（超出的图标在卡片内滚动）。</summary>
+    public int DipHeight => Math.Min(NaturalDipHeight, _heightCap);
+    /// <summary>内容完全展开所需的高度，排版时按它判断放不放得下。</summary>
+    public int NaturalDipHeight { get; private set; } = HeaderHeight + TileHeight + GridPadding * 2;
+    private int _heightCap = int.MaxValue;
     /// <summary>当前卡片在桌面上的位置（DIP）。PlaceAt 时更新，
     /// 供多屏拓扑记忆写入 cache 时记录。</summary>
     public int DipLeft { get; private set; }
@@ -830,7 +834,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         var scale = CurrentScale;
         if (scale <= 0) scale = 1.0;
         var rowDip = Math.Ceiling(TileHeight * scale) / scale;
-        DipHeight = HeaderHeight + (int)Math.Ceiling(_rows * rowDip) + GridPadding * 2;
+        NaturalDipHeight = HeaderHeight + (int)Math.Ceiling(_rows * rowDip) + GridPadding * 2;
     }
 
     /// <summary>
@@ -846,9 +850,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         if (contentHeightDip <= 0) return;
         var wanted = HeaderHeight + (int)Math.Ceiling(contentHeightDip) + GridPadding * 2;
         _hasMeasuredHeight = true;
-        if (wanted == DipHeight) return;
+        if (wanted == NaturalDipHeight) return;
 
-        DipHeight = wanted;
+        NaturalDipHeight = wanted;
         ApplyScaleAwareSize();
         SizeChangedByContent?.Invoke(this, EventArgs.Empty);
     }
@@ -863,6 +867,12 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         _panelHooked = true;
         ApplyMeasuredContentHeight(panel.ActualHeight);
     }
+
+    /// <summary>
+    /// 排版算出的限高（屏幕放不下时把卡片压矮，超出的图标在卡片内滚动）；
+    /// <see cref="int.MaxValue"/> 表示不限。只记数不动窗口，由随后的 <see cref="PlaceAt"/> 一并应用。
+    /// </summary>
+    public void SetHeightCap(int cap) => _heightCap = cap < 1 ? int.MaxValue : cap;
 
     /// <summary>缩放变化后重算 DIP 尺寸。管理器排版前调用——位置是按 DipWidth/DipHeight 算的，
     /// 顺序反了会用旧尺寸排出错位的一版。</summary>

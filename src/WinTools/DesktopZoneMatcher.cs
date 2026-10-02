@@ -11,6 +11,11 @@ namespace WinTools;
 /// </summary>
 public static class DesktopZoneMatcher
 {
+    private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".zip", ".rar", ".7z", ".tar", ".gz", ".iso", ".cab"
+    };
+
     /// <summary>返回首个匹配分区的索引；都不匹配返回 <paramref name="zones"/>.Count。</summary>
     public static int Match(string fileName, string fullPath, bool isDirectory, List<DesktopZone> zones)
     {
@@ -47,6 +52,19 @@ public static class DesktopZoneMatcher
                     if (!string.IsNullOrEmpty(kw) && IsFolderKeyword(kw))
                         return i;
                 }
+            }
+        }
+
+        // 压缩包同理：名字里带软件名（「AI Project Unity.rar」「Blender-4.5.zip」）的压缩包
+        // 是数据文件，不是软件本身，应按扩展名归类，不能被名称关键词抢走。
+        // 只在某个分区明确配置了该扩展名时才生效；没配的话仍走下面的常规流程。
+        if (!isDirectory && ArchiveExtensions.Contains(extension))
+        {
+            for (var i = 0; i < zones.Count; i++)
+            {
+                if (zones[i].Keywords?.Any(kw =>
+                    string.Equals(kw?.Trim(), extension, StringComparison.OrdinalIgnoreCase)) == true)
+                    return i;
             }
         }
 
