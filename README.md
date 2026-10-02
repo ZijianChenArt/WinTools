@@ -1171,6 +1171,8 @@ Codex 和 Claude 气泡在未连接、读取失败、超时或没有有效额度
 
 悬浮暂存与任务栏快捷图标联动（2026-09-23）：任务栏「悬浮暂存」图标可见时，拖文件弹出与点击图标打开都固定在图标正上方（水平以图标为中心、越界贴边，偏左布局即左下角，居中布局随之居中），窗口变大时底边不动、向上生长；用户手动拖动窗口后不再拉回。**2026-09-30 起暂存窗口不再跟随鼠标**：无论功能开关，窗口只出现在任务栏「悬浮暂存」图标正上方；图标不可见（覆盖层隐藏、全屏、入口关闭）时固定在屏幕右上角。设置页已删除「跟随鼠标时的位置」，配置项 `stashOffsetX/Y` 与 `MoveBelowCursor` 已移除。程序选择窗口始终叠放在暂存窗口正上方。
 
+拖拽来源判断（2026-10-03）：`FloatingStashManager.ShowForDrag` 除了要求按下点在资源管理器文件列表里，还要求**不在空白处**——在没有文件的地方按下再拖是拉框选择，不是文件拖放，不能弹暂存窗。桌面用 `LVM_HITTEST`（`IsDesktopBlankArea`）；文件夹窗口（`CabinetWClass`）的列表是 DirectUI，没有 SysListView32，改用 UI Automation 的 `ElementFromPoint`（`Services/ExplorerItemProbe.cs`）：空白处是 `List`（类名 `UIItemsView`），文件 / 文件夹是 `ListItem`（`UIItem`），文件名那截是 `Edit`（`UIProperty`）。UIA 任何失败都按「不是空白」处理，宁可多弹也不漏掉真正的文件拖拽。实测方法：`mouse_event(0x8001, …)` 绝对坐标按下 + 分步移动，枚举顶层窗口里标题为「悬浮暂存」且可见的窗口；注意 PowerShell 函数别叫 `Move`（会变成 Move-Item）。
+
 暂存图标与托盘菜单再次点击会收起暂存窗口（保留已暂存的文件），与音频按钮一致。点击打开的暂存窗口和音频设备弹窗共用 `PopupAnimator`：250ms 减速滑入淡入、150ms 加速下沉淡出，透明度通过仅在动画期间挂上的 WS_EX_LAYERED 实现（与 Mica 不能共存）。拖拽中弹出的暂存窗口仍不播放动画，避免拖动预览闪动。两个弹窗下沿到任务栏上沿统一为 12 DIP（`WindowHelper.TaskbarPopupGapDip`）。
 
 暂存窗口尺寸与偏移改为读写共享的 `SettingsService.Current`：此前尺寸绕过它直接写文件，设置页任何改动或退出时整份保存 Current 都会把尺寸覆盖回旧值。Codex 额度自动刷新间隔由 2 分钟改为 5 分钟（每次读取都要启动 codex app-server 子进程），与 Claude 一致。

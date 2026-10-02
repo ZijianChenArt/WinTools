@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using WinRT.Interop;
+using WinTools.Services;
 using Window = Microsoft.UI.Xaml.Window;
 
 namespace WinTools;
@@ -127,8 +128,10 @@ public sealed class FloatingStashManager : IDisposable
             // 使用拖拽开始时捕捉的来源窗口句柄判断，避免后续窗口移动影响来源识别。
             // 桌面空白处拉框选择同样会产生“按下并移动”，但它不是文件拖放。
             // 只有按下点真正命中桌面图标时，才允许桌面来源触发悬浮暂存。
+            // 文件夹窗口同理：在没有文件的空白处按下再拖是拉框选择（2026-10-03 用户反馈）。
             bool fromFileManager = IsFromFileManager(sourceHwnd)
-                && !IsDesktopBlankArea(sourceHwnd, downX, downY);
+                && !IsDesktopBlankArea(sourceHwnd, downX, downY)
+                && !IsExplorerWindowBlankArea(sourceHwnd, downX, downY);
             _dispatcher.TryEnqueue(() =>
             {
                 if (!_enabled || token != _dragDecisionToken) return;
@@ -379,6 +382,15 @@ public sealed class FloatingStashManager : IDisposable
             return HitTestDesktopItem(listView, point) < 0;
         }
         catch { return true; }
+    }
+
+    /// <summary>资源管理器文件夹窗口（CabinetWClass）里，按下点是否落在没有文件的空白处。桌面另有规则。</summary>
+    private static bool IsExplorerWindowBlankArea(IntPtr sourceHwnd, int screenX, int screenY)
+    {
+        var root = GetAncestor(sourceHwnd, GA_ROOT);
+        if (root == IntPtr.Zero) root = sourceHwnd;
+        if (GetWindowClassName(root) != "CabinetWClass") return false;
+        return ExplorerItemProbe.IsBlankArea(screenX, screenY);
     }
 
     private static string GetWindowClassName(IntPtr hwnd)
