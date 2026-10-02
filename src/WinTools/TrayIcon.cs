@@ -18,7 +18,7 @@ namespace WinTools;
 /// <summary>
 /// 系统托盘图标（基于 H.NotifyIcon 的 TaskbarIcon）。菜单是真正的 WinUI
 /// <see cref="MenuFlyout"/>，挂在隐藏小窗（带 Mica 背景）上，菜单获得毛玻璃外观。
-/// **左键单击和右键都弹这个菜单**，主界面从菜单底部「设置」上方的「显示主界面」进。菜单里全是「点一下就执行」的动作，
+/// **左键单击 / 双击打开主界面，右键弹这个菜单**（菜单里仍保留「显示主界面」）。菜单里全是「点一下就执行」的动作，
 /// 没有勾选开关——功能的开 / 关统一放在主界面的设置页里。
 /// </summary>
 public sealed class TrayIcon : IDisposable
@@ -80,16 +80,12 @@ public sealed class TrayIcon : IDisposable
         _taskbarIcon = new TaskbarIcon
         {
             ToolTipText = "WinTools",
-            NoLeftClickDelay = false,
+            // 单击 / 双击都打开主界面（立即响应，不等双击判定）；只有右键弹菜单。
+            NoLeftClickDelay = true,
             ContextMenuMode = ContextMenuMode.SecondWindow,
             MenuActivation = PopupActivationMode.None,
-            // 左右键都弹同一个菜单，不用记"左键开窗、右键菜单"两套操作。
-            LeftClickCommand = new RelayCommand(ShowContextMenu),
-            DoubleClickCommand = new RelayCommand(() =>
-            {
-                _taskbarIcon?.ContextFlyout?.Hide();
-                ShowMainRequested?.Invoke(this, EventArgs.Empty);
-            }),
+            LeftClickCommand = new RelayCommand(ShowMainWindow),
+            DoubleClickCommand = new RelayCommand(ShowMainWindow),
             RightClickCommand = new RelayCommand(ShowContextMenu)
         };
 
@@ -156,6 +152,12 @@ public sealed class TrayIcon : IDisposable
 
     private void ShowContextMenu()
         => ShowContextMenuCore(fromLeft: false);
+
+    private void ShowMainWindow()
+    {
+        _taskbarIcon?.ContextFlyout?.Hide();
+        ShowMainRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     private void ShowContextMenuCore(bool fromLeft)
     {
@@ -230,12 +232,49 @@ public sealed class TrayIcon : IDisposable
                 y = Math.Clamp(y, info.rcMonitor.Top, Math.Max(info.rcMonitor.Top, info.rcMonitor.Bottom - height));
             }
 
+            // 菜单在光标上方（任务栏在底部）时，用 Top 放置让 WinUI 的打开动画从下往上滑出。
+            // 库 2.2.0 固定用 Full 放置（动画自上而下）；2.5.0-beta 才改成这样，这里照着做：
+            // Top 放置会把弹出层摆在宿主窗口「上方」，所以宿主窗口要整体下移一个菜单高度来抵消。
+            // 宿主窗口整体下移后会越出屏幕下沿，WinUI 就弹不出菜单；弹出层位置只取决于宿主窗口的上沿，
+            // 所以把宿主窗口压扁到屏幕内剩余的高度即可。剩余高度太小（<8px）就退回 Full 放置。
+            var windowY = y;
+            var windowHeight = height;
+            var hostTop = y + height;
+            var room = (GetMonitorInfo(monitor, ref info) ? info.rcMonitor.Bottom : int.MaxValue) - hostTop;
+            if (hostTop <= cursor.Y + 2 && room >= 8
+                && TrySetMenuPlacement(Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Top))
+            {
+                windowY = hostTop;
+                windowHeight = Math.Min(height, room);
+            }
+            else
+                TrySetMenuPlacement(Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Full);
+
             // 只改位置尺寸，不碰 Z 序和激活状态——库靠窗口激活事件来弹出、失活来收起菜单。
-            SetWindowPos(hwnd, IntPtr.Zero, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(hwnd, IntPtr.Zero, x, windowY, width, windowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         catch (Exception ex)
         {
             Services.ErrorReporter.Log("TrayIcon.FixMenuWindowSize", ex);
+        }
+    }
+
+    /// <summary>库在第二窗口里真正弹出的是它内部复制的 <c>ContextMenuFlyout</c>，只能反射改它的放置方式。</summary>
+    private bool TrySetMenuPlacement(Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode placement)
+    {
+        try
+        {
+            var flyout = typeof(TaskbarIcon)
+                .GetProperty("ContextMenuFlyout", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(_taskbarIcon) as MenuFlyout;
+            if (flyout is null) return false;
+            flyout.Placement = placement;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Services.ErrorReporter.Log("TrayIcon.MenuPlacement", ex);
+            return false;
         }
     }
 
