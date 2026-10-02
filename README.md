@@ -80,6 +80,22 @@ dotnet build src/WinTools/WinTools.csproj -c Debug -p:Platform=x64
 `artifacts/release/win-x64/WinTools.exe`。** 不要只留下 Debug 产物，也不要让用户手动寻找或
 重启新版；发布前先关闭占用发布目录的旧进程，发布成功后立即启动正式版。
 
+### 3.1 版本号与安装包（每次改动都要走）
+
+每次改动都要**递增版本号**并生成安装包，用一键脚本（它先改 `WinTools.csproj` 里 `Version` /
+`AssemblyVersion` / `FileVersion` / `InformationalVersion`，再调 `Publish-Release.ps1`，最后用
+Inno Setup 6 打 `installer/WinTools.iss`）：
+
+```powershell
+./scripts/Release.ps1            # 默认 patch：1.2.3 -> 1.2.4；功能性更新用 -Bump minor；只重新打包用 -Bump none
+```
+
+- 产物在 `artifacts/dist/`：`WinTools-Setup-<版本>.exe` 与 `.sha256`（应用内在线更新会校验后者）。
+- 需要 Inno Setup 6（`winget install JRSoftware.InnoSetup`）；运行前先退出正在运行的 WinTools。
+- 验收：**运行生成的 Setup.exe 重新安装**，启动安装后的 WinTools，确认「设置」里显示的版本号等于新版本，
+  并实际打开本次改动涉及的界面确认效果。
+- 想让软件能在线更新，还要把提交打 tag `v<版本>` 推到 GitHub 并上传上述两个文件（脚本末尾会打印命令）。
+
 发布脚本生成自包含版本，随包携带 .NET 10 运行时与 Windows App Runtime，目标机无需另装。
 **不要**开启 `PublishTrimmed` / `PublishReadyToRun`（WinUI 3 会崩）。
 
@@ -544,6 +560,21 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   **不能**用 `Register(Window)`——后者会调 `ApplyWindowBackdrop` 替它设背景。
 - `SystemBackdrop = null` 只能在首次创建并连接显式 `MicaController` 之前执行一次。控制器已经连接后
   再清空会让合成目标失效，但 `_micaAttached` 仍保持为真；此后切换主题时卡片会直接露出黑色底层。
+- **任务栏弹窗（悬浮暂存、音频设备）同样要保持 Mica**（2026-10-02）：点开后焦点常被任务栏抢回，窗口一失焦
+  默认 `MicaBackdrop` 就退成灰色。这两个窗口在构造时调 `WindowHelper.EnablePersistentMica(this)`，此后
+  `ApplyWindowBackdrop` 自动走显式 `MicaController` + 恒 `IsInputActive`；不要再手动给它们设 `SystemBackdrop`。
+  遮罩要薄，否则 Mica 看不出来：窗口外层 `GetMicaPopupBrush` 只铺约 22% 黑，窗口里的内容面板用
+  `GetMicaPanelBrush` / `CardBackgroundFillColorDefaultBrush`（白 5%），不要再铺不透明的 `CodexSurfaceBrush`。
+- **任务栏弹窗动画不掉帧的约定**（2026-10-02，`PopupAnimator`）：动画由 `CompositionTarget.Rendering` 逐帧驱动
+  （16ms 的 `DispatcherQueueTimer` 实际约 15.6ms 精度，帧间隔 16 / 31ms 交替会掉帧；33ms 定时器只做兜底）；
+  窗口要在首次点击前预热（音频弹窗由信息条首次显示后 `WarmAudioPicker` 在空闲时创建并屏幕外初始化）；
+  动画进行中不要改控件内容（音频弹窗等动画走完才填设备列表）；尺寸没变就别调 `AppWindow.Resize`。
+- 音频弹窗的下拉框**不要先置灰再恢复**：预热时就读好设备列表，弹出时直接可选；后台刷新只在设备列表真的变了才原地更新（`_shownSignature`），否则会看到「灰色 → 突然可选」的跳变。
+- **弹窗高度要以 DWM 可见边界为准**（2026-10-02 实测）：窗口矩形（`AppWindow.Size` / `GetWindowRect`）底部有一圈约 8 像素的不可见边框，
+  按矩形高度对齐内容会让最下面的留白被裁掉。`FitHeightToContent` 用 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 核对并向上加高。
+  验证别靠肉眼：截图后沿窗口中线取像素，灰框底边下面应有约 8~10px 的窗口底色（深色下 28,30,33），而不是直接变成窗外的颜色。
+- 音频弹窗布局：窗口标题 14 粗体 > 内层淡卡片面板（`CardBackgroundFillColorDefaultBrush`，层级靠它体现，别去掉）> 分组小标题（`PageCaptionTextStyle`，12 次要色，不能与标题同字号）> 下拉框。窗口高度由 `MeasureHeight` 按内容测量，状态文字与「更多声音设置」同一行（不改变高度）。
+- 任务栏的「音频设备」入口恒显示、「记住所选设备」恒开启，设置页与弹窗里都没有对应开关。
 - `WS_EX_LAYERED` 与 Mica **不能共存**：常驻分层样式会让卡片彻底失去材质（整窗变成纯色）。
   淡入淡出要用分层透明度，就只能在动画期间临时加、动画一结束立刻摘（见 7.5）。
 
@@ -1034,6 +1065,7 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 任务栏快捷入口：「任务栏信息」页的「快捷入口」可分别开关桌面库、语音小球、音频设备三个入口（配置项 `taskbarShowLibrary` / `taskbarShowStash` / `taskbarShowVoice` / `taskbarShowAudio`，默认全开）。桌面库入口还要求桌面分区已开启；语音小球的入口独立于功能本身，功能关着也能单独显示在任务栏（语音入口直接发送快捷键）。**悬浮暂存没有单独的入口开关（2026-09-30）**：「悬浮暂存」功能开关就是任务栏暂存图标的开关，开则显示图标并可拖文件到图标上方弹出的窗口，关则图标消失；`taskbarShowStash` 配置项已不再使用。入口附带状态：暂存图标右上角显示暂存文件数，语音图标在听写中显示红点，音频入口显示当前默认输出设备名。
 
 小分辨率避让：`TaskbarInfoService.Layout.cs` 每 3 秒（任务栏尺寸变化时立即）用 UI Automation 只读扫描任务栏上的图标位置，把信息区放进图标之间的空隙，放不下时按级别收缩：完整 → 额度文字缩成百分比 → 音频只留图标 → 去掉 Claude 气泡 → 去掉全部额度 → 折叠成一个按钮（点击打开托盘快捷菜单）。空隙优先选放得下额度气泡的；扫描失败时回退到「不超过任务栏一半宽度」的旧规则。Claude 未连接时不占位。
+**首次扫描完成前不显示信息条**（`_scanSettled`，2026-10-02）：此前启动 / 资源管理器刚重启时，扫描还没返回就用旧规则贴在任务栏最左边，压在小组件等系统图标上，下一次扫描才跳开。现在扫描完成才摆放并立刻重排；UIA 连续 3 次返回空（任务栏还没填充）或抛异常才视为读不到并回退旧规则。
 `Services/CodexQuotaReader.cs` 启动本机 `codex.exe app-server`，完成握手后只调用
 `account/rateLimits/read`，请求结束即回收进程；不会创建模型任务或消费重置额度。
 优先显示 `rateLimitsByLimitId.codex`，兼容旧 `rateLimits`；按真实周期标注，缺失窗口不虚构。

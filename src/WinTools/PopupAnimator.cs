@@ -36,6 +36,9 @@ internal sealed class PopupAnimator
     /// <summary>滑入的起点 Y（物理像素）：窗口应先放在这里再显示。</summary>
     internal int RevealStartY => _restY + _slidePx;
 
+    /// <summary>窗口在入场前被调高 / 调矮时，同步移动动画终点（向上为负）。</summary>
+    internal void ShiftRest(int dy) => _restY += dy;
+
     /// <summary>decelerate：起步最快、末尾极缓。</summary>
     private static double EaseOut(double t) => 1 - Math.Pow(1 - t, 3);
 
@@ -103,7 +106,16 @@ internal sealed class PopupAnimator
     {
         _timer?.Stop();
         _timer = null;
+        if (_rendering != null)
+        {
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= _rendering;
+            _rendering = null;
+        }
     }
+
+    // 每个渲染帧推进一次（与显示器刷新对齐）。16ms 的 DispatcherQueueTimer 实际精度约 15.6ms，
+    // 帧间隔会在 16 / 31ms 间来回跳，肉眼就是掉帧。慢速定时器只作兜底：Rendering 不触发时动画仍能走完。
+    private EventHandler<object>? _rendering;
 
     private void Animate(int fromY, int toY, byte fromAlpha, byte toAlpha, int durationMs,
         Func<double, double> ease, Action completed)
@@ -117,20 +129,25 @@ internal sealed class PopupAnimator
             var clock = Stopwatch.StartNew();
             var timer = _window.DispatcherQueue.CreateTimer();
             _timer = timer;
-            timer.Interval = TimeSpan.FromMilliseconds(16);
-            timer.IsRepeating = true;
-            timer.Tick += (s, _) =>
+            var lastY = int.MinValue;
+            byte lastAlpha = fromAlpha;
+            void Step()
             {
-                if (!ReferenceEquals(_timer, s)) { s.Stop(); return; }
                 var progress = Math.Clamp(clock.Elapsed.TotalMilliseconds / durationMs, 0, 1);
                 var eased = ease(progress);
-                _window.AppWindow.Move(new PointInt32(x, (int)Math.Round(fromY + (toY - fromY) * eased)));
-                SetAlpha((byte)Math.Round(fromAlpha + (toAlpha - fromAlpha) * eased));
+                var y = (int)Math.Round(fromY + (toY - fromY) * eased);
+                var alpha = (byte)Math.Round(fromAlpha + (toAlpha - fromAlpha) * eased);
+                if (y != lastY) { _window.AppWindow.Move(new PointInt32(x, y)); lastY = y; }
+                if (alpha != lastAlpha) { SetAlpha(alpha); lastAlpha = alpha; }
                 if (progress < 1) return;
-                s.Stop();
-                _timer = null;
+                Stop();
                 completed();
-            };
+            }
+            _rendering = (_, _) => { if (ReferenceEquals(_timer, timer)) Step(); };
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += _rendering;
+            timer.Interval = TimeSpan.FromMilliseconds(33);
+            timer.IsRepeating = true;
+            timer.Tick += (s, _) => { if (!ReferenceEquals(_timer, s)) { s.Stop(); return; } Step(); };
             timer.Start();
         }
         catch (Exception ex)

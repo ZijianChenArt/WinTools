@@ -256,12 +256,6 @@
                             </tk:SettingsCard.HeaderIcon>
                             <ToggleSwitch x:Name="TaskbarVoiceToggle" Tag="voice" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
                         </tk:SettingsCard>
-                        <tk:SettingsCard x:Name="TaskbarAudioCard" Header="音频设备" Description="在任务栏显示当前输出设备，点击切换">
-                            <tk:SettingsCard.HeaderIcon>
-                                <FontIcon Glyph="&#xE95B;"/>
-                            </tk:SettingsCard.HeaderIcon>
-                            <ToggleSwitch x:Name="TaskbarAudioToggle" Tag="audio" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
-                        </tk:SettingsCard>
                     </StackPanel>
 
                     <TextBlock Text="额度账户" Style="{StaticResource PageSectionHeaderTextStyle}"/>

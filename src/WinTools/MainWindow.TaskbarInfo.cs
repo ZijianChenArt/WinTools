@@ -29,7 +29,6 @@ public sealed partial class MainWindow
     {
         SetTaskbarEntry("Library", _config.TaskbarShowLibrary, _config.EnableDesktopCard, "桌面分区", "在任务栏显示入口，点击展开或收起");
         SetTaskbarEntry("Voice", _config.TaskbarShowVoice, true, "语音小球", "在任务栏显示入口和听写状态");
-        SetTaskbarEntry("Audio", _config.TaskbarShowAudio, true, "", "在任务栏显示当前输出设备，点击切换");
     }
 
     private void SetTaskbarEntry(string key, bool shown, bool featureOn, string feature, string description)
@@ -66,7 +65,6 @@ public sealed partial class MainWindow
         {
             case "library": _config.TaskbarShowLibrary = toggle.IsOn; break;
             case "voice": _config.TaskbarShowVoice = toggle.IsOn; break;
-            case "audio": _config.TaskbarShowAudio = toggle.IsOn; break;
             default: return;
         }
         SaveTaskbarInfoSettings();

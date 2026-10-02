@@ -21,6 +21,7 @@ namespace WinTools;
 internal sealed partial class TaskbarInfoService : IDisposable
 {
     private readonly DispatcherQueueTimer _timer;
+    private readonly DispatcherQueue _dispatcher;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly IntPtr _hwnd;
     private bool _enabled, _reading, _disposed;
@@ -75,7 +76,8 @@ internal sealed partial class TaskbarInfoService : IDisposable
             DestroyWindow(_hwnd);
             throw new InvalidOperationException("无法创建任务栏快捷按钮");
         }
-        _timer = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _dispatcher = DispatcherQueue.GetForCurrentThread();
+        _timer = _dispatcher.CreateTimer();
         _timer.Interval = TimeSpan.FromSeconds(1);
         _timer.Tick += (_, _) => SafeTick();
     }
@@ -91,7 +93,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             _actions && config.EnableDragStash ? 1 : -1,
             _actions && config.TaskbarShowVoice ? 2 : -1,
         }.Where(id => id >= 0).ToArray();
-        _showAudio = _actions && config.TaskbarShowAudio;
+        _showAudio = _actions; // 音频设备入口恒显示，没有单独的开关
         _lastDrawing = null;
         _bounds = null;
         if (_enabled) { _timer.Start(); SafeTick(); }
@@ -172,6 +174,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             _bounds = bounds;
             _visible = true;
+            WarmAudioPicker();
         }
         var placement = $"任务栏显示区域：{x},{y}，{width}×{height}，收缩级别 {layout.Level}";
         if (_lastPlacement != placement)

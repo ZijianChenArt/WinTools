@@ -26,7 +26,7 @@ internal static class AudioDeviceKeeper
         try
         {
             var config = SettingsService.Instance.Current;
-            if (!config.AudioLockDevices) return;
+            // 「记住所选设备」恒开启，没有开关。
             var wanted = new[] { (Flow: 0, Id: config.AudioPreferredOutputId), (Flow: 1, Id: config.AudioPreferredInputId) }
                 .Where(item => !string.IsNullOrEmpty(item.Id)).ToList();
             if (wanted.Count == 0) return;

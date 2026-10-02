@@ -36,6 +36,7 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
     public FloatingStashWindow()
     {
         InitializeComponent();
+        WindowHelper.EnablePersistentMica(this); // 点开后焦点常被任务栏抢走，Mica 不能跟着变灰
         Items.CollectionChanged += Items_CollectionChanged;
         UpdateEmptyHint();
         ConfigureWindow();
@@ -137,9 +138,14 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
                 dipH = MiniHeightDip;
             }
 
-            _isAutoResizing = true;
-            AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(dipW * scale), (int)(dipH * scale)));
-            _isAutoResizing = false;
+            // 尺寸没变就不调用 Resize：它会触发 Changed 事件与布局，白占点击后首帧的时间。
+            var target = new Windows.Graphics.SizeInt32((int)(dipW * scale), (int)(dipH * scale));
+            if (AppWindow.Size.Width != target.Width || AppWindow.Size.Height != target.Height)
+            {
+                _isAutoResizing = true;
+                AppWindow.Resize(target);
+                _isAutoResizing = false;
+            }
             ApplyAnchor(); // 尺寸变化后仍贴着任务栏，向上生长
         }
         catch { _isAutoResizing = false; }
@@ -175,7 +181,9 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
         ShellRoot.RequestedTheme = theme;
         ShellRoot.Background = WindowHelper.GetMicaPopupBrush(theme, isMica);
         AppTitleBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        ContentBorder.Background = WindowHelper.GetMicaPopupBrush(theme, isMica, elevated: true);
+        ContentBorder.Background = isMica
+            ? WindowHelper.GetMicaPanelBrush(theme)
+            : WindowHelper.GetMicaPopupBrush(theme, isMica, elevated: true);
         ContentBorder.BorderBrush = WindowHelper.GetCodexBorderBrush(theme);
         WindowHelper.ApplyWindowBackdrop(this);
         WindowHelper.ApplyTitleBarButtonColors(this, theme);

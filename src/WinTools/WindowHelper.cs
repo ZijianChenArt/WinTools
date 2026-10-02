@@ -138,11 +138,72 @@ public static class WindowHelper
         catch { /* 旧版系统忽略 */ }
     }
 
+    private sealed class MicaState
+    {
+        public MicaController? Controller;
+        public SystemBackdropConfiguration Configuration = new();
+        public bool Attached;
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Window, MicaState> PersistentMicaState = new();
+
+    /// <summary>
+    /// 让窗口失焦后仍保持 Mica（见 README 7.4）。任务栏弹窗点开后焦点常被任务栏抢回，
+    /// 系统默认的 <c>MicaBackdrop</c> 会在失焦时退成不透明灰；改用显式 <c>MicaController</c> + 恒 <c>IsInputActive</c>。
+    /// 必须在窗口构造阶段、第一次 <see cref="ApplyWindowBackdrop"/> 之前调用；此后
+    /// <see cref="ApplyWindowBackdrop"/> 对该窗口走显式控制器，不要再给它设 <c>SystemBackdrop</c>。
+    /// </summary>
+    internal static void EnablePersistentMica(Window window)
+    {
+        PersistentMicaState.GetValue(window, _ => new MicaState());
+        window.Closed += (_, _) =>
+        {
+            if (!PersistentMicaState.TryGetValue(window, out var state)) return;
+            try { state.Controller?.RemoveAllSystemBackdropTargets(); state.Controller?.Dispose(); } catch { /* ignore */ }
+            state.Controller = null;
+            state.Attached = false;
+        };
+    }
+
+    private static void ApplyPersistentMica(Window window, MicaState state)
+    {
+        if (!UiStyleService.IsMica || !MicaController.IsSupported())
+        {
+            // 普通风格：拆掉控制器，回到无背景（表面由不透明画刷负责）。
+            if (state.Controller != null)
+            {
+                try { state.Controller.RemoveAllSystemBackdropTargets(); state.Controller.Dispose(); } catch { /* ignore */ }
+                state.Controller = null;
+                state.Attached = false;
+            }
+            window.SystemBackdrop = null;
+            return;
+        }
+        if (state.Controller == null)
+        {
+            // 只在首次接管合成目标前清掉普通 SystemBackdrop；连接后再清会让目标失效。
+            window.SystemBackdrop = null;
+            state.Controller = new MicaController { Kind = MicaKind.Base };
+            state.Attached = state.Controller.AddSystemBackdropTarget(
+                WinRT.CastExtensions.As<Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop>(window));
+            if (state.Attached) state.Controller.SetSystemBackdropConfiguration(state.Configuration);
+        }
+        if (!state.Attached) return;
+        state.Configuration.IsInputActive = true;
+        state.Configuration.Theme = ThemeService.EffectiveTheme == ElementTheme.Dark
+            ? SystemBackdropTheme.Dark : SystemBackdropTheme.Light;
+    }
+
     /// <summary>设置窗口 Mica 背景材质。</summary>
     public static void ApplyWindowBackdrop(Window window)
     {
         try
         {
+            if (PersistentMicaState.TryGetValue(window, out var state))
+            {
+                ApplyPersistentMica(window, state);
+                return;
+            }
             if (UiStyleService.IsMica)
                 window.SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
             else
@@ -215,9 +276,13 @@ public static class WindowHelper
             return GetCodexSurfaceBrush(theme);
 
         return new SolidColorBrush(theme == ElementTheme.Dark
-            ? (elevated ? Color.FromArgb(188, 38, 38, 38) : Color.FromArgb(154, 24, 24, 24))
-            : (elevated ? Color.FromArgb(205, 255, 255, 255) : Color.FromArgb(174, 250, 250, 250)));
+            ? (elevated ? Color.FromArgb(120, 38, 38, 38) : Color.FromArgb(56, 24, 24, 24))
+            : (elevated ? Color.FromArgb(150, 255, 255, 255) : Color.FromArgb(90, 250, 250, 250)));
     }
+
+    /// <summary>Mica 弹窗里的内容面板：与标准 <c>CardBackgroundFillColorDefault</c> 一致的极淡底色，让 Mica 透出来。</summary>
+    public static SolidColorBrush GetMicaPanelBrush(ElementTheme theme) =>
+        new(theme == ElementTheme.Dark ? Color.FromArgb(13, 255, 255, 255) : Color.FromArgb(128, 255, 255, 255));
 
     public static SolidColorBrush GetDesktopCardBrush(ElementTheme theme) =>
         new(theme == ElementTheme.Dark

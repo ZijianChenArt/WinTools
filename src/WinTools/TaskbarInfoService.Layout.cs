@@ -64,6 +64,9 @@ internal sealed partial class TaskbarInfoService
         var clusters = CurrentClusters(bar);
         if (clusters == null)
         {
+            // 还没拿到图标位置就先别画：此时用保守估计会把信息条放在 bar.Left 上，
+            // 正好压在任务栏左侧的系统图标（小组件等）上，直到下一次扫描完成才跳开。
+            if (!_scanSettled) { layout = default; x = 0; return false; }
             // 读不到图标位置（UI Automation 不可用）：沿用「不超过任务栏一半」的保守估计。
             layout = ChooseLayout(Math.Max(1, barWidth / 2 - (int)(64 * scale)), scale);
             x = _centered ? bar.Left + (barWidth - layout.Width) / 2 : bar.Left + margin;
@@ -134,6 +137,8 @@ internal sealed partial class TaskbarInfoService
     private RECT _lastScanBar;
     private DateTime _nextScan = DateTime.MinValue;
     private volatile bool _scanning;
+    private volatile bool _scanSettled; // 当前任务栏尺寸下，至少完成过一次可信的扫描（或确认读不到）
+    private int _emptyScans;
     private bool _scanFailureLogged;
 
     private static bool SameBar(RECT a, RECT b) => a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
@@ -150,21 +155,30 @@ internal sealed partial class TaskbarInfoService
         var changed = !SameBar(_lastScanBar, bar);
         if (!changed && DateTime.UtcNow < _nextScan) return;
         _scanning = true;
+        if (changed) { _scanSettled = false; _emptyScans = 0; }
         _lastScanBar = bar;
         _nextScan = DateTime.UtcNow.AddSeconds(3);
         _ = Task.Run(() =>
         {
+            var settledNow = false;
             try
             {
                 var result = ScanTaskbar(taskbar, bar, scale);
                 lock (_scanLock) { _clusters = result; _clusterBar = bar; }
+                // 登录 / 资源管理器刚重启时任务栏还没填充，UIA 可能暂时返回空；连续几次仍为空才认定读不到。
+                if (result != null || ++_emptyScans >= 3) _scanSettled = true;
+                settledNow = _scanSettled;
             }
             catch (Exception ex)
             {
                 lock (_scanLock) _clusters = null;
+                _scanSettled = true; // UIA 不可用：退回保守估计
+                settledNow = true;
                 if (!_scanFailureLogged) { _scanFailureLogged = true; ErrorReporter.Log("TaskbarInfo.Scan", ex); }
             }
             finally { _scanning = false; }
+            // 扫描一结束就重排，不用等下一秒的定时器。
+            if (settledNow) _dispatcher.TryEnqueue(SafeTick);
         });
     }
 
