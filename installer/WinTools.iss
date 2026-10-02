@@ -12,10 +12,10 @@ AppId={{6B1F4D0A-7C25-4E3B-9A58-3D9E27C0B1F4}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
-AppPublisher=orangec0831
-AppPublisherURL=https://github.com/orangec0831/WinTools
-AppSupportURL=https://github.com/orangec0831/WinTools/issues
-AppUpdatesURL=https://github.com/orangec0831/WinTools/releases
+AppPublisher=ZijianChenArt
+AppPublisherURL=https://github.com/ZijianChenArt/WinTools
+AppSupportURL=https://github.com/ZijianChenArt/WinTools/issues
+AppUpdatesURL=https://github.com/ZijianChenArt/WinTools/releases
 VersionInfoVersion={#AppVersion}
 ; 装到当前用户目录，不需要管理员权限；在线更新才能静默覆盖安装。
 PrivilegesRequired=lowest

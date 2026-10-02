@@ -17,7 +17,7 @@ namespace WinTools.Services;
 /// </summary>
 internal static class UpdateService
 {
-    internal const string Repository = "orangec0831/WinTools";
+    internal const string Repository = "ZijianChenArt/WinTools";
     private static readonly string DownloadPrefix = $"https://github.com/{Repository}/releases/download/";
     // 必须懒创建：CreateClient 要读 CurrentVersion，而静态字段按书写顺序初始化，直接初始化会读到 null 并让整个类型初始化失败（程序启动即崩）。
     private static readonly Lazy<HttpClient> HttpLazy = new(CreateClient);
