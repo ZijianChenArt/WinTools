@@ -1411,6 +1411,10 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         {
             // 打开后清掉记录：三击不会再触发第二次打开。
             _lastPressItem = null;
+            // 双击确认打开后取消选中（蓝框消失），否则看起来像没有反应。
+            // 同时排一次到 UI 队列：GridView 在本次按下之后可能还会再设一次选中，排队的这次保证最后生效。
+            ClearSelection();
+            DispatcherQueue.TryEnqueue(ClearSelection);
             OpenItem(pressed);
             return;
         }
