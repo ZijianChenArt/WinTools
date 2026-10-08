@@ -1362,8 +1362,18 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     private void ItemsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // 双击打开后的短时间内，GridView 在鼠标松开（Tapped）时还会再选中一次：这里立刻清掉，蓝框不会重新出现。
+        if (Environment.TickCount64 < _suppressSelectionUntil && ItemsGrid.SelectedIndex >= 0)
+        {
+            DispatcherQueue.TryEnqueue(ClearSelection);
+            return;
+        }
+
         if (ItemsGrid.SelectedIndex >= 0) ItemSelected?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>双击打开后，在这个时间点之前的选中都视为打开时的残留，立即取消。</summary>
+    private long _suppressSelectionUntil;
 
     /// <summary>点在图标以外的地方（卡片空白处、边距）就取消选中，和 Windows 桌面一致。</summary>
     /// <summary>上一次按下的图标与时间、位置，用来判断双击。</summary>
@@ -1415,6 +1425,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             // 同时排一次到 UI 队列：GridView 在本次按下之后可能还会再设一次选中，排队的这次保证最后生效。
             ClearSelection();
             DispatcherQueue.TryEnqueue(ClearSelection);
+            _suppressSelectionUntil = Environment.TickCount64 + 800;
             OpenItem(pressed);
             return;
         }
