@@ -547,6 +547,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         // 点击时处理器一次都没进来）。PointerPressed 在手势识别之前就冒泡，且必须
         // handledEventsToo: true，否则同样收不到。
         ShellRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(CardRoot_PointerPressed), true);
+        ShellRoot.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(CardRoot_PointerReleased), true);
         // 拖放处理器也用 handledEventsToo: true 挂，防止 ListViewBase 哪天把同源拖动的事件
         // 标成已处理后我们收不到——卡片内重排完全依赖在这里接住 Drop（见 ReorderWithinCard）。
         ItemsGrid.AddHandler(UIElement.DragOverEvent, new DragEventHandler(ItemsGrid_DragOver), true);
@@ -1375,6 +1376,16 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     /// <summary>双击打开后，在这个时间点之前的选中都视为打开时的残留，立即取消。</summary>
     private long _suppressSelectionUntil;
 
+    /// <summary>双击打开后，等鼠标松开时取消选中。</summary>
+    private bool _clearSelectionOnRelease;
+
+    private void CardRoot_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_clearSelectionOnRelease) return;
+        _clearSelectionOnRelease = false;
+        DispatcherQueue.TryEnqueue(ClearSelection);
+    }
+
     /// <summary>点在图标以外的地方（卡片空白处、边距）就取消选中，和 Windows 桌面一致。</summary>
     /// <summary>上一次按下的图标与时间、位置，用来判断双击。</summary>
     private CardItem? _lastPressItem;
@@ -1423,8 +1434,8 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             _lastPressItem = null;
             // 双击确认打开后取消选中（蓝框消失），否则看起来像没有反应。
             // 同时排一次到 UI 队列：GridView 在本次按下之后可能还会再设一次选中，排队的这次保证最后生效。
-            ClearSelection();
-            DispatcherQueue.TryEnqueue(ClearSelection);
+            // 取消选中放到鼠标松开之后做：按下过程中改动选中会打断图标的鼠标捕获，松开后悬停的浅灰框就没了。
+            _clearSelectionOnRelease = true;
             _suppressSelectionUntil = Environment.TickCount64 + 800;
             OpenItem(pressed);
             return;
