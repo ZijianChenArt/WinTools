@@ -549,6 +549,11 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         ShellRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(CardRoot_PointerPressed), true);
         ShellRoot.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(CardRoot_PointerReleased), true);
         ShellRoot.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(CardRoot_PointerMoved), true);
+        // 新生成或回收复用的图标：模板还没应用完，等一拍再设底色。
+        ItemsGrid.ContainerContentChanging += (_, args) =>
+        {
+            if (args.ItemContainer is GridViewItem item) DispatcherQueue.TryEnqueue(() => ApplyItemVisual(item));
+        };
         ShellRoot.AddHandler(UIElement.PointerExitedEvent, new PointerEventHandler(CardRoot_PointerExited), true);
         // 拖放处理器也用 handledEventsToo: true 挂，防止 ListViewBase 哪天把同源拖动的事件
         // 标成已处理后我们收不到——卡片内重排完全依赖在这里接住 Drop（见 ReorderWithinCard）。
@@ -1365,8 +1370,8 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     private void ItemsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        // 选中变化后图标的状态会被 WinUI 重设一遍，排到它之后刷新悬停，取消选中时鼠标还在图标上就保持浅灰。
-        DispatcherQueue.TryEnqueue(RefreshHoverState);
+        // 选中变化后重新算每个图标的底色：鼠标还在图标上就是浅灰（含取消选中的瞬间），移开且已选中才是中灰。
+        UpdateAllItemVisuals();
 
         // 双击打开后的短时间内，GridView 在鼠标松开（Tapped）时还会再选中一次：这里立刻清掉，蓝框不会重新出现。
         if (Environment.TickCount64 < _suppressSelectionUntil && ItemsGrid.SelectedIndex >= 0)
@@ -1386,52 +1391,81 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     private void CardRoot_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        // 松开后 WinUI 会把图标设成「选中」而不带「悬停」，要等鼠标移出再移入才恢复。排到它之后再刷新一次悬停状态。
-        DispatcherQueue.TryEnqueue(RefreshHoverState);
+        UpdateAllItemVisuals();
 
         if (!_clearSelectionOnRelease) return;
         _clearSelectionOnRelease = false;
         DispatcherQueue.TryEnqueue(ClearSelection);
     }
 
-    #region 图标悬停状态（与 Windows 一致）
+    #region 图标底色（与 Windows 一致）
 
-    // Windows 的规则：鼠标只要悬浮在图标上，不管单击还是双击，都只有一层浅灰；
-    // 只有「已选中且鼠标已移开」才是中灰。WinUI 的图标在单击后会丢掉「悬停」状态，所以这里自己维护。
+    // Windows 的规则：鼠标悬浮在图标上，不管单击还是双击，都只有一层浅灰；
+    // 只有「已选中且鼠标已移开」才是中灰；其余没有底色。
+    // 不靠 WinUI 的视觉状态来画：它在单击后会把图标设回「选中」并丢掉「悬停」，要鼠标移出再移入才恢复，
+    // 补设状态也会被它随后的更新覆盖。所以由代码直接决定每个图标的底色：
+    // 鼠标在这个图标上 → 浅灰；否则已选中 → 中灰；否则无底色。
     private GridViewItem? _hoverContainer;
+
+    // 深色主题用白色叠加，浅色主题用黑色叠加。
+    private static readonly Microsoft.UI.Xaml.Media.Brush NoItemBrush =
+        new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+    private static readonly Microsoft.UI.Xaml.Media.Brush DarkLightGrayBrush =
+        new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+    private static readonly Microsoft.UI.Xaml.Media.Brush DarkMidGrayBrush =
+        new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+    private static readonly Microsoft.UI.Xaml.Media.Brush LightLightGrayBrush =
+        new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x0F, 0x00, 0x00, 0x00));
+    private static readonly Microsoft.UI.Xaml.Media.Brush LightMidGrayBrush =
+        new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0x29, 0x00, 0x00, 0x00));
 
     private void CardRoot_PointerMoved(object sender, PointerRoutedEventArgs e)
     {
         var container = FindItemContainer(e.OriginalSource as DependencyObject);
         if (ReferenceEquals(container, _hoverContainer)) return;
 
-        // 鼠标移到了别的图标（或离开了图标）：先把上一个恢复成不带悬停的状态，再给新的加上悬停。
-        ResetHoverState(_hoverContainer);
+        var previous = _hoverContainer;
         _hoverContainer = container;
-        RefreshHoverState();
+        ApplyItemVisual(previous);
+        ApplyItemVisual(container);
     }
 
     private void CardRoot_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         // 子元素的离开也会冒泡到这里；只有鼠标真正离开整张卡片时才清掉悬停。
-        var position = e.GetCurrentPoint(ShellRoot).Position;
-        if (position.X >= 0 && position.Y >= 0 && position.X <= ShellRoot.ActualWidth && position.Y <= ShellRoot.ActualHeight) return;
+        // 不用事件里的位置判断：离开窗口时系统上报的位置还停在边缘内侧，会误认为没离开。用屏幕坐标对窗口矩形。
+        if (GetCursorPos(out var cursor) && GetWindowRect(_hwnd, out var window)
+            && cursor.X >= window.Left && cursor.X < window.Right && cursor.Y >= window.Top && cursor.Y < window.Bottom)
+            return;
 
-        ResetHoverState(_hoverContainer);
+        var previous = _hoverContainer;
         _hoverContainer = null;
+        ApplyItemVisual(previous);
     }
 
-    /// <summary>把鼠标所在的图标强制成「悬停」（已选中的是「选中并悬停」），颜色见 GridView.Resources。</summary>
-    private void RefreshHoverState()
-    {
-        if (_hoverContainer is not { } container) return;
-        VisualStateManager.GoToState(container, container.IsSelected ? "SelectedPointerOver" : "PointerOver", true);
-    }
-
-    private static void ResetHoverState(GridViewItem? container)
+    /// <summary>按「鼠标在上 → 浅灰；已选中 → 中灰；否则无」设置一个图标的底色。</summary>
+    private void ApplyItemVisual(GridViewItem? container)
     {
         if (container == null) return;
-        VisualStateManager.GoToState(container, container.IsSelected ? "Selected" : "Normal", true);
+        if (Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(container) == 0) return;
+        if (Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(container, 0) is not Border background) return;
+
+        var dark = ItemsGrid.ActualTheme != ElementTheme.Light;
+        background.Background = ReferenceEquals(container, _hoverContainer)
+            ? (dark ? DarkLightGrayBrush : LightLightGrayBrush)
+            : container.IsSelected
+                ? (dark ? DarkMidGrayBrush : LightMidGrayBrush)
+                : NoItemBrush;
+    }
+
+    /// <summary>选中变化后重新计算所有图标的底色（一张卡片只有几十个图标，开销可以忽略）。</summary>
+    private void UpdateAllItemVisuals()
+    {
+        if (ItemsGrid.ItemsPanelRoot is not Panel panel) return;
+        foreach (var child in panel.Children)
+        {
+            if (child is GridViewItem item) ApplyItemVisual(item);
+        }
     }
 
     #endregion
