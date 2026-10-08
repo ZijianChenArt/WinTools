@@ -37,29 +37,6 @@
                               ScrollViewer.HorizontalScrollMode="Disabled"
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               Padding="0">
-                        <GridView.Resources>
-                            <!-- 图标的三种底色，与 Windows 文件列表一致（灰色，不用主题色）：
-                                 悬停：浅灰；选中：中灰；选中后再悬停：浅灰；离开悬停且未选中：无底色。
-                                 深浅两套主题分别取值，深色用白色叠加，浅色用黑色叠加。 -->
-                            <ResourceDictionary>
-                            <ResourceDictionary.ThemeDictionaries>
-                                <ResourceDictionary x:Key="Dark">
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundPointerOver" Color="#14FFFFFF"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelected" Color="#33FFFFFF"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver" Color="#14FFFFFF"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed" Color="#33FFFFFF"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundPressed" Color="#33FFFFFF"/>
-                                </ResourceDictionary>
-                                <ResourceDictionary x:Key="Light">
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundPointerOver" Color="#0F000000"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelected" Color="#29000000"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver" Color="#0F000000"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed" Color="#29000000"/>
-                                    <SolidColorBrush x:Key="GridViewItemBackgroundPressed" Color="#29000000"/>
-                                </ResourceDictionary>
-                            </ResourceDictionary.ThemeDictionaries>
-                            </ResourceDictionary>
-                        </GridView.Resources>
                         <GridView.ItemContainerStyle>
                             <!-- 关键：清掉 WinUI 3 默认 GridViewItem 的内边距 + 默认 Center 内容对齐，
                                  让所有 item 紧贴 GridView 左边缘开始排，单图标固定在卡片最左。
@@ -78,46 +55,14 @@
                                 <Setter Property="FocusVisualPrimaryBrush" Value="Transparent"/>
                                 <Setter Property="FocusVisualSecondaryBrush" Value="Transparent"/>
                                 <!-- 自定义模板：默认模板里的焦点框（点击后的蓝框）去不掉，所以整个模板重写。
-                                     这里只有底色，没有焦点框；底色的颜色取值见上面 GridView.Resources。 -->
+                                     这里只有底色，没有焦点框；底色由代码决定（见 DesktopCardWindow.xaml.cs）。 -->
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="GridViewItem">
+                                            <!-- 没有任何视觉状态：底色完全由 DesktopCardWindow.xaml.cs 的 ApplyItemVisual 决定。
+                                                 WinUI 单击后会把状态设回「选中」、丢掉「悬停」，靠状态画底色会出现单击后变中灰的问题。 -->
                                             <Border x:Name="ItemBackground" Background="Transparent"
                                                     CornerRadius="{TemplateBinding CornerRadius}">
-                                                <!-- VisualStateGroups 必须挂在模板的根元素（这个 Border）上，状态才会生效。 -->
-                                                <VisualStateManager.VisualStateGroups>
-                                                <VisualStateGroup x:Name="CommonStates">
-                                                    <VisualState x:Name="Normal"/>
-                                                    <VisualState x:Name="PointerOver">
-                                                        <VisualState.Setters>
-                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundPointerOver}"/>
-                                                        </VisualState.Setters>
-                                                    </VisualState>
-                                                    <!-- 鼠标按在图标上（含单击、双击的瞬间）仍然是浅灰：Windows 里只要鼠标悬浮在图标上，
-                                                         颜色就只有一层浅灰；中灰只在「已选中且鼠标已移开」时出现。 -->
-                                                    <VisualState x:Name="Pressed">
-                                                        <VisualState.Setters>
-                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundPointerOver}"/>
-                                                        </VisualState.Setters>
-                                                    </VisualState>
-                                                    <VisualState x:Name="Selected">
-                                                        <VisualState.Setters>
-                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundSelected}"/>
-                                                        </VisualState.Setters>
-                                                    </VisualState>
-                                                    <VisualState x:Name="SelectedPointerOver">
-                                                        <VisualState.Setters>
-                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundSelectedPointerOver}"/>
-                                                        </VisualState.Setters>
-                                                    </VisualState>
-                                                    <VisualState x:Name="SelectedPressed">
-                                                        <VisualState.Setters>
-                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundSelectedPointerOver}"/>
-                                                        </VisualState.Setters>
-                                                    </VisualState>
-                                                    <VisualState x:Name="Disabled"/>
-                                                </VisualStateGroup>
-                                                </VisualStateManager.VisualStateGroups>
                                                 <ContentPresenter x:Name="ContentPresenter"
                                                                   Content="{TemplateBinding Content}"
                                                                   ContentTemplate="{TemplateBinding ContentTemplate}"
