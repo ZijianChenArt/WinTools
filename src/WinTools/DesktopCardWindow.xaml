@@ -37,14 +37,27 @@
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               Padding="0">
                         <GridView.Resources>
-                            <!-- 选中态底色：系统主题色半透明，深浅色主题都能看清，接近 Windows
-                                 桌面图标被选中时的那个半透明蓝框。默认值在 Mica 表面上几乎看不见。 -->
-                            <SolidColorBrush x:Key="GridViewItemBackgroundSelected"
-                                             Color="{ThemeResource SystemAccentColor}" Opacity="0.35"/>
-                            <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver"
-                                             Color="{ThemeResource SystemAccentColor}" Opacity="0.45"/>
-                            <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed"
-                                             Color="{ThemeResource SystemAccentColor}" Opacity="0.5"/>
+                            <!-- 图标的三种底色，与 Windows 文件列表一致（灰色，不用主题色）：
+                                 悬停：浅灰；选中：中灰；选中后再悬停：浅灰；离开悬停且未选中：无底色。
+                                 深浅两套主题分别取值，深色用白色叠加，浅色用黑色叠加。 -->
+                            <ResourceDictionary>
+                            <ResourceDictionary.ThemeDictionaries>
+                                <ResourceDictionary x:Key="Dark">
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundPointerOver" Color="#14FFFFFF"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelected" Color="#33FFFFFF"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver" Color="#14FFFFFF"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed" Color="#33FFFFFF"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundPressed" Color="#33FFFFFF"/>
+                                </ResourceDictionary>
+                                <ResourceDictionary x:Key="Light">
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundPointerOver" Color="#0F000000"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelected" Color="#29000000"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver" Color="#0F000000"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPressed" Color="#29000000"/>
+                                    <SolidColorBrush x:Key="GridViewItemBackgroundPressed" Color="#29000000"/>
+                                </ResourceDictionary>
+                            </ResourceDictionary.ThemeDictionaries>
+                            </ResourceDictionary>
                         </GridView.Resources>
                         <GridView.ItemContainerStyle>
                             <!-- 关键：清掉 WinUI 3 默认 GridViewItem 的内边距 + 默认 Center 内容对齐，
