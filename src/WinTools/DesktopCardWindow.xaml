@@ -29,6 +29,7 @@
                          插入；而一旦设成 False，拖动会话就不再把 DragOver/Drop 发回源列表，
                          自己处理也收不到（2026-09-18 埋点实测）。 -->
                     <GridView x:Name="ItemsGrid" SelectionMode="Single" IsItemClickEnabled="True"
+                              UseSystemFocusVisuals="False"
                               SelectionChanged="ItemsGrid_SelectionChanged"
                               CanDragItems="True" CanReorderItems="True" AllowDrop="True"
                               DragItemsStarting="ItemsGrid_DragItemsStarting"
@@ -71,6 +72,11 @@
                                 <Setter Property="HorizontalContentAlignment" Value="Left"/>
                                 <Setter Property="MinWidth" Value="0"/>
                                 <Setter Property="MinHeight" Value="0"/>
+                                <!-- 不要焦点框：鼠标点击后 WinUI 会在图标外画一圈强调色（蓝框），Windows 桌面图标没有这圈框。
+                                     焦点仍然在，只是框线透明，方向键和 Enter 照常工作。 -->
+                                <Setter Property="UseSystemFocusVisuals" Value="False"/>
+                                <Setter Property="FocusVisualPrimaryBrush" Value="Transparent"/>
+                                <Setter Property="FocusVisualSecondaryBrush" Value="Transparent"/>
                             </Style>
                         </GridView.ItemContainerStyle>
                         <GridView.ItemsPanel>
