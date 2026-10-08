@@ -1366,23 +1366,68 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     }
 
     /// <summary>点在图标以外的地方（卡片空白处、边距）就取消选中，和 Windows 桌面一致。</summary>
+    /// <summary>上一次按下的图标与时间、位置，用来判断双击。</summary>
+    private CardItem? _lastPressItem;
+    private long _lastPressTick;
+    private POINT _lastPressPoint;
+
+    /// <summary>
+    /// 点击处理：点在图标上交给 GridView 选中，并判断是不是双击；点在空白处清掉选中。
+    /// 双击打开不用 DoubleTapped：那是手势识别出来的，鼠标稍一动就会被拖动或平移取消，而且只挂在图标内部很小的区域上。
+    /// 这里按系统的双击时间与双击距离自己判断，整个单元格都能双击，也不会被拖动打断。
+    /// </summary>
     private void CardRoot_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        CardItem? pressed = null;
         var node = e.OriginalSource as DependencyObject;
         while (node != null)
         {
-            if (node is GridViewItem) return;   // 点在图标上，交给 GridView 自己选中
+            if (node is GridViewItem gridItem)
+            {
+                pressed = gridItem.DataContext as CardItem;
+                break;
+            }
             node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
         }
-        ClearSelection();
+
+        if (pressed == null)
+        {
+            _lastPressItem = null;
+            ClearSelection();
+            return;
+        }
+
+        // 只有鼠标左键参与双击判断；右键菜单、中键不计入。
+        if (!e.GetCurrentPoint(ShellRoot).Properties.IsLeftButtonPressed) return;
+
+        GetCursorPos(out var cursor);
+        var now = Environment.TickCount64;
+        var sameItem = ReferenceEquals(pressed, _lastPressItem);
+        var inTime = now - _lastPressTick <= GetDoubleClickTime();
+        var inDistance = Math.Abs(cursor.X - _lastPressPoint.X) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2
+                         && Math.Abs(cursor.Y - _lastPressPoint.Y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+
+        if (sameItem && inTime && inDistance)
+        {
+            // 打开后清掉记录：三击不会再触发第二次打开。
+            _lastPressItem = null;
+            OpenItem(pressed);
+            return;
+        }
+
+        _lastPressItem = pressed;
+        _lastPressTick = now;
+        _lastPressPoint = cursor;
     }
 
-    private void Item_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: CardItem item }) return;
-        e.Handled = true;
-        OpenItem(item);
-    }
+    private const int SM_CXDOUBLECLK = 36;
+    private const int SM_CYDOUBLECLK = 37;
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDoubleClickTime();
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
 
     private void OpenItem(CardItem item)
     {

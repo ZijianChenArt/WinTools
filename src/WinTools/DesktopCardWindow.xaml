@@ -23,7 +23,7 @@
                                Visibility="Collapsed"/>
                     <!-- SelectionMode=Single：单击选中并保留高亮（此前是 None，只有 hover 才有反馈，
                          松开鼠标就什么都看不出来，用户无法判断自己选中了哪个）。
-                         双击打开仍然走 ItemTemplate 上的 DoubleTapped。 -->
+                         双击打开由 CardRoot_PointerPressed 按系统双击时间与距离判断（不用 DoubleTapped）。 -->
                     <!-- CanReorderItems 必须保持 True，但真正执行卡片内重排的是 code-behind 的
                          ReorderWithinCard：内置重排只认 ItemsWrapGrid，换成 CardTilesPanel 后它不再
                          插入；而一旦设成 False，拖动会话就不再把 DragOver/Drop 发回源列表，
@@ -75,8 +75,7 @@
                                      CardTilesPanel 按每行最高的格子决定这一行的高度。 -->
                                 <!-- 右键菜单不写在模板里：每个图标各带一份菜单实测多占约 4MB。
                                      菜单在 GridView 的 ContextRequested 里按需创建（DesktopCardWindow.ItemMenu.cs）。 -->
-                                <StackPanel Width="76" Spacing="4" Padding="4,8"
-                                            DoubleTapped="Item_DoubleTapped" Tag="{x:Bind}">
+                                <StackPanel Width="76" Spacing="4" Padding="4,8" Tag="{x:Bind}">
                                     <ToolTipService.ToolTip>
                                         <ToolTip Content="{x:Bind DisplayName}" Style="{StaticResource PageDesktopToolTipStyle}"/>
                                     </ToolTipService.ToolTip>
