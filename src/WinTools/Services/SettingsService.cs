@@ -106,6 +106,8 @@ public sealed class SettingsService
         Current.WindowGap = defaults.WindowGap;
         Current.EnablePerAppIme = defaults.EnablePerAppIme;
         Current.EnableDesktopClickToShow = defaults.EnableDesktopClickToShow;
+        Current.EnableExplorerPreview = defaults.EnableExplorerPreview;
+        Current.EnableCardPreview = defaults.EnableCardPreview;
         Current.EnableVoiceBall = defaults.EnableVoiceBall;
         Current.VoiceBallCustomOffset = defaults.VoiceBallCustomOffset;
         Current.VoiceBallOffsetX = defaults.VoiceBallOffsetX;

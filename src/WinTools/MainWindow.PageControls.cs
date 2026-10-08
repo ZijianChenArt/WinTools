@@ -54,6 +54,9 @@ public sealed partial class MainWindow
     private ToggleSwitch AutoUpdateToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(AutoUpdateToggle));
     private ToggleSwitch AutoStartToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(AutoStartToggle));
     private ToggleSwitch DesktopClickToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(DesktopClickToggle));
+    private ToggleSwitch ExplorerPreviewToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(ExplorerPreviewToggle));
+    private ToggleSwitch CardPreviewToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(CardPreviewToggle));
+    private Grid ContentSpacePreview => FeaturePages.GetControl<Grid>(nameof(ContentSpacePreview));
     private ToggleSwitch DragStashToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(DragStashToggle));
     private ToggleSwitch PerAppImeToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(PerAppImeToggle));
     private ToggleSwitch ProgramAssocToggle => FeaturePages.GetControl<ToggleSwitch>(nameof(ProgramAssocToggle));

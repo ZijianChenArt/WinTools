@@ -624,6 +624,60 @@
             </ScrollViewer>
         </Grid>
 
+        <!-- ============ 空格预览 ============ -->
+        <Grid x:Name="ContentSpacePreview" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Style="{StaticResource PageHeaderStyle}">
+                <StackPanel Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="空格预览" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="选中文件后按空格快速预览，与 QuickLook 的用法一致。"
+                               Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
+                <StackPanel>
+                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="资源管理器" Description="在资源管理器的文件列表里选中项目后按空格">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE8B7;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="ExplorerPreviewToggle" OnContent="开" OffContent="关"
+                                          VerticalAlignment="Center" Toggled="ExplorerPreviewToggle_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="桌面分区卡片" Description="在桌面分区卡片里选中项目后按空格">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE8F1;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="CardPreviewToggle" OnContent="开" OffContent="关"
+                                          VerticalAlignment="Center" Toggled="CardPreviewToggle_Toggled"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
+
+                    <TextBlock Text="使用方法" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="预览" Description="选中一个文件后按空格">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7C3;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <TextBlock Text="空格" Style="{StaticResource PageKeyCapTextStyle}"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="切换与关闭" Description="预览时用方向键切换，再按空格或 Esc 关闭">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7EE;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <TextBlock Text="← →   Esc" Style="{StaticResource PageCaptionTextStyle}"/>
+                        </tk:SettingsCard>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
         <!-- ============ 悬浮搜索 ============ -->
         <Grid x:Name="ContentSpotlight" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
             <Grid.RowDefinitions>

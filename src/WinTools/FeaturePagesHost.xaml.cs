@@ -131,6 +131,8 @@ public sealed partial class FeaturePagesHost : UserControl
     private void DesktopRestore_Click(object sender, RoutedEventArgs e) => Owner?.DesktopRestore_Click(sender, e);
     private void DesktopCleanupBroken_Click(object sender, RoutedEventArgs e) => Owner?.DesktopCleanupBroken_Click(sender, e);
     private void DesktopClickToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DesktopClickToggle_Toggled(sender, e);
+    private void ExplorerPreviewToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.ExplorerPreviewToggle_Toggled(sender, e);
+    private void CardPreviewToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.CardPreviewToggle_Toggled(sender, e);
     private void DragStash_Show_Click(object sender, RoutedEventArgs e) => Owner?.DragStash_Show_Click(sender, e);
     private void DragStashToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.DragStashToggle_Toggled(sender, e);
     private void ImeGrid_ItemClick(object sender, ItemClickEventArgs e) => Owner?.ImeGrid_ItemClick(sender, e);

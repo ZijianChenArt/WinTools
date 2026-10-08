@@ -60,6 +60,8 @@
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.2.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" Version="8.2.251219" />
+    <!-- 文件预览里的 HTML 渲染（WinUI 的 WebView2 控件）。运行时用系统自带的 Edge WebView2。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3719.77" />
   </ItemGroup>
 
   <!--

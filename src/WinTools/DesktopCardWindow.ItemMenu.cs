@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
@@ -467,7 +468,8 @@ public sealed partial class DesktopCardWindow
 
     /// <summary>
     /// 选中图标后的快捷键，与资源管理器一致：Enter 打开、F2 重命名、Delete 删除、Ctrl+C / Ctrl+X 复制 / 剪切、
-    /// Ctrl+Shift+C 复制文件地址、Alt+Enter 属性。菜单键 / Shift+F10 由 <see cref="ItemsGrid_ContextRequested"/> 处理。
+    /// Ctrl+Shift+C 复制文件地址、Alt+Enter 属性。空格是文件预览（资源管理器里没有，取自 QuickLook 的习惯）。
+    /// 菜单键 / Shift+F10 由 <see cref="ItemsGrid_ContextRequested"/> 处理。
     /// </summary>
     /// <remarks>用 PreviewKeyDown：GridView 自己会把 Enter 标成已处理（用于 ItemClick）。</remarks>
     private void ItemsGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -491,6 +493,9 @@ public sealed partial class DesktopCardWindow
             case VirtualKey.Delete when !alt && !control && !shift:
                 DeleteItem(item);
                 break;
+            case VirtualKey.Space when !alt && !control && !shift && !item.IsShellItem && FilePreviewService.CardPreviewEnabled:
+                TogglePreview(item);
+                break;
             case VirtualKey.C when control && shift && !alt:
                 CopyItemPath(item);
                 break;
@@ -504,6 +509,17 @@ public sealed partial class DesktopCardWindow
                 return;
         }
         e.Handled = true;
+    }
+
+    /// <summary>空格：文件预览。可预览的项目按卡片显示顺序组成列表，左右键在其中切换。</summary>
+    private void TogglePreview(CardItem item)
+    {
+        var paths = new List<string>();
+        foreach (var candidate in ItemsGrid.Items.OfType<CardItem>())
+        {
+            if (!candidate.IsShellItem) paths.Add(candidate.Path);
+        }
+        FilePreviewService.Toggle(paths, paths.IndexOf(item.Path));
     }
 
     /// <summary>元素左下角的屏幕坐标（物理像素），给键盘呼出的系统菜单定位。</summary>

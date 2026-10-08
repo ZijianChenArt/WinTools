@@ -48,6 +48,7 @@ public partial class App : Application, IWindowRegistry
     private FloatingStashManager? _stashManager;
     private PerAppImeService? _perAppImeService;
     private DesktopClickService? _desktopClickService;
+    private ExplorerPreviewService? _explorerPreviewService;
     private SpotlightWindow? _spotlightWindow;
     private VoiceBallService? _voiceBallService;
     internal TaskbarInfoService? TaskbarInfo { get; private set; }
@@ -211,12 +212,16 @@ public partial class App : Application, IWindowRegistry
         //   通过 _dispatcherQueue.TryEnqueue 切回 UI 线程，等 WinUI 布局空出 UI 线程即可
         // 用户体验：主窗口先显示，托盘和悬浮暂存 1-2 秒后出现，但 4 个 service
         // 全部 ready 的总时间从 ~2.55s 降到 ~1.4s（受 WinUI 首帧布局制约）。
+        // 资源管理器空格预览需要 UI 线程的 DispatcherQueue，必须在后台任务开始前从这里取。
+        var uiDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         _ = System.Threading.Tasks.Task.Run(() =>
         {
             try { InitPerAppIme(startupConfig, mainWindowHandle); }
             catch (Exception ex) { ErrorReporter.Log("App.InitPerAppIme", ex); }
             try { InitDesktopClick(startupConfig); }
             catch (Exception ex) { ErrorReporter.Log("App.InitDesktopClick", ex); }
+            try { InitExplorerPreview(uiDispatcher, startupConfig); }
+            catch (Exception ex) { ErrorReporter.Log("App.InitExplorerPreview", ex); }
             try { InitVoiceBall(startupConfig); }
             catch (Exception ex) { ErrorReporter.Log("App.InitVoiceBall", ex); }
             // 旧“桌面整理”已并入桌面分区卡片，清理此前可能注册的右键菜单。
@@ -397,6 +402,26 @@ public partial class App : Application, IWindowRegistry
         if (!config.EnableDesktopClickToShow) return;
         _desktopClickService = new DesktopClickService();
         _desktopClickService.SetEnabled(true);
+    }
+
+    /// <summary>
+    /// 空格预览（仿 QuickLook）的启动入口。钩子始终安装，开关只控制它是否接管按键，
+    /// 所以在设置页里切换不需要重新安装钩子。窗口在 UI 线程上预热，第一次按空格时不必等它创建。
+    /// </summary>
+    private void InitExplorerPreview(Microsoft.UI.Dispatching.DispatcherQueue dispatcher, Config config)
+    {
+        FilePreviewService.CardPreviewEnabled = config.EnableCardPreview;
+        dispatcher.TryEnqueue(FilePreviewService.Warmup);
+
+        _explorerPreviewService = new ExplorerPreviewService(dispatcher) { Enabled = config.EnableExplorerPreview };
+        _explorerPreviewService.Start();
+    }
+
+    /// <summary>设置页切换空格预览时调用，立即对运行中的服务生效。</summary>
+    internal void SetSpacePreviewEnabled(bool explorer, bool card)
+    {
+        FilePreviewService.CardPreviewEnabled = card;
+        if (_explorerPreviewService is { } service) service.Enabled = explorer;
     }
 
     #endregion
