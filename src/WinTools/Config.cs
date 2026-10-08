@@ -245,6 +245,15 @@ public class Config : ObservableObject
     [JsonPropertyName("enableDesktopClickToShow")]
     public bool EnableDesktopClickToShow { get => _enableDesktopClickToShow; set => SetProperty(ref _enableDesktopClickToShow, value); }
 
+    // 空格预览（仿 QuickLook）：资源管理器与桌面分区卡片分别开关，默认都开。
+    private bool _enableExplorerPreview = true;
+    [JsonPropertyName("enableExplorerPreview")]
+    public bool EnableExplorerPreview { get => _enableExplorerPreview; set => SetProperty(ref _enableExplorerPreview, value); }
+
+    private bool _enableCardPreview = true;
+    [JsonPropertyName("enableCardPreview")]
+    public bool EnableCardPreview { get => _enableCardPreview; set => SetProperty(ref _enableCardPreview, value); }
+
     // 记住在音频设备弹窗里选过的扬声器 / 麦克风（端点 ID）。系统经常在插拔、睡眠唤醒后把默认设备改掉，
     // 开启锁定后后台会把它切回来；设备不在线时不动。
     private string _audioPreferredOutputId = "";

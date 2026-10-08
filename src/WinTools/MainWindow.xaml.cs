@@ -123,6 +123,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         public const string DesktopClick = "DesktopClick";
 
+        public const string SpacePreview = "SpacePreview";
+
         public const string Spotlight = "Spotlight";
 
         public const string VoiceBall = "VoiceBall";
@@ -269,6 +271,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         MainNav.MenuItems.Add(NavItemDesktopClick);
 
+        MainNav.MenuItems.Add(NavItemSpacePreview);
+
         MainNav.MenuItems.Add(NavItemSpotlight);
 
         MainNav.MenuItems.Add(NavItemVoiceBall);
@@ -294,6 +298,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _contentPanels[NavTags.PerAppIme] = ContentPerAppIme;
         _contentPanels[NavTags.DesktopOrganize] = ContentDesktopOrganize;
         _contentPanels[NavTags.DesktopClick] = ContentDesktopClick;
+        _contentPanels[NavTags.SpacePreview] = ContentSpacePreview;
         _contentPanels[NavTags.Spotlight] = ContentSpotlight;
         _contentPanels[NavTags.VoiceBall] = ContentVoiceBall;
         _contentPanels[NavTags.TaskbarInfo] = FeaturePages.GetControl<Grid>("ContentTaskbarInfo");
@@ -485,6 +490,11 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
                 break;
 
+            case NavTags.SpacePreview:
+                LoadSpacePreviewFromConfig();
+
+                break;
+
             case NavTags.Spotlight:
                 LoadSpotlightFromConfig();
 
@@ -539,6 +549,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (ProgramAssocToggle != null) ProgramAssocToggle.IsOn = _config.EnableProgramAssoc;
         if (PerAppImeToggle != null) PerAppImeToggle.IsOn = _config.EnablePerAppIme;
         if (DesktopClickToggle != null) DesktopClickToggle.IsOn = _config.EnableDesktopClickToShow;
+        if (ExplorerPreviewToggle != null) ExplorerPreviewToggle.IsOn = _config.EnableExplorerPreview;
+        if (CardPreviewToggle != null) CardPreviewToggle.IsOn = _config.EnableCardPreview;
         if (SpotlightToggle != null) SpotlightToggle.IsOn = _config.EnableSpotlight;
         if (HotkeySpotlightBox != null) HotkeySpotlightBox.Text = GetSpotlightHotkey();
         if (VoiceBallToggle != null) VoiceBallToggle.IsOn = _config.EnableVoiceBall;
@@ -936,6 +948,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         SetNavDot(NavDotDesktopOrganize, _config.EnableDesktopCard, onBrush, offBrush);
 
         SetNavDot(NavDotDesktopClick, _config.EnableDesktopClickToShow, onBrush, offBrush);
+
+        SetNavDot(NavDotSpacePreview, _config.EnableExplorerPreview || _config.EnableCardPreview, onBrush, offBrush);
 
         SetNavDot(NavDotSpotlight, _config.EnableSpotlight, onBrush, offBrush);
 

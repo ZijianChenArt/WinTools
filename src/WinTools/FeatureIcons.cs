@@ -12,6 +12,7 @@ public static class FeatureIcons
     public static string InputMethod => "\uE765";
     public static string DesktopCards => "\uF0E2";
     public static string DesktopClick => "\uE80F";
+    public static string SpacePreview => "\uE7C3";
     public static string Search => "\uE721";
     public static string Voice => "\uE720";
     public static string TaskbarInfo => "\uE9D9";

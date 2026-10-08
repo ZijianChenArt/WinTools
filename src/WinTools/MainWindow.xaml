@@ -195,6 +195,21 @@
                         </Grid>
                     </NavigationViewItem.Content>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="NavItemSpacePreview" Tag="SpacePreview">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="{x:Bind local:FeatureIcons.SpacePreview}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.Content>
+                        <Grid HorizontalAlignment="Stretch" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="空格预览" Style="{StaticResource NavigationLabelStyle}"/>
+                            <Ellipse x:Name="NavDotSpacePreview" Grid.Column="1" Width="10" Height="10" Margin="0,0,2,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </NavigationViewItem.Content>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="NavItemSpotlight" Tag="Spotlight">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="{x:Bind local:FeatureIcons.Search}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>
