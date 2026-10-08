@@ -77,6 +77,58 @@
                                 <Setter Property="UseSystemFocusVisuals" Value="False"/>
                                 <Setter Property="FocusVisualPrimaryBrush" Value="Transparent"/>
                                 <Setter Property="FocusVisualSecondaryBrush" Value="Transparent"/>
+                                <!-- 自定义模板：默认模板里的焦点框（点击后的蓝框）去不掉，所以整个模板重写。
+                                     这里只有底色，没有焦点框；底色的颜色取值见上面 GridView.Resources。 -->
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="GridViewItem">
+                                            <Border x:Name="ItemBackground" Background="Transparent"
+                                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                                <!-- VisualStateGroups 必须挂在模板的根元素（这个 Border）上，状态才会生效。 -->
+                                                <VisualStateManager.VisualStateGroups>
+                                                <VisualStateGroup x:Name="CommonStates">
+                                                    <VisualState x:Name="Normal"/>
+                                                    <VisualState x:Name="PointerOver">
+                                                        <VisualState.Setters>
+                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundPointerOver}"/>
+                                                        </VisualState.Setters>
+                                                    </VisualState>
+                                                    <!-- 鼠标按在图标上（含单击、双击的瞬间）仍然是浅灰：Windows 里只要鼠标悬浮在图标上，
+                                                         颜色就只有一层浅灰；中灰只在「已选中且鼠标已移开」时出现。 -->
+                                                    <VisualState x:Name="Pressed">
+                                                        <VisualState.Setters>
+                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundPointerOver}"/>
+                                                        </VisualState.Setters>
+                                                    </VisualState>
+                                                    <VisualState x:Name="Selected">
+                                                        <VisualState.Setters>
+                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundSelected}"/>
+                                                        </VisualState.Setters>
+                                                    </VisualState>
+                                                    <VisualState x:Name="SelectedPointerOver">
+                                                        <VisualState.Setters>
+                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundSelectedPointerOver}"/>
+                                                        </VisualState.Setters>
+                                                    </VisualState>
+                                                    <VisualState x:Name="SelectedPressed">
+                                                        <VisualState.Setters>
+                                                            <Setter Target="ItemBackground.Background" Value="{ThemeResource GridViewItemBackgroundSelectedPointerOver}"/>
+                                                        </VisualState.Setters>
+                                                    </VisualState>
+                                                    <VisualState x:Name="Disabled"/>
+                                                </VisualStateGroup>
+                                                </VisualStateManager.VisualStateGroups>
+                                                <ContentPresenter x:Name="ContentPresenter"
+                                                                  Content="{TemplateBinding Content}"
+                                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                                  ContentTransitions="{TemplateBinding ContentTransitions}"
+                                                                  Padding="{TemplateBinding Padding}"
+                                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
                             </Style>
                         </GridView.ItemContainerStyle>
                         <GridView.ItemsPanel>
