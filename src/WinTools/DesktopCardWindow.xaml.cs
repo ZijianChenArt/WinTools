@@ -548,6 +548,8 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         // handledEventsToo: true，否则同样收不到。
         ShellRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(CardRoot_PointerPressed), true);
         ShellRoot.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(CardRoot_PointerReleased), true);
+        ShellRoot.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(CardRoot_PointerMoved), true);
+        ShellRoot.AddHandler(UIElement.PointerExitedEvent, new PointerEventHandler(CardRoot_PointerExited), true);
         // 拖放处理器也用 handledEventsToo: true 挂，防止 ListViewBase 哪天把同源拖动的事件
         // 标成已处理后我们收不到——卡片内重排完全依赖在这里接住 Drop（见 ReorderWithinCard）。
         ItemsGrid.AddHandler(UIElement.DragOverEvent, new DragEventHandler(ItemsGrid_DragOver), true);
@@ -1363,6 +1365,9 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     private void ItemsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // 选中变化后图标的状态会被 WinUI 重设一遍，排到它之后刷新悬停，取消选中时鼠标还在图标上就保持浅灰。
+        DispatcherQueue.TryEnqueue(RefreshHoverState);
+
         // 双击打开后的短时间内，GridView 在鼠标松开（Tapped）时还会再选中一次：这里立刻清掉，蓝框不会重新出现。
         if (Environment.TickCount64 < _suppressSelectionUntil && ItemsGrid.SelectedIndex >= 0)
         {
@@ -1381,10 +1386,55 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
 
     private void CardRoot_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        // 松开后 WinUI 会把图标设成「选中」而不带「悬停」，要等鼠标移出再移入才恢复。排到它之后再刷新一次悬停状态。
+        DispatcherQueue.TryEnqueue(RefreshHoverState);
+
         if (!_clearSelectionOnRelease) return;
         _clearSelectionOnRelease = false;
         DispatcherQueue.TryEnqueue(ClearSelection);
     }
+
+    #region 图标悬停状态（与 Windows 一致）
+
+    // Windows 的规则：鼠标只要悬浮在图标上，不管单击还是双击，都只有一层浅灰；
+    // 只有「已选中且鼠标已移开」才是中灰。WinUI 的图标在单击后会丢掉「悬停」状态，所以这里自己维护。
+    private GridViewItem? _hoverContainer;
+
+    private void CardRoot_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        var container = FindItemContainer(e.OriginalSource as DependencyObject);
+        if (ReferenceEquals(container, _hoverContainer)) return;
+
+        // 鼠标移到了别的图标（或离开了图标）：先把上一个恢复成不带悬停的状态，再给新的加上悬停。
+        ResetHoverState(_hoverContainer);
+        _hoverContainer = container;
+        RefreshHoverState();
+    }
+
+    private void CardRoot_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        // 子元素的离开也会冒泡到这里；只有鼠标真正离开整张卡片时才清掉悬停。
+        var position = e.GetCurrentPoint(ShellRoot).Position;
+        if (position.X >= 0 && position.Y >= 0 && position.X <= ShellRoot.ActualWidth && position.Y <= ShellRoot.ActualHeight) return;
+
+        ResetHoverState(_hoverContainer);
+        _hoverContainer = null;
+    }
+
+    /// <summary>把鼠标所在的图标强制成「悬停」（已选中的是「选中并悬停」），颜色见 GridView.Resources。</summary>
+    private void RefreshHoverState()
+    {
+        if (_hoverContainer is not { } container) return;
+        VisualStateManager.GoToState(container, container.IsSelected ? "SelectedPointerOver" : "PointerOver", true);
+    }
+
+    private static void ResetHoverState(GridViewItem? container)
+    {
+        if (container == null) return;
+        VisualStateManager.GoToState(container, container.IsSelected ? "Selected" : "Normal", true);
+    }
+
+    #endregion
 
     /// <summary>点在图标以外的地方（卡片空白处、边距）就取消选中，和 Windows 桌面一致。</summary>
     /// <summary>上一次按下的图标与时间、位置，用来判断双击。</summary>
