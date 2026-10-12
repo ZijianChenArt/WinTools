@@ -40,7 +40,7 @@ internal sealed class ExplorerPreviewService
     private const int VK_MENU = 0x12;
 
     private readonly DispatcherQueue _dispatcher;
-    private readonly BlockingCollection<IntPtr> _selectionQueue = new();
+    private readonly BlockingCollection<SelectionRequest> _selectionQueue = new();
     private readonly ManualResetEventSlim _ready = new(false);
     private HookProc? _hookProc;
     private IntPtr _hook;
@@ -50,6 +50,8 @@ internal sealed class ExplorerPreviewService
 
     /// <summary>空格按下时已经被吞掉：抬起要吞掉对应的 KeyUp，按住不放产生的自动重复也一并吞掉。</summary>
     private bool _swallowingSpace;
+
+    private readonly record struct SelectionRequest(IntPtr ExplorerWindow, IntPtr FocusWindow);
 
     /// <summary>设置页里的「资源管理器」开关。关闭时钩子原样放行所有按键，不做任何判断。</summary>
     public volatile bool Enabled;
@@ -141,7 +143,12 @@ internal sealed class ExplorerPreviewService
         _swallowingSpace = true;
         // 先在 UI 线程弹出加载中的窗口，让用户马上看到反应；选中项在工作线程读取，读完再填进窗口。
         _dispatcher.TryEnqueue(FilePreviewService.ShowPending);
-        _selectionQueue.Add(foreground);
+        // 标签式资源管理器的多个 ShellBrowser 共享同一个顶层 HWND；同时记录
+        // 当前 DirectUIHWND，后台读取时才能精确定位活动标签。
+        var threadId = GetWindowThreadProcessId(foreground, out _);
+        var gui = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
+        var focus = GetGUIThreadInfo(threadId, ref gui) ? gui.hwndFocus : IntPtr.Zero;
+        _selectionQueue.Add(new SelectionRequest(foreground, focus));
         return true;
     }
 
@@ -176,13 +183,13 @@ internal sealed class ExplorerPreviewService
 
     private void WorkerMain()
     {
-        foreach (var window in _selectionQueue.GetConsumingEnumerable())
+        foreach (var request in _selectionQueue.GetConsumingEnumerable())
         {
             // 无论读取成功与否，都要回到 UI 线程把结果交给窗口：空结果会收起加载中的窗口。
             IReadOnlyList<string> paths = Array.Empty<string>();
             try
             {
-                paths = ExplorerSelection.ReadSelectedPaths(window);
+                paths = ExplorerSelection.ReadSelectedPaths(request.ExplorerWindow, request.FocusWindow);
             }
             catch (Exception ex)
             {
@@ -264,7 +271,7 @@ internal static class ExplorerSelection
     private const uint SIGDN_FILESYSPATH = 0x80058000;
 
     /// <summary>读取 <paramref name="explorerWindow"/>（资源管理器顶层窗口句柄）里选中的文件 / 文件夹完整路径。</summary>
-    public static List<string> ReadSelectedPaths(IntPtr explorerWindow)
+    public static List<string> ReadSelectedPaths(IntPtr explorerWindow, IntPtr focusWindow)
     {
         var paths = new List<string>();
         var type = Type.GetTypeFromCLSID(ShellWindowsClsid);
@@ -274,6 +281,8 @@ internal static class ExplorerSelection
         if (shellWindows == null) return paths;
 
         var count = (int)type.InvokeMember("Count", BindingFlags.GetProperty, null, shellWindows, null)!;
+        object? fallbackWindow = null;
+        var matchedWindow = false;
         for (var i = 0; i < count; i++)
         {
             object? window;
@@ -292,12 +301,44 @@ internal static class ExplorerSelection
 
             if ((IntPtr)hwnd == explorerWindow)
             {
+                fallbackWindow ??= window;
+                // Windows 11 标签页共享顶层 HWND。优先用 ShellView 的窗口句柄
+                // 与按键时记录的 DirectUIHWND 匹配；旧式单窗口仍走回退路径。
+                if (focusWindow != IntPtr.Zero)
+                {
+                    if (!TryGetShellViewWindow(window, out var viewWindow)) continue;
+                    if (viewWindow != focusWindow) continue;
+                }
+
+                matchedWindow = true;
                 paths.AddRange(ReadSelectionFromBrowser(window));
                 break;
             }
         }
 
+        // 某些旧版 Explorer 的 ShellView 不暴露可比较的窗口句柄，保留单窗口兼容路径。
+        if (!matchedWindow && fallbackWindow != null)
+            paths.AddRange(ReadSelectionFromBrowser(fallbackWindow));
+
         return paths;
+    }
+
+    private static bool TryGetShellViewWindow(object window, out IntPtr viewWindow)
+    {
+        viewWindow = IntPtr.Zero;
+        try
+        {
+            var services = (IServiceProviderCom)window;
+            services.QueryService(ref SidTopLevelBrowser, ref IidShellBrowser, out var browserObject);
+            var browser = (IShellBrowserCom)browserObject;
+            browser.QueryActiveShellView(out var shellView);
+            shellView.GetWindow(out viewWindow);
+            return viewWindow != IntPtr.Zero;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static List<string> ReadSelectionFromBrowser(object window)
@@ -375,6 +416,8 @@ internal static class ExplorerSelection
      Guid("000214E3-0000-0000-C000-000000000046")]
     private interface IShellViewCom
     {
+        void GetWindow(out IntPtr phwnd);
+        void ContextSensitiveHelp(bool fEnterMode);
     }
 
     [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown),
