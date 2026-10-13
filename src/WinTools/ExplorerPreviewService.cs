@@ -307,7 +307,9 @@ internal static class ExplorerSelection
                 if (focusWindow != IntPtr.Zero)
                 {
                     if (!TryGetShellViewWindow(window, out var viewWindow)) continue;
-                    if (viewWindow != focusWindow) continue;
+                    // IShellView.GetWindow 返回 SHELLDLL_DefView，焦点在它的子窗口 DirectUIHWND 上，
+                    // 所以用「相同或包含」判断，而不是相等。
+                    if (viewWindow != focusWindow && !IsChild(viewWindow, focusWindow)) continue;
                 }
 
                 matchedWindow = true;
@@ -322,6 +324,8 @@ internal static class ExplorerSelection
 
         return paths;
     }
+
+    [DllImport("user32.dll")] private static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
 
     private static bool TryGetShellViewWindow(object window, out IntPtr viewWindow)
     {
