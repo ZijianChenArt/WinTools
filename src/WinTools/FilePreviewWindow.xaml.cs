@@ -67,9 +67,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         ".ai", ".psd", ".psb", ".eps", ".indd", ".idml", ".ae", ".aep", ".prproj", ".blend", ".max", ".3ds",
         ".fbx", ".dwg", ".dxf", ".skp", ".sketch", ".fig", ".xd",
         ".exe", ".dll", ".msi", ".sys", ".bin", ".dat", ".db", ".sqlite", ".pyc", ".class", ".o", ".so",
-        ".zip", ".rar", ".7z", ".tar", ".gz", ".xz", ".cab", ".iso", ".dmg", ".apk",
-        // .docx / .xlsx 不在这里：它们是 zip 包里的 XML，可以直接提取文字（见 OfficeTextExtractor）。
-        ".doc", ".xls", ".ppt", ".pptx", ".wps", ".et", ".dps",
+        ".rar", ".7z", ".tar", ".gz", ".xz", ".cab", ".iso", ".dmg", ".apk",
+        // .docx / .xlsx / .pptx 不在这里：它们是 zip 包里的 XML，可以直接提取文字。
+        ".doc", ".xls", ".ppt", ".wps", ".et", ".dps",
         ".lnk", ".url",
     };
 
@@ -78,7 +78,12 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         ".html", ".htm",
     };
 
-    private enum Kind { Image, Pdf, Text, Media, Html, OfficeText, Folder, Unsupported }
+    private static readonly HashSet<string> StructuredExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".csv", ".tsv", ".json", ".xml",
+    };
+
+    private enum Kind { Image, Pdf, Text, StructuredText, Media, Html, OfficeText, Archive, Folder, Unsupported }
 
     /// <summary>视频播放控制条平时的不透明度：半透明，不遮挡画面；鼠标悬停时恢复为 1。</summary>
     private const double MediaControlsIdleOpacity = 0.5;
@@ -559,7 +564,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         if (string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase)) return Kind.Pdf;
         if (HtmlExtensions.Contains(extension)) return Kind.Html;
         if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)) return Kind.OfficeText;
+            || string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".pptx", StringComparison.OrdinalIgnoreCase)) return Kind.OfficeText;
+        if (StructuredExtensions.Contains(extension)) return Kind.StructuredText;
+        if (string.Equals(extension, ".zip", StringComparison.OrdinalIgnoreCase)) return Kind.Archive;
         if (MediaExtensions.Contains(extension)) return Kind.Media;
         if (UnsupportedExtensions.Contains(extension)) return Kind.Unsupported;
         // 其余（含没有扩展名）才需要看内容：ReadTextAsync 先只读一小段判断是不是文本。
@@ -613,6 +621,22 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     TextBody.TextWrapping = TextWrapping.Wrap;
                     TextBody.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI");
                     TextBody.Text = officeText;
+                    ShowOnly(TextView);
+                    ApplyWindowSize(null, null, large: true);
+                    break;
+
+                case Kind.StructuredText:
+                case Kind.Archive:
+                    var structuredText = await Task.Run(() => StructuredPreviewExtractor.Extract(path));
+                    if (token != _loadToken) return;
+                    if (structuredText == null)
+                    {
+                        ShowUnsupported(path);
+                        return;
+                    }
+                    TextBody.TextWrapping = TextWrapping.NoWrap;
+                    TextBody.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Cascadia Mono");
+                    TextBody.Text = structuredText;
                     ShowOnly(TextView);
                     ApplyWindowSize(null, null, large: true);
                     break;

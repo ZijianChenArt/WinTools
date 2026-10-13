@@ -3,5 +3,7 @@
   <ItemGroup>
     <Compile Include="../../src/WinTools/HotkeyHelper.cs" Link="HotkeyHelper.cs" />
     <Compile Include="../../src/WinTools/Services/SettingsService.cs" Link="SettingsService.cs" />
+    <Compile Include="../../src/WinTools/Services/OfficeTextExtractor.cs" Link="OfficeTextExtractor.cs" />
+    <Compile Include="../../src/WinTools/Services/StructuredPreviewExtractor.cs" Link="StructuredPreviewExtractor.cs" />
   </ItemGroup>
 </Project>

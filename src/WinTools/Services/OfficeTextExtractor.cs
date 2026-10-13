@@ -23,6 +23,7 @@ internal static class OfficeTextExtractor
 
     private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static readonly XNamespace S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    private static readonly XNamespace A = "http://schemas.openxmlformats.org/drawingml/2006/main";
     private static readonly XNamespace PackageRel = "http://schemas.openxmlformats.org/package/2006/relationships";
     private static readonly XNamespace OfficeRel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
@@ -35,6 +36,7 @@ internal static class OfficeTextExtractor
             using var zip = ZipFile.OpenRead(path);
             if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase)) return ExtractDocx(zip);
             if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)) return ExtractXlsx(zip);
+            if (string.Equals(extension, ".pptx", StringComparison.OrdinalIgnoreCase)) return ExtractPptx(zip);
             return null;
         }
         catch (Exception ex)
@@ -89,6 +91,41 @@ internal static class OfficeTextExtractor
         }
 
         return builder.ToString().Trim('\n');
+    }
+
+    #endregion
+
+    #region pptx
+
+    private static string? ExtractPptx(ZipArchive zip)
+    {
+        var slides = zip.Entries
+            .Where(entry => entry.FullName.StartsWith("ppt/slides/slide", StringComparison.OrdinalIgnoreCase)
+                            && entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => SlideNumber(entry.FullName))
+            .ToList();
+        if (slides.Count == 0) return null;
+
+        var builder = new StringBuilder();
+        for (var index = 0; index < slides.Count; index++)
+        {
+            using var stream = slides[index].Open();
+            var document = XDocument.Load(stream);
+            var texts = document.Descendants(A + "t").Select(node => node.Value.Trim())
+                .Where(value => value.Length > 0).ToList();
+            builder.Append("【第 ").Append(index + 1).Append(" 页】\n");
+            if (texts.Count > 0) builder.Append(string.Join('\n', texts)).Append('\n');
+            builder.Append('\n');
+            if (builder.Length > MaxChars) { builder.Append("… 内容过长，仅显示前一部分"); break; }
+        }
+        return builder.ToString().TrimEnd();
+    }
+
+    private static int SlideNumber(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        var digits = new string(name.SkipWhile(c => !char.IsDigit(c)).TakeWhile(char.IsDigit).ToArray());
+        return int.TryParse(digits, out var number) ? number : int.MaxValue;
     }
 
     #endregion
