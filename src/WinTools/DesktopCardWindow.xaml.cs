@@ -1550,6 +1550,20 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
                 return;
             }
 
+            // 目录不要直接把路径交给 ShellExecute：当目录名与应用名相同、
+            // 或系统存在同名快捷方式 / 打开方式关联时，Shell 可能把它解析成
+            // 应用本身。明确交给 Explorer，确保双击文件夹只打开文件夹。
+            if (Directory.Exists(item.Path))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{item.Path.Replace("\"", "") }\"",
+                    UseShellExecute = true,
+                });
+                return;
+            }
+
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = item.Path,
