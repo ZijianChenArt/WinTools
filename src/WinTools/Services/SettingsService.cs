@@ -68,10 +68,15 @@ public sealed class SettingsService
         try
         {
             ConfigService.Save(Current);
+            _saveTimer.Interval = TimeSpan.FromMilliseconds(400);
         }
-        catch
+        catch (Exception ex)
         {
-            // 静默失败，UI 层如有需要可订阅 SavingFailed。
+            // 写盘失败仍有未保存变更；低频重试，并保留退出时的保存机会。
+            _pendingSave = true;
+            ErrorReporter.Log("SettingsService.Save", ex);
+            _saveTimer.Interval = TimeSpan.FromSeconds(5);
+            _saveTimer.Start();
         }
     }
 

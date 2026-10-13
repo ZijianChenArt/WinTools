@@ -67,9 +67,15 @@ public static class HotkeyHelper
             if (ModifierMap.TryGetValue(p, out var m))
                 mods |= m;
             else if (KeyMap.TryGetValue(p, out var k))
+            {
+                if (vk != 0) return null;
                 vk = k;
+            }
             else if (p.Length == 1)
+            {
+                if (vk != 0) return null;
                 vk = (ushort)char.ToUpperInvariant(p[0]);
+            }
             else
                 return null;
         }

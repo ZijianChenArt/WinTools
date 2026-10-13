@@ -34,6 +34,11 @@ public sealed partial class MainWindow
         if (!codex)
         {
             if (_checkingClaude) return;
+            if (_claudeFlow is { IsExpired: false })
+            {
+                ConnectionStatus(false, "本次授权仍在等待，请粘贴授权码完成连接，或先取消再重新授权。");
+                return;
+            }
             try
             {
                 var flow = new ClaudeOAuthProtocol();
