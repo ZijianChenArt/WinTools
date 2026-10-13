@@ -323,6 +323,11 @@ public sealed class FloatingStashManager : IDisposable
         {
             if (hwnd == IntPtr.Zero) return false;
 
+            // Explorer 的文件重命名框是文件列表里的 Edit/RichEdit 子窗口。
+            // 在这个控件里拖动鼠标只是选中文字，不是拖动文件；如果继续按
+            // SHELLDLL_DefView 判断，会把它误报成文件拖拽并弹出暂存窗口。
+            if (IsTextEditingControl(hwnd)) return false;
+
             var root = GetAncestor(hwnd, GA_ROOT);
             if (root == IntPtr.Zero) root = hwnd;
 
@@ -343,6 +348,24 @@ public sealed class FloatingStashManager : IDisposable
             return false;
         }
         catch { return false; }
+    }
+
+    private static bool IsTextEditingControl(IntPtr hwnd)
+    {
+        var current = hwnd;
+        while (current != IntPtr.Zero)
+        {
+            var className = GetWindowClassName(current);
+            if (className is "Edit" or "RichEdit20A" or "RichEdit20W" or "RichEdit50W"
+                or "RICHEDIT50W" or "RichEditD2DPT")
+                return true;
+
+            var root = GetAncestor(current, GA_ROOT);
+            if (current == root) break;
+            current = GetParent(current);
+        }
+
+        return false;
     }
 
     private static bool IsShellDefView(IntPtr hwnd)
