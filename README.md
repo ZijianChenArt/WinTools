@@ -1,18 +1,38 @@
 # WinTools 维护手册
 
 基于 .NET 10 + WinUI 3 的 Windows 桌面工具集：桌面分区卡片、悬浮搜索、悬浮暂存、
-三指拖拽、按程序切换输入法、程序关联与点击桌面。
+三指拖拽、按程序切换输入法、程序关联、点击桌面、资源管理器空格预览、任务栏额度信息与音频设备入口。
 
 > **这是仓库里唯一的说明文件**（含 AI 协作者）。
-> 改 UI 之前必须读第 5 节，改桌面分区之前必须读第 7 节，这两节的规则是硬约束，不是建议。
-> 凡是写着"踩过的坑""别改回去"的条目，都是已经用实测推翻过一次的方案。
+> - 动手前先读第 2 节（构建）和第 3 节（发布）：每次改动都要走完「构建 → 测试 → 发布 → 重启 → 提交」。
+> - 改 UI 之前必须读第 5 节，改桌面分区之前必须读第 7 节，这两节的规则是硬约束，不是建议。
+> - 凡是写着"踩过的坑""别改回去"的条目，都是已经用实测推翻过一次的方案。
 
-文档核对日期：2026-09-10。历史实测数据只用于解释设计决策，不代表本次版本已重新测量。
 本文的「规范」是维护要求；「已知问题」是尚未完成的工作，不能当成已经支持的功能。
+历史实测数据只用于解释设计决策，不代表当前版本已重新测量。
+改文件结构、发布位置、脚本或关键窗口行为时，**同步更新本文件**。
 
-快速导航：[构建](#2-构建两步缺一不可) · [发布](#3-发布) ·
-[界面规范](#5-界面规范改-ui-必读) · [桌面分区](#7-桌面分区卡片) ·
-[技术债与升级方向](#已知的技术债与升级方向) · [主要文件](#11-主要文件)
+快速导航：[每次改动的流程](#0-每次改动的流程速查) · [项目结构](#1-项目结构) · [构建与测试](#2-构建与测试) ·
+[发布规范](#3-发布规范) · [开机自启](#4-开机自启与全局快捷键) · [界面规范](#5-界面规范改-ui-必读) ·
+[桌面分区](#7-桌面分区卡片) · [跨模块规则](#9-跨模块硬性规则) · [技术债](#已知的技术债与升级方向) ·
+[主要文件](#11-主要文件)
+
+---
+
+## 0. 每次改动的流程（速查）
+
+| 步骤 | 做什么 | 详见 |
+| --- | --- | --- |
+| 1. 改前 | 读本文件相关章节；确认工作区干净（`git status`）；其它 AI / 终端可能同时在改仓库 | 第 9 节「多人 / 多 AI 并发修改」 |
+| 2. 构建 | Debug 构建，两步（先原生扩展，再主程序） | 2.1 |
+| 3. 测试 | 跑与改动相关的 `tests/*` 控制台测试；涉及界面的改动先运行 Debug 版确认 | 2.3 / 2.4 |
+| 4. 发布 | 关掉运行中的 WinTools → `./scripts/Release.ps1`（自动递增版本号、发布、打安装包） | 3.2 |
+| 5. 重启 | 启动 `artifacts/release/win-x64/WinTools.exe`，确认设置里的版本号 | 3.3 |
+| 6. 真机验证 | 在发布版上复现改动涉及的功能，确认效果；失败就回到第 1 步，**不要带着已知问题提交** | 3.4 |
+| 7. 提交 | `git commit` → `git tag v<版本>` → `git push origin main --tags` | 3.5 |
+| 8. GitHub Release | `gh release create`，上传 `.exe` 和 `.sha256`，设为 Latest | 3.6 |
+
+不要只留下 Debug 产物，也不要让用户自己去找或重启新版；**发布后由维护者（含 AI）直接启动正式版**。
 
 ---
 
@@ -21,33 +41,64 @@
 ```text
 WinTools/
 ├─ WinTools.sln
-├─ global.json                     # 锁定 .NET SDK 10.0.400
+├─ global.json                     # 锁定 .NET SDK 10.0.400（rollForward: latestPatch，不允许预览版）
 ├─ README.md                       # 本文件：唯一的文档入口
+├─ Build-WinTools.cmd              # 双击：关闭旧进程 → 发布 → 启动新版（不改版本号、不打安装包）
+├─ cleanup.ps1                     # 清理可再生的构建 / 诊断产物，默认 dry-run，加 -Execute 才删
 ├─ src/
 │  ├─ WinTools/                    # 主程序
 │  │  ├─ Styles/PageStyles.xaml    # ★ 全部 UI 令牌与页面样式的唯一真源
 │  │  ├─ MainWindow.xaml           # 外壳：标题栏 + 导航 + 内容框
 │  │  ├─ MainWindow.xaml.cs        # 外壳逻辑；功能页逻辑在下面几个分部文件里
-│  │  ├─ MainWindow.*.cs           # Hotkeys / DesktopCards / Spotlight / Stash / Associations / Ime
+│  │  ├─ MainWindow.*.cs           # Hotkeys / DesktopCards / Spotlight / Stash / Associations / Ime / SpacePreview / Update ...
 │  │  ├─ FeaturePagesHost.xaml     # 全部功能子页面
 │  │  ├─ SpotlightWindow.xaml/.cs  # Alt+Space 悬浮搜索窗口
 │  │  ├─ Desktop*.cs               # 桌面分区：收纳 / 匹配 / 卡片 / 点击桌面
-│  │  └─ Services/                 # 布局缓存、错误日志、设置中心、窗口注册表
+│  │  ├─ ExplorerPreviewService.cs # 资源管理器里按空格预览（全局键盘钩子 + Shell COM 读选中项）
+│  │  └─ Services/                 # 布局缓存、错误日志、设置中心、窗口注册表、在线更新（UpdateService）
 │  └─ WinToolsExplorerCommand/     # C++ 资源管理器右键菜单扩展（IExplorerCommand）
+├─ tests/                          # 控制台式回归测试（OutputType=Exe，返回非 0 即失败），见 2.3
+│  ├─ AudioDevice.Tests/           # 音频设备枚举（只读，不改系统设置）
+│  ├─ DesktopCardLayout.Tests/     # 卡片布局纯函数
+│  ├─ Reliability.Tests/           # 快捷键拒绝、设置读写失败与恢复
+│  └─ TaskbarInfo.Tests/           # 额度解析 / PKCE / 系统代理解析
 ├─ scripts/
-│  ├─ Publish-Release.ps1          # 便携版发布
+│  ├─ Release.ps1                  # ★ 一键发布：改版本号 → Publish-Release → 打安装包 → 写 .sha256
+│  ├─ Publish-Release.ps1          # 编原生扩展 + 自包含 dotnet publish → artifacts/release/win-x64
+│  ├─ Split-FeaturePages.ps1       # 一次性迁移脚本：把功能页从 MainWindow 拆到 FeaturePagesHost
+│  ├─ package/                     # 便携 zip 用的 Install.ps1 / Install.bat / Uninstall.ps1
 │  └─ Start-CodexWhenOnline.ps1    # 与本程序无关的网络辅助脚本
-└─ artifacts/release/win-x64/      # 当前自包含发布产物（约 225 MB）
+├─ installer/
+│  ├─ WinTools.iss                 # Inno Setup 6 脚本（只能经 Release.ps1 调用）
+│  └─ ChineseSimplified.isl        # 安装向导的简体中文语言文件
+├─ DeskBox-main/                   # 参考用的第三方 DeskBox 源码副本，已在 .gitignore，不随仓库管理
+└─ artifacts/                      # 全部被 .gitignore 忽略
+   ├─ release/win-x64/             # 当前自包含发布产物（约 225 MB，362 个文件）
+   └─ dist/                        # WinTools-Setup-<版本>.exe 与 .sha256（历史版本都留着）
 ```
 
-`bin/`、`obj/` 是编译缓存。用户配置在 `%LOCALAPPDATA%\WinTools`，永远不要打进发布目录。
+`bin/`、`obj/`、`artifacts/` 是可再生的缓存与产物，不提交。用户配置在 `%LOCALAPPDATA%\WinTools`，
+**永远不要打进发布目录或安装包**；卸载也不会删它。
 
 ---
 
-## 2. 构建（两步，缺一不可）
+## 2. 构建与测试
+
+### 2.1 环境要求
+
+| 项 | 要求 |
+| --- | --- |
+| .NET SDK | `global.json` 锁定 10.0.400（允许补丁级前滚，不允许预览版） |
+| Visual Studio 2022 | 需要 MSBuild 和 C++ 桌面工作负载（原生扩展用），脚本通过 `vswhere` 查找 |
+| Windows SDK | 本机为 `10.0.26100.0`；原生项目默认指定 `10.0.22621.0`，所以必须显式覆盖 |
+| Inno Setup 6 | 打安装包用：`winget install JRSoftware.InnoSetup` |
+| GitHub CLI | 创建 Release 用：`gh auth status` 应显示已登录 `ZijianChenArt` |
+| 目标系统 | 主程序最低 Windows 10 1809（`TargetPlatformMinVersion` 10.0.17763.0），TFM `net10.0-windows10.0.22621.0` |
+
+### 2.2 Debug 构建（两步，缺一不可，顺序不能反）
 
 VS 2022 自带的 MSBuild 是 17.14，低于 .NET 10 SDK 要求的 18.0；而 `dotnet` CLI 又构建不了
-C++ 项目。所以必须分两步，顺序不能反：
+C++ 项目。所以必须分两步：
 
 ```powershell
 & 'C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe' src/WinToolsExplorerCommand/WinToolsExplorerCommand.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:WindowsTargetPlatformVersion=10.0.26100.0
@@ -59,48 +110,202 @@ dotnet build src/WinTools/WinTools.csproj -c Debug -p:Platform=x64
 
 第一步不做，第二步会以 `MSB3030 找不到 WinToolsExplorerCommand.dll` 失败。
 
-命令在仓库根目录的 PowerShell 中执行。当前机器安装的是 Windows SDK `10.0.26100.0`，
-原生项目默认指定 `10.0.22621.0`，因此必须显式覆盖。其它机器按已安装的 SDK 调整；
-此覆盖只选择原生扩展的构建工具，不修改主程序的最低系统版本。
+- 命令在仓库根目录的 PowerShell 中执行。其它机器按已安装的 SDK 调整 `WindowsTargetPlatformVersion`；
+  此覆盖只选择原生扩展的构建工具，不修改主程序的最低系统版本。
+- 调试产物：`src/WinTools/bin/x64/Debug/net10.0-windows10.0.22621.0/WinTools.exe`
+- 机器没有联网时 `dotnet` 会输出 `NU1900`（拉不到漏洞数据）警告，可忽略。
+- **不要开启** `PublishTrimmed` / `PublishReadyToRun`：WinUI 3 会崩。
 
-调试产物：`src/WinTools/bin/x64/Debug/net10.0-windows10.0.22621.0/WinTools.exe`
+### 2.3 自动化测试
+
+`tests/` 下每个项目都是**控制台程序**：自己断言，失败时抛异常 / 返回非 0，成功时打印一行
+`... passed`。没有测试框架，直接 `dotnet run`：
+
+```powershell
+dotnet run --project tests/DesktopCardLayout.Tests
+dotnet run --project tests/Reliability.Tests
+dotnet run --project tests/TaskbarInfo.Tests            # 加 -- --live 才会读取本机真实额度
+dotnet run --project tests/AudioDevice.Tests            # 只读枚举设备，不修改系统设置
+```
+
+| 改了什么 | 至少跑哪个 |
+| --- | --- |
+| 桌面卡片布局（`DesktopCardLayout.Fit` 等） | `DesktopCardLayout.Tests` |
+| 设置读写 / 快捷键注册 / 退出保存 | `Reliability.Tests` |
+| Codex / Claude 额度、代理、授权解析 | `TaskbarInfo.Tests` |
+| 音频设备枚举与切换接口 | `AudioDevice.Tests` |
+| 其它 | 没有对应测试：用 2.4 的实机验证，并**不要**声称「测试通过」 |
+
+2026-10-13 四个测试全部通过（发布 v1.3.9 前后）。**这些测试不覆盖任何窗口交互**：
+绿灯只说明纯逻辑没坏，不等于界面可用。
+
+### 2.4 实机验证规则
+
+- **改 UI 先验证再发布**：先运行 Debug 版截图确认，再走 `Release.ps1`；别只靠编译通过。
+- **WinTools 自己窗口的点击 / 拖动 / 悬停不做自动化验收**（用户的明确要求）。
+  拖放、悬停动画、选中态这类只能请用户真机确认，不要把没验过的写成「已实测支持」；
+  验证记录里要分清「编译通过 / 单元检查通过 / 真机确认」三档。
+- 对**系统程序**（例如给资源管理器发按键、读它的窗口状态）做集成验证是允许的，但要在用户同意测试的前提下进行，
+  用完关掉测试窗口、不留测试文件在仓库里。例：空格预览要用**两个 Explorer 标签页各选一个不同文件**，
+  分别在两个标签里按空格，确认预览的是当前标签的选中项（v1.3.8 就是因为没做这步，修复无效，v1.3.9 才修好）。
+- 单实例：应用用 `AppInstance.FindOrRegisterForKey("WinTools")`，第二次启动会重定向并退出，所以测试前先结束运行中的进程。
+- 做屏幕截图的脚本要先 `SetProcessDpiAwarenessContext(-4)`，否则 Windows PowerShell 5.1 取到的是被虚拟化的坐标；
+  这台机器主屏是 120 DPI（1.25x）。写给 PowerShell 5.1 的 `.ps1` 要存成带 BOM 的 UTF-8，否则中文乱码。
+- 往 Explorer 地址栏用键盘输入路径会被中文输入法吞字符（且强制切英文在这台机器上无效），
+  导航请用 Shell COM（`Navigate2`）或命令行参数。
+- 排查无响应 / 崩溃见 9 节「错误日志与埋点」和第 12 节末尾的 `UiHangWatchdog`。
+
+### 2.5 构建产物清理
+
+```powershell
+./cleanup.ps1            # 只列出将要删除的目录（dry-run）
+./cleanup.ps1 -Execute   # 真正删除 bin / obj / 临时日志等可再生内容
+```
+
+`artifacts/release` 里的正式发布永远保留。
 
 ---
 
-## 3. 发布
+## 3. 发布规范
 
-先关掉正在运行的 WinTools，否则文件被占用。脚本自己会先用 MSBuild 编原生扩展，
-再 `dotnet publish` 到暂存目录，成功后删除旧发布目录并移入新目录：
+### 3.1 总览
+
+```text
+Release.ps1 ─┬─ 改 WinTools.csproj 的版本号（四个字段）
+             ├─ Publish-Release.ps1 ─┬─ MSBuild 编 WinToolsExplorerCommand（Release|x64）
+             │                       └─ dotnet publish（自包含）→ 暂存目录 → 替换 artifacts/release/win-x64
+             ├─ ISCC.exe installer/WinTools.iss /DAppVersion=<版本>  → artifacts/dist/WinTools-Setup-<版本>.exe
+             └─ 对安装包算 SHA-256 → WinTools-Setup-<版本>.exe.sha256
+手动： git commit + tag + push → gh release create（上传 .exe 与 .sha256）
+应用内「检查更新」：读 GitHub releases/latest → 下载 → 校验 SHA-256 → 静默安装
+```
+
+**脚本只负责打包，提交、打 tag、推送、创建 GitHub Release 是手动步骤**：脚本结尾只会打印建议命令。
+
+### 3.2 打包：`scripts/Release.ps1`
+
+先退出正在运行的 WinTools（脚本不会替你关；文件被占用会失败），在仓库根目录执行：
+
+```powershell
+./scripts/Release.ps1                # 默认 patch：1.3.8 -> 1.3.9
+./scripts/Release.ps1 -Bump minor    # 功能性更新：1.3.8 -> 1.4.0
+./scripts/Release.ps1 -Bump major    # 不兼容的大改：1.3.8 -> 2.0.0
+./scripts/Release.ps1 -Bump none     # 不改版本号，只重新打包
+```
+
+它依次做：
+
+1. 读 `src/WinTools/WinTools.csproj` 的 `<Version>x.y.z</Version>`，按 `-Bump` 递增，并同步改写
+   `AssemblyVersion` / `FileVersion`（`x.y.z.0`）和 `InformationalVersion`（`x.y.z`）。
+   在线更新靠 `InformationalVersion` 与 GitHub 的最新 tag 比较，**四个字段必须一致**。
+2. 找 `ISCC.exe`（`%LOCALAPPDATA%\Programs\Inno Setup 6`、`Program Files (x86)`、`Program Files`），找不到直接报错。
+3. 调 `Publish-Release.ps1`（3.2.1），失败就整体中止。
+4. 调 Inno Setup，输出 `artifacts/dist/WinTools-Setup-<版本>.exe`。
+5. 写 `WinTools-Setup-<版本>.exe.sha256`，内容 `<小写 SHA-256>␣␣WinTools-Setup-<版本>.exe`。
+   应用只取第一列做校验。
+
+**版本号规则：每次改动都要递增，且一个版本号只对应一个发布。** 发布后发现修复无效，就发下一个补丁号，
+不要覆盖已发布的版本（v1.3.8 修复无效，改发 v1.3.9；v1.3.8 只留 tag，没有 GitHub Release）。
+
+#### 3.2.1 `Publish-Release.ps1`（也可单独运行，生成便携版）
 
 ```powershell
 ./scripts/Publish-Release.ps1 -Runtime win-x64 -WindowsSdkVersion 10.0.26100.0
 ```
 
-**每次修改程序后都必须完成构建与发布，并重新打开
-`artifacts/release/win-x64/WinTools.exe`。** 不要只留下 Debug 产物，也不要让用户手动寻找或
-重启新版；发布前先关闭占用发布目录的旧进程，发布成功后立即启动正式版。
+- 先在 `artifacts/release/.win-x64-staging` 暂存：MSBuild 编原生扩展（Release|x64）→
+  `dotnet publish -c Release -r win-x64 -p:SelfContained=true -p:WindowsAppSDKSelfContained=true -p:WindowsPackageType=None -p:DebugType=None -p:DebugSymbols=false`。
+- 删掉 `WinTools.pdb`，删除旧的 `artifacts/release/win-x64`，把暂存目录移过去。
+- 删除 / 替换前会检查路径确实位于本仓库的发布目录内，防止误删。
+- 自包含：随包携带 .NET 10 运行时与 Windows App Runtime，目标机无需另装。
+- `WindowsSdkVersion` 可省略（省略则用原生项目默认值）；`-Runtime` 支持 win-x64 / win-x86 / win-arm64，实际只发布并测试 win-x64。
+- **替换过程不是原子操作，也没有自动回滚**：旧目录删掉之后移动失败，正式版会暂时不可用（见技术债）。
 
-### 3.1 版本号与安装包（每次改动都要走）
+`Build-WinTools.cmd` 是它的双击版：杀掉旧进程 → 发布 → 启动新版，日志在 `artifacts/build-log.txt`。
+它**不改版本号也不打安装包**，只用于本地快速看效果，不能代替 3.2。
 
-每次改动都要**递增版本号**并生成安装包，用一键脚本（它先改 `WinTools.csproj` 里 `Version` /
-`AssemblyVersion` / `FileVersion` / `InformationalVersion`，再调 `Publish-Release.ps1`，最后用
-Inno Setup 6 打 `installer/WinTools.iss`）：
+#### 3.2.2 安装包（`installer/WinTools.iss`）
+
+不要直接编译，必须经 `Release.ps1`（版本号由 `/DAppVersion=x.y.z` 传入）。关键设置：
+
+- `AppId={{6B1F4D0A-7C25-4E3B-9A58-3D9E27C0B1F4}`：**发布后永远不能改**，它决定覆盖安装与卸载认的是不是同一个程序。
+- `PrivilegesRequired=lowest`，默认装到 `%LOCALAPPDATA%\Programs\WinTools`，不需要管理员权限；这样在线更新才能静默覆盖。
+- `CloseApplications=force`：覆盖安装时自动关掉运行中的 WinTools；静默安装结束后自动重新启动。
+- `[Files]` 打包整个 `artifacts/release/win-x64/*`；`lzma2/max` 固实压缩，约 64 MB。
+- 语言：简体中文 + 英文；编译时的「AutoStartProgram 等自定义消息没有中文翻译」警告无害。
+- 卸载只清理「开机启动」注册表项；用户配置（`%LOCALAPPDATA%\WinTools`）与桌面收纳文件保留。
+- **安装包没有代码签名**，SmartScreen 可能提示未知发布者；`.sha256` 只防传输损坏和跨来源替换，防不了仓库本身被入侵。
+
+### 3.3 发布后：重启正式版
 
 ```powershell
-./scripts/Release.ps1            # 默认 patch：1.2.3 -> 1.2.4；功能性更新用 -Bump minor；只重新打包用 -Bump none
+Get-Process WinTools -ErrorAction SilentlyContinue | Stop-Process -Force   # 发布前先做
+# ... 发布 ...
+Start-Process explorer.exe -ArgumentList "C:\Users\orang\Desktop\WInTools\artifacts\release\win-x64\WinTools.exe"
 ```
 
-- 产物在 `artifacts/dist/`：`WinTools-Setup-<版本>.exe` 与 `.sha256`（应用内在线更新会校验后者）。
-- 需要 Inno Setup 6（`winget install JRSoftware.InnoSetup`）；运行前先退出正在运行的 WinTools。
-- 验收：**运行生成的 Setup.exe 重新安装**，启动安装后的 WinTools，确认「设置」里显示的版本号等于新版本，
-  并实际打开本次改动涉及的界面确认效果。
-- 想让软件能在线更新，还要把提交打 tag `v<版本>` 推到 GitHub 并上传上述两个文件（脚本末尾会打印命令）。
+用 `explorer.exe` 启动（不是在终端里直接运行 exe）。启动后确认：进程 `Responding=True`，
+`(Get-Item <exe>).VersionInfo.ProductVersion` 等于新版本，「设置」页显示同一版本号。
 
-发布脚本生成自包含版本，随包携带 .NET 10 运行时与 Windows App Runtime，目标机无需另装。
-**不要**开启 `PublishTrimmed` / `PublishReadyToRun`（WinUI 3 会崩）。
+### 3.4 验收清单（不过不提交）
 
-`WindowsSdkVersion` 可选；省略时使用原生项目默认值。脚本会检查替换路径位于本仓库发布目录，
-但当前替换过程**不是原子操作，也没有自动回滚**。脚本不会自动退出或启动 WinTools，需由维护者完成。
+- [ ] 相关的 `tests/*` 通过（2.3），且没有因为改动而删掉 / 绕过断言。
+- [ ] 发布版 `WinTools.exe` 的版本号 = 新版本，进程 `Responding=True`。
+- [ ] 在**发布版**上复现过本次改动涉及的功能，并且按问题原本的触发条件测过（不是只测顺利路径）。
+- [ ] 检查 `%TEMP%\WinTools-error-yyyyMMdd.log` 和事件查看器（Application）里没有本次新增的错误。
+- [ ] 改了 UI：按 5.7 的清单检查，截图确认。
+- [ ] 理想情况下运行生成的 `Setup.exe` 重新安装，启动安装后的版本，确认版本号和功能。
+      **这一步在 v1.3.9 没做**，属于已知缺口；涉及安装 / 更新链路的改动必须做。
+
+### 3.5 Git 约定
+
+- 当前分支 `main`，远端 `origin` = `https://github.com/ZijianChenArt/WinTools`。
+- 小功能 / 修复可以在 `fix-xxx` / `feature-xxx` 分支（或 worktree）里做，验证后合并回 `main`，
+  合并提交信息用中文描述改动，例如「合并 fix-card-item-visual-in-code：图标底色由代码决定」。
+- 发布提交信息：`Release v<版本>: <一句话>`；**一个发布一个提交，打 tag `v<版本>`**，
+  tag 必须带 `v` 前缀（应用读 `tag_name` 时会去掉它）。
+- 提交范围：源码、脚本、文档、`WinTools.csproj` 的版本号变化；**不提交** `artifacts/`、`bin/`、`obj/`、`.vs/`、
+  日志、测试用的临时文件、`DeskBox-main/`。
+- 推送：`git push origin main --tags`。不要强推；不要在提交里写密钥、令牌、授权码。
+- AI 协作者提交时按其配置追加 `Co-Authored-By` 署名行。
+
+### 3.6 GitHub Release（让应用能在线更新）
+
+```bash
+gh release create v<版本> \
+  --title "WinTools v<版本>" --latest \
+  --notes "<一两句话说明修了什么 / 加了什么>" \
+  artifacts/dist/WinTools-Setup-<版本>.exe \
+  artifacts/dist/WinTools-Setup-<版本>.exe.sha256
+```
+
+硬性要求（缺一项在线更新就失效）：
+
+1. tag 为 `v<版本>`，且该 Release 是 **Latest**：应用请求的是 `/releases/latest`，不会看 pre-release 或草稿。
+2. 必须同时上传 **`.exe` 和 `.exe.sha256`**，资源名以 `WinTools-Setup-` 开头。缺 `.sha256` 应用拒绝自动安装。
+3. 上传后核对：`gh release view v<版本> --json assets`，`.exe` 大小与本地一致，`.sha256` 约 91 字节，
+   内容里的哈希等于 `Release.ps1` 输出的 SHA-256。
+4. 说明文字（`--notes`）会显示在应用的更新提示里，写给用户看，不要写内部调试信息。
+
+### 3.7 应用内更新（`Services/UpdateService.cs`、`MainWindow.Update.cs`）
+
+1. `GET https://api.github.com/repos/ZijianChenArt/WinTools/releases/latest`；404 视为「仓库没有发布」。
+2. `tag_name` 去掉前缀 `v` 与 `+` / `-` 之后解析成 `Version`；`<=` 当前版本视为已是最新。
+3. 在 `assets` 里找 `WinTools-Setup-*.exe` 与 `WinTools-Setup-*.exe.sha256`；没有安装包报错，没有 `.sha256` 拒绝安装。
+4. **只信任本仓库**：两个下载地址都必须以 `https://github.com/ZijianChenArt/WinTools/releases/download/` 开头，否则拒绝。
+5. 先读 `.sha256` 取第一列，再下载到 `%TEMP%\WinTools-update\WinTools-Setup-<版本>.exe`；
+   对下载文件算 SHA-256，**不一致就删文件并报错**。
+6. 校验通过后运行 `Setup.exe /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS`；安装程序关掉旧进程、覆盖安装、再启动新版。
+
+改仓库名、更换发布位置、改资源命名规则时，必须同步改 `UpdateService.Repository` 与 `DownloadPrefix`，
+并保证**旧版本仍能找到并校验新版本**（旧版本里的规则是写死的，改了就更新不上去）。
+
+### 3.8 回滚与补救
+
+- 发错版本：先 `gh release delete v<版本>`（可加 `--cleanup-tag`），再发一个更高的补丁号；
+  不要重用同一个版本号，客户端已经缓存或下载过的安装包会对不上哈希。
+- 发布目录被替换坏了：用 `artifacts/dist/` 里上一个版本的 Setup.exe 重新安装，或回到上一个 tag 重新 `Publish-Release.ps1`。
+- 开机自启指向了不存在的旧路径：见第 4 节。
 
 ---
 
@@ -112,6 +317,8 @@ Inno Setup 6 打 `installer/WinTools.iss`）：
 - 换了发布目录就必须重设，否则注册表指向不存在的旧路径，开机静默失败。
 - 设置页的开关是拿注册表值和「当前正在运行的 exe」比对，所以从 `bin\Debug` 启动时会显示关闭；
   正式使用请从 `artifacts/release/win-x64/WinTools.exe` 启动后再开。
+- 用安装包安装的版本在 `%LOCALAPPDATA%\Programs\WinTools\WinTools.exe`；此时开机自启应指向那个路径。
+  **开发机上同时存在两处 exe 时，要确认自启指向的是你想长期使用的那一个。**
 
 全局快捷键由 WinTools 进程通过 `RegisterHotKey` 监听（注册与窗口过程子类化在
 `MainWindow.Hotkeys.cs`）：主窗口关闭到托盘后仍然有效，但从托盘选择「退出 WinTools」或
@@ -888,6 +1095,17 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 `InitFloatingStash` 用 `TryEnqueue` 排队。桌面卡片由 `App` 在主窗口首帧完成后才初始化，
 避免多窗口创建抢占首屏。
 
+### 资源管理器空格预览（`ExplorerPreviewService`）
+
+- 一个 `WH_KEYBOARD_LL` 钩子监听空格；钩子回调里**只做最少的事**：判断前台是不是资源管理器文件列表、
+  吞掉空格，并把「顶层窗口 + 当前焦点窗口」放进队列，选中项的读取全在工作线程。
+- 读选中项走 `Shell.Windows` COM：`IWebBrowser2` → `IServiceProvider` → `IShellBrowser` → `IShellView` → `IFolderView`。
+- **Windows 11 的标签页共用同一个顶层 HWND**，所以不能只按 HWND 找窗口：要用按键时记录的焦点窗口
+  （`DirectUIHWND`）去匹配每个标签的 ShellView。注意 `IShellView.GetWindow()` 返回的是 **`SHELLDLL_DefView`，
+  它是 `DirectUIHWND` 的父窗口**，二者永远不相等，必须用「相同或包含」（`IsChild`）判断。
+  v1.3.8 用相等判断，结果总是退回第一个标签；v1.3.9 修复。旧式单窗口走回退路径，行为不变。
+- 验证方法见 2.4：两个标签各选不同文件，分别按空格。
+
 ---
 
 ## 9. 跨模块硬性规则
@@ -949,9 +1167,33 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 
 `Services/ErrorReporter.cs` 是统一入口，写 `%TEMP%\WinTools-error-yyyyMMdd.log`，进程内互斥。
 
+**退出留痕（`Services/RunSession.cs`，v1.3.15 起）**：进程被 `taskkill /f` / `TerminateProcess` 结束时，
+托管代码什么都来不及写——事件查看器没有崩溃记录，日志里一行都没有，只剩桌面图标还藏着
+（`HideIcons=1`，因为没走 `RestoreDesktopIcons`）。所以：
+
+- 单实例判定通过后在 `%LOCALAPPDATA%\WinToolsun-session.json` 放标记，每分钟刷新「最后存活时间」。
+- 正常退出（托盘退出 / `WM_ENDSESSION` / 进程退出事件）写一条 `[RunSession.Exit] 正常退出：<原因>` 并删标记。
+- 下次启动时标记还在，就写 `[RunSession.PreviousRun] 上次运行没有正常退出…`，带上次的版本、pid、启动时间和最后存活时间；
+  真正的退出时间在最后存活之后一分钟内。用这个时间去对事件查看器里同一时刻的显示切换 / 安装 / 别的程序动作。
+- 在线更新或覆盖安装由安装程序强关旧进程，下次启动也会记一条「没有正常退出」，那是预期现象，对时间即可区分。
+- 排查「软件自己没了」的顺序：先看这条日志 → 再看事件查看器 Application 里的崩溃 / AppHang → 再看 `hangs\` 转储。
+
 `App.TraceStartup` 的启动埋点**默认关闭**：它是同步 `File.AppendAllText`，打开时连图标加载
 这种每项目多次的热路径都会写盘，日志还会无限增长（实测 1.6MB / 13000 行）。需要排查启动
 问题时设环境变量 `WINTOOLS_TRACE=1`，或在 `%TEMP%` 放一个 `WinTools-trace.on` 空文件。
+
+### 多人 / 多 AI 并发修改
+
+同一台机器上可能同时有多个 AI 编码代理（Codex、MiniMax、Claude 等）和用户自己在改这个仓库。
+2026-08~09 实际发生过：文件在会话中途被还原成备份、被删除的目录又被重建、
+有代理对整个文件做「格式化」，在几乎每行后插空行、把 `==` 拆成 `= =`、把代码并进 `//` 注释行，
+导致 `MainWindow.xaml.cs` 无法编译，还悄悄删了几个事件处理函数。所以：
+
+- 多文件改动前先 `git status`，确认工作区干净；有别的代理在跑时，先让用户暂停它们，让一个改动集完整落地。
+- 开始构建 / 发布前再看一次 `git status` 和 `git diff --stat`，确认没有不属于本次改动的变更。
+- **不要对整份文件做格式化或批量替换**；改动保持最小、可审阅。
+- 发现文件被弄坏时，**不要回滚到旧备份**（坏文件里仍有别人最新的工作）；就地修复，并对照 `git diff` 找被删掉的成员。
+- `_diff_backup/`、`*_zbak/` 等目录是别的代理的备份，已在 `.gitignore`，不是用户的数据，也不要提交。
 
 ---
 
@@ -1046,7 +1288,51 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 
 ---
 
+---
+
 ## 11. 主要文件
+
+| 文件 | 职责 |
+| --- | --- |
+| `App.xaml/.cs` | 入口、单实例、主窗口与后台服务初始化 |
+| `MainWindow.xaml/.cs` | 外壳：标题栏、导航、主题与状态圆点 |
+| `MainWindow.Hotkeys.cs` | 全局快捷键注册与窗口过程子类化 |
+| `MainWindow.Spotlight.cs` / `SpotlightWindow.xaml/.cs` | 悬浮搜索设置、快捷键入口与搜索窗口 |
+| `MainWindow.DesktopCards.cs` | 桌面分区页：分区列表、卡片布局、预设与同步 |
+| `MainWindow.Stash.cs` / `.Associations.cs` / `.Ime.cs` | 对应功能页的页面逻辑 |
+| `MainWindow.PageControls.cs` | 按名取子页控件 |
+| `FeaturePagesHost.xaml/.cs` | 全部功能子页面；事件转发给 `MainWindow` |
+| `Styles/PageStyles.xaml` | UI 令牌与页面样式（唯一真源） |
+| `DesktopCardManager.cs` | 卡片集合、同步节奏、呼出 / 收起与自动收起监测 |
+| `DesktopCardWindow.xaml/.cs` | 单张卡片：Mica、图标、拖放、淡入淡出 |
+| `DesktopCollectService.cs` / `DesktopZoneMatcher.cs` | 桌面枚举与实时分组 / 分区匹配规则（**不再移动文件**） |
+| `Services/DesktopIconVisibilityService.cs` | 桌面图标显隐（等价于「显示桌面图标」开关） |
+| `Services/DesktopShellItems.cs` | 系统虚拟图标（此电脑 / 回收站 / 网络…）接入卡片 |
+| `Services/CardLayoutCache.cs` | 多屏拓扑 → 卡片位置尺寸快照 |
+| `Services/CardItemOrderStore.cs` | 分区内图标顺序、刷新恢复与独立持久化 |
+| `Services/AppSearchIndex.cs` / `Pinyin.cs` / `PinyinData.cs` | 应用索引与中文拼音检索 |
+| `Services/SettingsService.cs` / `Config.cs` | 设置中心（防抖写盘）/ 配置结构与读写 |
+| `Services/ErrorReporter.cs` | 统一错误日志入口 |
+| `Services/RunSession.cs` | 退出留痕：运行标记 + 心跳，识别上次是否被强行结束 |
+| `FloatingStashWindow` | 文件悬浮暂存；关窗清空本次记录 |
+| `GlobalDragWatcher` | 普通鼠标 + 三指全局拖动检测 |
+| `ProgramDropWindow` | 拖放文件时的程序选择窗口 |
+| `VoiceBallService` / `Services/FocusedTextProbe.cs` / `Services/MicaColorSampler.cs` | 语音小球：光标跟踪、Mica 小球绘制与快捷键模拟 |
+| `DesktopClickService` | 桌面空白双击切换「显示桌面 / 恢复窗口」 |
+| `DesktopContextMenuService` | 清理历史「整理桌面」注册表菜单 |
+| `ThreeFingerDragService` | 精确触控板三指接触合成原生拖动 |
+| `ThreeFingerCalibrationWindow` | 全屏三档速度校准，仅在基础曲线 ±20% 内微调 |
+| `WindowHelper.cs` | 窗口外观、标题栏、Mica 分层颜色、尺寸适配 |
+| `UiStyleService.cs` / `ThemeService.cs` | Mica 风格 / 浅色深色跟随系统 |
+| `AutostartService.cs` | 开机自启（HKCU Run） |
+| `ExplorerPreviewService.cs` / `FilePreviewWindow` / `MainWindow.SpacePreview.cs` | 资源管理器空格预览：低级键盘钩子 + Shell COM 读选中项，见 8 节 |
+| `Services/UpdateService.cs` / `MainWindow.Update.cs` | 在线更新：读 GitHub Release、校验 SHA-256、静默安装，见 3.7 |
+
+改文件结构、发布位置或关键窗口行为时，同步更新本文件。
+
+---
+
+## 12. 功能补充记录
 
 ### 任务栏信息（2026-09-19）
 
@@ -1103,52 +1389,7 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 验证：`dotnet run --project tests/TaskbarInfo.Tests`；加 `-- --live` 可验证本机实际额度。
 覆盖通用额度桶优先级、旧格式、空字段、周窗口单独存在、百分比边界与其他额度桶隔离。
 
-| 文件 | 职责 |
-| --- | --- |
-| `App.xaml/.cs` | 入口、单实例、主窗口与后台服务初始化 |
-| `MainWindow.xaml/.cs` | 外壳：标题栏、导航、主题与状态圆点 |
-| `MainWindow.Hotkeys.cs` | 全局快捷键注册与窗口过程子类化 |
-| `MainWindow.Spotlight.cs` / `SpotlightWindow.xaml/.cs` | 悬浮搜索设置、快捷键入口与搜索窗口 |
-| `MainWindow.DesktopCards.cs` | 桌面分区页：分区列表、卡片布局、预设与同步 |
-| `MainWindow.Stash.cs` / `.Associations.cs` / `.Ime.cs` | 对应功能页的页面逻辑 |
-| `MainWindow.PageControls.cs` | 按名取子页控件 |
-| `FeaturePagesHost.xaml/.cs` | 全部功能子页面；事件转发给 `MainWindow` |
-| `Styles/PageStyles.xaml` | UI 令牌与页面样式（唯一真源） |
-| `DesktopCardManager.cs` | 卡片集合、同步节奏、呼出 / 收起与自动收起监测 |
-| `DesktopCardWindow.xaml/.cs` | 单张卡片：Mica、图标、拖放、淡入淡出 |
-| `DesktopCollectService.cs` / `DesktopZoneMatcher.cs` | 桌面枚举与实时分组 / 分区匹配规则（**不再移动文件**） |
-| `Services/DesktopIconVisibilityService.cs` | 桌面图标显隐（等价于「显示桌面图标」开关） |
-| `Services/DesktopShellItems.cs` | 系统虚拟图标（此电脑 / 回收站 / 网络…）接入卡片 |
-| `Services/CardLayoutCache.cs` | 多屏拓扑 → 卡片位置尺寸快照 |
-| `Services/CardItemOrderStore.cs` | 分区内图标顺序、刷新恢复与独立持久化 |
-| `Services/AppSearchIndex.cs` / `Pinyin.cs` / `PinyinData.cs` | 应用索引与中文拼音检索 |
-| `Services/SettingsService.cs` / `Config.cs` | 设置中心（防抖写盘）/ 配置结构与读写 |
-| `Services/ErrorReporter.cs` | 统一错误日志入口 |
-| `FloatingStashWindow` | 文件悬浮暂存；关窗清空本次记录 |
-| `GlobalDragWatcher` | 普通鼠标 + 三指全局拖动检测 |
-| `ProgramDropWindow` | 拖放文件时的程序选择窗口 |
-| `VoiceBallService` / `Services/FocusedTextProbe.cs` / `Services/MicaColorSampler.cs` | 语音小球：光标跟踪、Mica 小球绘制与快捷键模拟 |
-| `DesktopClickService` | 桌面空白双击切换「显示桌面 / 恢复窗口」 |
-| `DesktopContextMenuService` | 清理历史「整理桌面」注册表菜单 |
-| `ThreeFingerDragService` | 精确触控板三指接触合成原生拖动 |
-| `ThreeFingerCalibrationWindow` | 全屏三档速度校准，仅在基础曲线 ±20% 内微调 |
-| `WindowHelper.cs` | 窗口外观、标题栏、Mica 分层颜色、尺寸适配 |
-| `UiStyleService.cs` / `ThemeService.cs` | Mica 风格 / 浅色深色跟随系统 |
-| `AutostartService.cs` | 开机自启（HKCU Run） |
-
-改文件结构、发布位置或关键窗口行为时，同步更新本文件。
-
-## 12. 本次核对与验证（2026-09-10）
-
-- 已核对构建脚本、当前 SDK、页面内联样式、目录监视链路和排序实现。
-- 正式版构建与发布成功，已重新启动；Markdown 代码围栏与差异空白检查通过。
-- 文件名圆角提示已在实际卡片界面确认。
-- 独立临时目录中的顺序存储检查通过：首次读取、首尾换位、磁盘重载、新增追加、删除过滤、
-  文件名大小写与分区隔离。未改写用户配置来运行这些检查。
-- **拖动排序的界面验收待确认**：自动输入可触发拖动，但未观察到成功落下并保存。
-  存储检查不等同于鼠标交互通过；需用真实鼠标复核分区内跨行拖动、跨分区移动、取消拖动和重启恢复。
-
-后续完成界面复核后应更新此处，不要把未通过的检查写成「已实测支持」。
+### 按时间的补充说明
 
 设备浮层外观补充：任务栏设备与 Codex 采用透明圆角细线框，不填底色；设备弹窗恢复最初的默认 MicaBackdrop，不设置 TintOpacity、LuminosityOpacity 或着色覆盖；不要与 DesktopAcrylicBackdrop 混用。标题使用不带章节外边距的样式，避免滚动和裁切。已通过限定范围实际截图检查（artifacts/ui-check/outline-default.png），未选择音频设备。
 
@@ -1186,3 +1427,15 @@ Codex 和 Claude 气泡在未连接、读取失败、超时或没有有效额度
 暂存窗口高度随文件数自适应（2026-10-02）：高度 = 固定部分 54 DIP + 文件数（最多 6 行，超过后列表内滚动）× 50 DIP；宽度仍可拖动并保存，高度不再持久化。窗口底部不再有提示文字。音频设备弹窗与暂存窗口同一版式（36 高标题栏 + 左右下等距 8 的内卡片，圆角 8）；任务栏音频入口始终是只有耳机图标的圆形按钮，不再显示设备名，也不随空间分级变化。暂存窗口内框圆角由 XAML 控制，代码里不要再 `ContentBorder.CornerRadius = ...` 覆盖。
 
 无响应排查（2026-10-02）：Windows 的 AppHang 报告（事件日志 Application，ID 1002 / 1001，事件名 AppHangB1）只说明「界面线程卡了」，不含堆栈。`Services/UiHangWatchdog.cs` 每 2 秒给界面线程投心跳，超过 8 秒没回应就把进程完整转储到 `%LocalAppData%\WinTools\hangs\hang-*.dmp`（保留 3 份、10 分钟一份）；用 `dotnet-dump analyze` 的 `clrstack` / `threads` 看界面线程卡在哪。`HotkeyRecorder` 的低级键盘钩子在前台窗口不是本进程时必须自动卸载，否则会吞掉全系统的按键。
+
+### 历史核对（2026-09-10）
+
+- 已核对构建脚本、当前 SDK、页面内联样式、目录监视链路和排序实现。
+- 正式版构建与发布成功，已重新启动；Markdown 代码围栏与差异空白检查通过。
+- 文件名圆角提示已在实际卡片界面确认。
+- 独立临时目录中的顺序存储检查通过：首次读取、首尾换位、磁盘重载、新增追加、删除过滤、
+  文件名大小写与分区隔离。未改写用户配置来运行这些检查。
+- **拖动排序的界面验收待确认**：自动输入可触发拖动，但未观察到成功落下并保存。
+  存储检查不等同于鼠标交互通过；需用真实鼠标复核分区内跨行拖动、跨分区移动、取消拖动和重启恢复。
+
+后续完成界面复核后应更新此处，不要把未通过的检查写成「已实测支持」。

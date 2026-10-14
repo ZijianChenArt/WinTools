@@ -134,6 +134,7 @@ public partial class App : Application, IWindowRegistry
             // 退出路径（托盘退出 / 会话结束）已经各自落过盘了。会话结束那条还处在
             // csrss 的同步 SendMessage 里，此时读 XAML 必抛 COMException，不能再走一遍。
             if (IsShuttingDown) return;
+            RunSession.MarkCleanExit("进程退出事件（非托盘 / 非会话结束路径）");
             SaveConfigOnExit();
         };
         TraceStartup("App constructor: completed");
@@ -175,6 +176,9 @@ public partial class App : Application, IWindowRegistry
             Environment.Exit(0);
             return;
         }
+
+        // 单实例判定通过之后才登记本次运行：被转交的第二个实例不能碰上一个实例的标记。
+        RunSession.Start();
 
         // 分区归属现在是**实时匹配**（枚举桌面 + DesktopZoneMatcher），配置里的分类规则改了
         // 下一次刷新就生效，不需要启动时再整理一遍目录。旧版数据的一次性迁移放在
@@ -518,6 +522,7 @@ public partial class App : Application, IWindowRegistry
         IsShuttingDown = true;
         FlushSettingsWithoutUi();
         RestoreDesktopIcons();
+        RunSession.MarkCleanExit("注销 / 关机（WM_ENDSESSION）");
         Environment.Exit(0);
     }
 
@@ -546,6 +551,7 @@ public partial class App : Application, IWindowRegistry
             try { (Current as App)?._trayIcon?.Dispose(); }
             catch (Exception ex) { ErrorReporter.Log("App.ShutdownNow.Tray", ex); }
         }
+        RunSession.MarkCleanExit("托盘「退出 WinTools」");
         Environment.Exit(0);
     }
 
