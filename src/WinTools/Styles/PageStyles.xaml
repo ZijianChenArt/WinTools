@@ -30,6 +30,84 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <!-- 空格预览浮层：标题两行、紧凑工具条；尺寸在这里集中维护。 -->
+    <Style x:Key="PreviewHeaderStyle" TargetType="Grid">
+        <Setter Property="Height" Value="64"/>
+        <Setter Property="Padding" Value="16,8"/>
+        <Setter Property="RowSpacing" Value="4"/>
+    </Style>
+    <Style x:Key="PreviewTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="PreviewCaptionStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
+    </Style>
+    <Style x:Key="PreviewContentStyle" TargetType="Grid">
+        <Setter Property="Margin" Value="12,0"/>
+    </Style>
+    <Style x:Key="PreviewTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Consolas"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Margin" Value="16,12"/>
+        <Setter Property="IsTextSelectionEnabled" Value="True"/>
+    </Style>
+    <Style x:Key="PreviewTextSurfaceStyle" TargetType="ScrollViewer">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+    </Style>
+    <Style x:Key="PreviewFooterStyle" TargetType="Grid">
+        <Setter Property="Height" Value="48"/>
+        <Setter Property="Padding" Value="16,4"/>
+        <Setter Property="ColumnSpacing" Value="12"/>
+    </Style>
+    <Style x:Key="PreviewActionStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Padding" Value="10,4"/>
+        <Setter Property="MinHeight" Value="32"/>
+        <Setter Property="CornerRadius" Value="8"/>
+    </Style>
+    <Style x:Key="PreviewMediaBarStyle" TargetType="Border">
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="Margin" Value="0,8,0,0"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
+    </Style>
+    <Style x:Key="PreviewMediaButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Width" Value="32"/>
+        <Setter Property="Height" Value="32"/>
+        <Setter Property="MinWidth" Value="0"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style x:Key="PreviewMediaGlyphStyle" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="14"/>
+    </Style>
+    <Style x:Key="PreviewMediaSliderStyle" TargetType="Slider">
+        <Setter Property="Height" Value="32"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="PreviewFallbackTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="18"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="PreviewFallbackHintStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewCaptionStyle}">
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="Margin" Value="0,8,0,0"/>
+        <Setter Property="TextTrimming" Value="None"/>
+    </Style>
+
     <Style x:Key="AudioPickerSurfaceStyle" TargetType="Border">
         <Setter Property="Padding" Value="0"/>
         <Setter Property="CornerRadius" Value="8"/>

@@ -1097,6 +1097,18 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 
 ### 资源管理器空格预览（`ExplorerPreviewService`）
 
+预览窗口排版（v1.3.16）：文件名占独立标题行，格式、大小、分辨率和修改时间在次级信息行；
+底部为关闭/切换提示、页码/文件序号和「打开」。普通文本/Markdown/字幕及 Office 正文自动换行，
+代码与结构化数据保留横向滚动；正文中的 ↑ ↓ / PageUp / PageDown 用于滚动，← → 用于切文件。
+视频/音频使用紧凑单行播放栏（播放/暂停、进度、时间、静音、音量）：栏体 40 DIP，含顶部间距
+总计 48 DIP，最大宽度 640 DIP；内容区窄于 480 DIP 时收起音量滑条，保留静音按钮。
+播放栏位于画面外，窗口按比例计算尺寸时计入这 48 DIP。关闭或切换时停止刷新并释放播放器，
+异步媒体事件校验播放器实例和文件加载代次，避免旧视频覆盖新预览。
+
+Debug 下可设置 `WINTOOLS_PREVIEW_QA_DIR` 显式运行 `FilePreviewWindow.Diagnostics.cs` 的布局渲染检查；
+该入口不编进 Release。截图与尺寸报告验证排版，不能代替按钮点击/进度拖动的真机确认；
+`RenderTargetBitmap` 不包含视频合成画面，媒体加载状态和自然尺寸单独记录。
+
 - 一个 `WH_KEYBOARD_LL` 钩子监听空格；钩子回调里**只做最少的事**：判断前台是不是资源管理器文件列表、
   吞掉空格，并把「顶层窗口 + 当前焦点窗口」放进队列，选中项的读取全在工作线程。
 - 读选中项走 `Shell.Windows` COM：`IWebBrowser2` → `IServiceProvider` → `IShellBrowser` → `IShellView` → `IFolderView`。

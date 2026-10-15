@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     文件预览窗口（桌面卡片里选中文件按空格呼出，仿 QuickLook）。
-    独立浮层，与悬浮搜索一样不走 Styles/PageStyles.xaml 的页面令牌；尺寸由
+    独立浮层，排版使用 Styles/PageStyles.xaml 中的 Preview 样式；尺寸由
     FilePreviewWindow.xaml.cs 按工作区算出。窗口隐藏时会释放解码器与位图，常驻内存只剩窗口本身。
 -->
 <Window
@@ -19,36 +19,27 @@
         </Grid.RowDefinitions>
 
         <!-- 标题栏：拖动窗口用，没有系统按钮。 -->
-        <Grid x:Name="HeaderBar" Grid.Row="0" Height="44" Padding="16,0,16,0" ColumnSpacing="12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock x:Name="TitleText" Grid.Column="0" FontSize="14" FontWeight="SemiBold"
-                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-            <!-- 与 QuickLook 一样，文件大小（图片、视频再加像素尺寸）紧跟文件名显示。 -->
-            <TextBlock x:Name="MetaText" Grid.Column="1" FontSize="12"
-                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-            <TextBlock x:Name="HintText" Grid.Column="2" FontSize="12"
-                       VerticalAlignment="Center"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="空格 / Esc 关闭 · ← → 切换 · Enter 打开"/>
+        <Grid x:Name="HeaderBar" Grid.Row="0" Style="{StaticResource PreviewHeaderStyle}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="TitleText" Style="{StaticResource PreviewTitleStyle}"/>
+            <TextBlock x:Name="MetaText" Grid.Row="1" Style="{StaticResource PreviewCaptionStyle}"/>
         </Grid>
 
         <!-- 内容区：同一时间只显示其中一个。 -->
-        <Grid x:Name="ContentHost" Grid.Row="1" Margin="12,0,12,0">
+        <Grid x:Name="ContentHost" Grid.Row="1" Style="{StaticResource PreviewContentStyle}">
             <ProgressRing x:Name="LoadingRing" Width="32" Height="32" IsActive="False" Visibility="Collapsed"/>
 
             <Image x:Name="ImageView" Stretch="Uniform" Visibility="Collapsed"
                    ImageFailed="ImageView_ImageFailed"/>
 
             <ScrollViewer x:Name="TextView" Visibility="Collapsed"
+                          Style="{StaticResource PreviewTextSurfaceStyle}"
                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                           ZoomMode="Disabled">
-                <TextBlock x:Name="TextBody" FontFamily="Consolas" FontSize="13"
-                           TextWrapping="NoWrap" IsTextSelectionEnabled="True" Margin="8"/>
+                <TextBlock x:Name="TextBody" Style="{StaticResource PreviewTextStyle}" TextWrapping="NoWrap"/>
             </ScrollViewer>
 
             <!-- PDF：所有页竖排，滚动时才渲染视口附近的页。 -->
@@ -61,25 +52,77 @@
             <!-- HTML：WebView2 渲染，第一次打开 HTML 时才初始化。 -->
             <controls:WebView2 x:Name="HtmlView" Visibility="Collapsed"/>
 
-            <MediaPlayerElement x:Name="MediaView" Visibility="Collapsed"
-                                AreTransportControlsEnabled="True" AutoPlay="True"/>
+            <!-- 播放条单独占 48 DIP，不覆盖视频，也不使用系统播放器的多行工具栏。 -->
+            <Grid x:Name="MediaSurface" Visibility="Collapsed" RowSpacing="0" SizeChanged="MediaSurface_SizeChanged">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <MediaPlayerElement x:Name="MediaView" AreTransportControlsEnabled="False" Stretch="Uniform"/>
+                <Border x:Name="MediaBar" Grid.Row="1" Style="{StaticResource PreviewMediaBarStyle}"
+                        MaxWidth="640" HorizontalAlignment="Stretch">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="PlayButton" Style="{StaticResource PreviewMediaButtonStyle}"
+                                Click="PlayButton_Click" AutomationProperties.Name="播放" ToolTipService.ToolTip="播放 / 暂停">
+                            <FontIcon x:Name="PlayGlyph" Glyph="&#xE768;" Style="{StaticResource PreviewMediaGlyphStyle}"/>
+                        </Button>
+                        <Slider x:Name="SeekSlider" Grid.Column="1" Minimum="0" Maximum="1" Value="0"
+                                Style="{StaticResource PreviewMediaSliderStyle}"
+                                MinWidth="48" IsEnabled="False" VerticalAlignment="Center"
+                                IsThumbToolTipEnabled="False" ValueChanged="SeekSlider_ValueChanged"
+                                AutomationProperties.Name="播放进度"/>
+                        <TextBlock x:Name="MediaTimeText" Grid.Column="2" Text="0:00 / 0:00"
+                                   Style="{StaticResource PreviewCaptionStyle}"/>
+                        <Button x:Name="MuteButton" Grid.Column="3" Style="{StaticResource PreviewMediaButtonStyle}"
+                                Click="MuteButton_Click" AutomationProperties.Name="静音" ToolTipService.ToolTip="静音 / 恢复音量">
+                            <FontIcon x:Name="MuteGlyph" Glyph="&#xE767;" Style="{StaticResource PreviewMediaGlyphStyle}"/>
+                        </Button>
+                        <Slider x:Name="VolumeSlider" Grid.Column="4" Width="72" Value="100" Minimum="0" Maximum="100"
+                                Style="{StaticResource PreviewMediaSliderStyle}"
+                                VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged"
+                                AutomationProperties.Name="音量"/>
+                    </Grid>
+                </Border>
+            </Grid>
 
-            <StackPanel x:Name="FallbackPanel" Visibility="Collapsed"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                <Image x:Name="FallbackIcon" Width="96" Height="96"/>
-                <TextBlock x:Name="FallbackTitle" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                <TextBlock x:Name="FallbackHint" FontSize="12" HorizontalAlignment="Center" TextWrapping="Wrap"
-                           TextAlignment="Center" MaxWidth="420"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-            </StackPanel>
+            <ScrollViewer x:Name="FallbackPanel" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <Grid MaxWidth="480" Padding="24" ColumnSpacing="20" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="64"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Image x:Name="FallbackIcon" Width="64" Height="64" VerticalAlignment="Top"/>
+                    <StackPanel Grid.Column="1">
+                        <TextBlock x:Name="FallbackTitle" Style="{StaticResource PreviewFallbackTitleStyle}"/>
+                        <TextBlock x:Name="FallbackHint" Style="{StaticResource PreviewFallbackHintStyle}"/>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
 
             <!-- 焦点承接：窗口激活后把键盘焦点放在这里，之后的按键才会走 PreviewKeyDown。 -->
             <Button x:Name="KeyCatcher" Opacity="0" IsHitTestVisible="False" Width="1" Height="1"
                     Padding="0" MinWidth="0" MinHeight="0" BorderThickness="0"/>
         </Grid>
 
-        <TextBlock x:Name="FooterText" Grid.Row="2" FontSize="12" Margin="16,8,16,12"
-                   TextTrimming="CharacterEllipsis"
-                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+        <Grid x:Name="FooterBar" Grid.Row="2" Style="{StaticResource PreviewFooterStyle}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="HintText" Style="{StaticResource PreviewCaptionStyle}"
+                       Text="空格 / Esc 关闭 · ← → 切换" ToolTipService.ToolTip="空格 / Esc 关闭 · ← → 切换文件 · ↑ ↓ 滚动 · Enter 打开"/>
+            <TextBlock x:Name="FooterText" Grid.Column="1" Style="{StaticResource PreviewCaptionStyle}"/>
+            <Button Grid.Column="2" Content="打开" Style="{StaticResource PreviewActionStyle}"
+                    Click="OpenButton_Click" ToolTipService.ToolTip="用默认程序打开（Enter）"/>
+        </Grid>
     </Grid>
 </Window>
