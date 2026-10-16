@@ -30,11 +30,11 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- 空格预览浮层：标题两行、紧凑工具条；尺寸在这里集中维护。 -->
+    <!-- 空格预览：所有标题信息和必要操作集中在单行，不保留独立工具栏或底栏。 -->
     <Style x:Key="PreviewHeaderStyle" TargetType="Grid">
-        <Setter Property="Height" Value="64"/>
-        <Setter Property="Padding" Value="16,8"/>
-        <Setter Property="RowSpacing" Value="4"/>
+        <Setter Property="Height" Value="44"/>
+        <Setter Property="Padding" Value="12,4"/>
+        <Setter Property="ColumnSpacing" Value="8"/>
     </Style>
     <Style x:Key="PreviewTitleStyle" TargetType="TextBlock">
         <Setter Property="FontSize" Value="14"/>
@@ -74,6 +74,7 @@
         <Setter Property="CornerRadius" Value="8"/>
     </Style>
     <Style x:Key="PreviewMediaBarStyle" TargetType="Border">
+        <Setter Property="MaxWidth" Value="640"/>
         <Setter Property="Padding" Value="8,4"/>
         <Setter Property="Margin" Value="0,8,0,0"/>
         <Setter Property="CornerRadius" Value="8"/>
@@ -106,6 +107,74 @@
         <Setter Property="TextWrapping" Value="Wrap"/>
         <Setter Property="Margin" Value="0,8,0,0"/>
         <Setter Property="TextTrimming" Value="None"/>
+    </Style>
+
+    <Style x:Key="PreviewToolbarStyle" TargetType="Grid">
+        <Setter Property="VerticalAlignment" Value="Center"/><Setter Property="ColumnSpacing" Value="4"/>
+    </Style>
+    <Style x:Key="PreviewSheetSelectorStyle" TargetType="ComboBox">
+        <Setter Property="MaxWidth" Value="180"/><Setter Property="MinWidth" Value="100"/><Setter Property="MinHeight" Value="32"/>
+    </Style>
+    <Style x:Key="PreviewViewStatusStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewCaptionStyle}">
+        <Setter Property="Margin" Value="8,0"/>
+    </Style>
+    <Style x:Key="PreviewReadingBodyStyle" TargetType="StackPanel">
+        <Setter Property="Padding" Value="24,16"/><Setter Property="Spacing" Value="10"/>
+        <Setter Property="MaxWidth" Value="752"/><Setter Property="HorizontalAlignment" Value="Stretch"/>
+    </Style>
+    <Style x:Key="PreviewReadingTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="14"/><Setter Property="FontFamily" Value="Segoe UI"/>
+        <Setter Property="TextWrapping" Value="Wrap"/><Setter Property="IsTextSelectionEnabled" Value="True"/>
+    </Style>
+    <Style x:Key="PreviewHeading1Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}">
+        <Setter Property="FontSize" Value="24"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,12,0,4"/>
+    </Style>
+    <Style x:Key="PreviewListLevel0Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}"/>
+    <Style x:Key="PreviewListLevel1Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}"><Setter Property="Margin" Value="16,0,0,0"/></Style>
+    <Style x:Key="PreviewListLevel2Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}"><Setter Property="Margin" Value="32,0,0,0"/></Style>
+    <Style x:Key="PreviewListLevel3Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}"><Setter Property="Margin" Value="48,0,0,0"/></Style>
+    <Style x:Key="PreviewListLevel4Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}"><Setter Property="Margin" Value="64,0,0,0"/></Style>
+    <Style x:Key="PreviewRuleStyle" TargetType="Border"><Setter Property="Height" Value="1"/><Setter Property="Background" Value="{ThemeResource CardStrokeColorDefaultBrush}"/></Style>
+    <Style x:Key="PreviewEmptyStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}">
+        <Setter Property="HorizontalAlignment" Value="Center"/><Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="PreviewHeading2Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewHeading1Style}">
+        <Setter Property="FontSize" Value="20"/>
+    </Style>
+    <Style x:Key="PreviewHeading3Style" TargetType="TextBlock" BasedOn="{StaticResource PreviewHeading1Style}">
+        <Setter Property="FontSize" Value="16"/>
+    </Style>
+    <Style x:Key="PreviewCodeTextStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}">
+        <Setter Property="FontFamily" Value="Cascadia Mono"/><Setter Property="TextWrapping" Value="NoWrap"/><Setter Property="Margin" Value="12,8"/>
+    </Style>
+    <Style x:Key="PreviewCodeSurfaceStyle" TargetType="ScrollViewer" BasedOn="{StaticResource PreviewTextSurfaceStyle}">
+        <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/><Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+    </Style>
+    <Style x:Key="PreviewQuoteStyle" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource AccentFillColorDefaultBrush}"/>
+        <Setter Property="BorderThickness" Value="3,0,0,0"/><Setter Property="Padding" Value="12,4"/>
+    </Style>
+    <Style x:Key="PreviewListHeaderStyle" TargetType="Grid">
+        <Setter Property="Height" Value="32"/><Setter Property="Padding" Value="12,0"/>
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
+    </Style>
+    <Style x:Key="PreviewListItemStyle" TargetType="ListViewItem">
+        <Setter Property="MinHeight" Value="32"/><Setter Property="Padding" Value="12,0"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </Style>
+    <Style x:Key="PreviewTableHeaderStyle" TargetType="Grid" BasedOn="{StaticResource PreviewListHeaderStyle}"/>
+    <Style x:Key="PreviewListTextStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}">
+        <Setter Property="TextWrapping" Value="NoWrap"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+        <Setter Property="VerticalAlignment" Value="Center"/><Setter Property="IsTextSelectionEnabled" Value="False"/>
+    </Style>
+    <Style x:Key="PreviewTableCellStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewListTextStyle}">
+        <Setter Property="Margin" Value="8,0"/>
+    </Style>
+    <Style x:Key="PreviewAudioInfoStyle" TargetType="StackPanel">
+        <Setter Property="Spacing" Value="12"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="PreviewAudioIconStyle" TargetType="FontIcon"><Setter Property="FontSize" Value="40"/></Style>
+    <Style x:Key="PreviewHelpTextStyle" TargetType="TextBlock" BasedOn="{StaticResource PreviewReadingTextStyle}">
+        <Setter Property="MaxWidth" Value="300"/>
     </Style>
 
     <Style x:Key="AudioPickerSurfaceStyle" TargetType="Border">
@@ -428,6 +497,42 @@
     </Style>
 
     <!-- ============ 导航 ============ -->
+    <Style x:Key="NavigationGroupHeaderStyle" TargetType="NavigationViewItemHeader">
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="IsEnabled" Value="False"/>
+        <Setter Property="IsTabStop" Value="False"/>
+        <Setter Property="Padding" Value="16,0,8,0"/>
+        <Setter Property="Margin" Value="0"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
+        <!-- 原生模板内部写死 40 DIP / 14 号半粗体；保留原生状态名以兼容侧栏收起。 -->
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="NavigationViewItemHeader">
+                    <Grid x:Name="NavigationViewItemHeaderRootGrid">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="PaneStates">
+                                <VisualState x:Name="HeaderTextVisible"/>
+                                <VisualState x:Name="HeaderTextCollapsed">
+                                    <VisualState.Setters>
+                                        <Setter Target="HeaderText.Visibility" Value="Collapsed"/>
+                                        <Setter Target="InnerHeaderGrid.Height" Value="0"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid x:Name="InnerHeaderGrid" Height="28" Padding="{TemplateBinding Padding}">
+                            <TextBlock x:Name="HeaderText" Text="{TemplateBinding Content}"
+                                       FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                                       Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center"
+                                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                        </Grid>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
     <Style x:Key="NavigationLabelStyle" TargetType="TextBlock">
         <Setter Property="FontSize" Value="14"/>
         <Setter Property="LineHeight" Value="20"/>

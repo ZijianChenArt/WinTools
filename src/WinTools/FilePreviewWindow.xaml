@@ -12,28 +12,86 @@
     Title="文件预览">
 
     <Grid x:Name="ShellRoot" PreviewKeyDown="ShellRoot_PreviewKeyDown">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
 
-        <!-- 标题栏：拖动窗口用，没有系统按钮。 -->
-        <Grid x:Name="HeaderBar" Grid.Row="0" Style="{StaticResource PreviewHeaderStyle}">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <TextBlock x:Name="TitleText" Style="{StaticResource PreviewTitleStyle}"/>
-            <TextBlock x:Name="MetaText" Grid.Row="1" Style="{StaticResource PreviewCaptionStyle}"/>
+        <!-- 单行标题：文件名和元数据在左，必要操作在右；拖动区仅覆盖名称，避免吞掉按钮点击。 -->
+        <Grid x:Name="HeaderBar" Style="{StaticResource PreviewHeaderStyle}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid x:Name="HeaderDragRegion"><TextBlock x:Name="TitleText" Style="{StaticResource PreviewTitleStyle}"/></Grid>
+            <TextBlock x:Name="MetaText" Grid.Column="1" Style="{StaticResource PreviewCaptionStyle}"/>
+        <Grid x:Name="PreviewToolbar" Grid.Column="2" Style="{StaticResource PreviewToolbarStyle}" Visibility="Collapsed">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="SourceButton" Content="源码" Style="{StaticResource PreviewActionStyle}" Visibility="Collapsed"
+                        Click="SourceButton_Click" ToolTipService.ToolTip="切换阅读视图与原文"/>
+                <Button x:Name="WrapButton" Content="自动换行" Style="{StaticResource PreviewActionStyle}" Visibility="Collapsed"
+                        Click="WrapButton_Click" ToolTipService.ToolTip="切换长行自动换行"/>
+                <Button x:Name="ListUpButton" Content="上一级" Style="{StaticResource PreviewActionStyle}" Visibility="Collapsed" Click="ListUpButton_Click"/>
+                <ComboBox x:Name="SheetSelector" Style="{StaticResource PreviewSheetSelectorStyle}" Visibility="Collapsed"
+                          SelectionChanged="SheetSelector_SelectionChanged" AutomationProperties.Name="工作表"/>
+            </StackPanel>
+            <TextBlock x:Name="ViewStatus" Visibility="Collapsed" Grid.Column="1" Style="{StaticResource PreviewViewStatusStyle}"/>
+            <StackPanel x:Name="ZoomTools" Grid.Column="2" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
+                <Button Content="−" Style="{StaticResource PreviewActionStyle}" Click="ZoomOut_Click" ToolTipService.ToolTip="缩小" AutomationProperties.Name="缩小"/>
+                <Button Content="适合" Style="{StaticResource PreviewActionStyle}" Click="ZoomFit_Click" ToolTipService.ToolTip="适合窗口"/>
+                <Button Content="+" Style="{StaticResource PreviewActionStyle}" Click="ZoomIn_Click" ToolTipService.ToolTip="放大" AutomationProperties.Name="放大"/>
+            </StackPanel>
         </Grid>
-
+            <Button x:Name="HeaderHelp" Grid.Column="3" Content="?" Style="{StaticResource PreviewActionStyle}" AutomationProperties.Name="快捷键帮助">
+                <Button.Flyout><Flyout><TextBlock x:Name="ShortcutHelp" TextWrapping="Wrap" Style="{StaticResource PreviewHelpTextStyle}"/></Flyout></Button.Flyout>
+            </Button>
+            <Button x:Name="HeaderOpen" Grid.Column="4" Content="打开" Style="{StaticResource PreviewActionStyle}"
+                    Click="OpenButton_Click" ToolTipService.ToolTip="用默认程序打开（Enter）"/>
+        </Grid>
         <!-- 内容区：同一时间只显示其中一个。 -->
-        <Grid x:Name="ContentHost" Grid.Row="1" Style="{StaticResource PreviewContentStyle}">
+        <Grid x:Name="ContentHost" Grid.Row="1" Style="{StaticResource PreviewContentStyle}" SizeChanged="ContentHost_SizeChanged">
             <ProgressRing x:Name="LoadingRing" Width="32" Height="32" IsActive="False" Visibility="Collapsed"/>
 
-            <Image x:Name="ImageView" Stretch="Uniform" Visibility="Collapsed"
-                   ImageFailed="ImageView_ImageFailed"/>
+            <ScrollViewer x:Name="ImageSurface" Visibility="Collapsed" ZoomMode="Enabled" MinZoomFactor="1" MaxZoomFactor="8"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                <Image x:Name="ImageView" Stretch="Uniform"/>
+            </ScrollViewer>
+
+            <ScrollViewer x:Name="ReadingView" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto" Style="{StaticResource PreviewTextSurfaceStyle}">
+                <StackPanel x:Name="ReadingBody" Style="{StaticResource PreviewReadingBodyStyle}"/>
+            </ScrollViewer>
+
+            <Grid x:Name="ListSurface" Visibility="Collapsed">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <Grid Style="{StaticResource PreviewListHeaderStyle}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="名称" Style="{StaticResource PreviewCaptionStyle}"/>
+                    <TextBlock Text="大小 / 类型" Grid.Column="1" Style="{StaticResource PreviewCaptionStyle}"/>
+                </Grid>
+                <ListView x:Name="EntryList" Grid.Row="1" SelectionMode="None" IsItemClickEnabled="True" ItemClick="EntryList_ItemClick"
+                          ItemContainerStyle="{StaticResource PreviewListItemStyle}" HorizontalContentAlignment="Stretch">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnSpacing="8" Height="32">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions>
+                                <FontIcon Glyph="{Binding Glyph}" Style="{StaticResource PreviewMediaGlyphStyle}"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Name}" Style="{StaticResource PreviewListTextStyle}" ToolTipService.ToolTip="{Binding Path}"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Size}" Style="{StaticResource PreviewCaptionStyle}"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <TextBlock x:Name="EntryEmpty" Grid.Row="1" Text="此目录为空。" Visibility="Collapsed" Style="{StaticResource PreviewEmptyStyle}"/>
+            </Grid>
+
+            <ScrollViewer x:Name="TableSurface" Visibility="Collapsed" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <Grid x:Name="TableGrid">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid x:Name="TableHeader" Style="{StaticResource PreviewTableHeaderStyle}"/>
+                    <ListView x:Name="TableRows" Grid.Row="1" SelectionMode="None" HorizontalContentAlignment="Stretch"
+                              ItemContainerStyle="{StaticResource PreviewListItemStyle}"/>
+                    <TextBlock x:Name="TableEmpty" Grid.Row="1" Text="此表格为空。" Visibility="Collapsed" Style="{StaticResource PreviewEmptyStyle}"/>
+                </Grid>
+            </ScrollViewer>
 
             <ScrollViewer x:Name="TextView" Visibility="Collapsed"
                           Style="{StaticResource PreviewTextSurfaceStyle}"
@@ -43,8 +101,8 @@
             </ScrollViewer>
 
             <!-- PDF：所有页竖排，滚动时才渲染视口附近的页。 -->
-            <ScrollViewer x:Name="PdfView" Visibility="Collapsed" ZoomMode="Disabled"
-                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+            <ScrollViewer x:Name="PdfView" Visibility="Collapsed" ZoomMode="Enabled" MinZoomFactor="1" MaxZoomFactor="4"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
                           ViewChanged="PdfView_ViewChanged">
                 <StackPanel x:Name="PdfPages" Spacing="12" HorizontalAlignment="Center"/>
             </ScrollViewer>
@@ -58,9 +116,15 @@
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <MediaPlayerElement x:Name="MediaView" AreTransportControlsEnabled="False" Stretch="Uniform"/>
+                <Grid>
+                    <StackPanel x:Name="AudioInfo" Visibility="Collapsed" Style="{StaticResource PreviewAudioInfoStyle}">
+                        <FontIcon Glyph="&#xE8D6;" Style="{StaticResource PreviewAudioIconStyle}"/>
+                        <TextBlock x:Name="AudioTitle" Style="{StaticResource PreviewFallbackTitleStyle}"/>
+                    </StackPanel>
+                    <MediaPlayerElement x:Name="MediaView" AreTransportControlsEnabled="False" Stretch="Uniform"/>
+                </Grid>
                 <Border x:Name="MediaBar" Grid.Row="1" Style="{StaticResource PreviewMediaBarStyle}"
-                        MaxWidth="640" HorizontalAlignment="Stretch">
+                        HorizontalAlignment="Stretch">
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -112,17 +176,10 @@
                     Padding="0" MinWidth="0" MinHeight="0" BorderThickness="0"/>
         </Grid>
 
-        <Grid x:Name="FooterBar" Grid.Row="2" Style="{StaticResource PreviewFooterStyle}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock x:Name="HintText" Style="{StaticResource PreviewCaptionStyle}"
-                       Text="空格 / Esc 关闭 · ← → 切换" ToolTipService.ToolTip="空格 / Esc 关闭 · ← → 切换文件 · ↑ ↓ 滚动 · Enter 打开"/>
-            <TextBlock x:Name="FooterText" Grid.Column="1" Style="{StaticResource PreviewCaptionStyle}"/>
-            <Button Grid.Column="2" Content="打开" Style="{StaticResource PreviewActionStyle}"
-                    Click="OpenButton_Click" ToolTipService.ToolTip="用默认程序打开（Enter）"/>
+        <!-- 状态字段用于组合顶部提示，不占据额外一行。 -->
+        <Grid x:Name="FooterBar" Visibility="Collapsed">
+            <TextBlock x:Name="HintText"/>
+            <TextBlock x:Name="FooterText"/>
         </Grid>
     </Grid>
 </Window>

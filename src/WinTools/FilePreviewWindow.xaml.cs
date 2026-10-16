@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI.Windowing;
@@ -35,22 +37,22 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// <summary>文本预览最多读取的字节数。再大的文件只看前半部分，避免一次把几百 MB 的日志塞进 TextBlock。</summary>
     private const int MaxTextBytes = 256 * 1024;
 
-    // 窗口尺寸（DIP）。图片、视频、PDF 按内容自适应，但不超过工作区的上限比例；文本与其它类型用固定小尺寸。
-    private const double MaxWidthRatio = 0.6;
-    private const double MaxHeightRatio = 0.7;
-    private const double MinWidthDip = 420;
-    private const double MinHeightDip = 300;
+    // 图片、视频、PDF按比例；文本、列表等由Presentation分部按内容测量。所有尺寸均为DIP。
+    private const double MaxWidthRatio = 0.85;
+    private const double MaxHeightRatio = 0.82;
+    private const double MinWidthDip = 380;
+    private const double MinHeightDip = 180;
     private const double DefaultWidthDip = 640;
     private const double DefaultHeightDip = 440;
 
-    /// <summary>内容区之外的占位：左右各 12；标题栏 64 + 页脚 48 DIP。</summary>
+    /// <summary>内容区之外的占位：左右各12；所有信息集中在44 DIP单行标题栏。</summary>
     private const double ChromeWidthDip = 24;
-    private const double ChromeHeightDip = 112;
+    private const double ChromeHeightDip = 44;
     private const double MediaBarHeightDip = 48;
 
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".ico", ".webp", ".heic",
+        ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".ico", ".webp", ".heic", ".svg",
     };
 
     private static readonly HashSet<string> MediaExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -85,12 +87,6 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     };
 
     private enum Kind { Image, Pdf, Text, StructuredText, Media, Html, OfficeText, Archive, Folder, Unsupported }
-
-    /// <summary>文件夹的统计结果，与资源管理器属性页的「含 N 个目录和 M 个文件」口径一致（不含文件夹自身，递归）。</summary>
-    private readonly record struct FolderStats(long Bytes, long Directories, long Files);
-
-    /// <summary>当前文件夹的统计，计算完成后才有；与 <see cref="_loadToken"/> 一样随切换清空。</summary>
-    private FolderStats? _folderStats;
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -140,8 +136,22 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     public FilePreviewWindow()
     {
         InitializeComponent();
-        _views = new UIElement[] { ImageView, TextView, PdfView, HtmlView, MediaSurface, FallbackPanel };
+        _views = new UIElement[] { ImageSurface, TextView, ReadingView, ListSurface, TableSurface, PdfView, HtmlView, MediaSurface, FallbackPanel };
+        _previewAnimator = new PopupAnimator(this, 120, 80, 0, independentOpacity: true);
+        _previewAnimator.Revealed += () =>
+        {
+            if (_pendingBounds is { } bounds && _isOpen)
+            {
+                _pendingBounds = null;
+                SetPreviewBounds(bounds.Width, bounds.Height);
+            }
+            TryStartMediaPlayback();
+        };
         InitializeMediaControls();
+        HeaderBar.SizeChanged += (_, _) => UpdateCompactHeader();
+        PreviewToolbar.SizeChanged += (_, _) => UpdateCompactHeader();
+        ViewStatus.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) => UpdateCompactHeader());
+        FooterText.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) => UpdateCompactHeader());
 
         // PDF 页面宽度跟随内容区变化（窗口尺寸调整完成后，页面要跟着重新排版）。
         PdfView.SizeChanged += (_, _) => RelayoutPdf();
@@ -149,6 +159,11 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         AppWindow.SetIcon("Assets\\AppIcon.ico");
         ThemeService.Register(this);
         UiStyleService.Register(this);
+        AppWindow.Changed += (_, args) =>
+        {
+            if (args.DidSizeChange && _isOpen && _revealed && !_previewAnimator.IsBusy
+                && (AppWindow.Size.Width != _automaticWidth || AppWindow.Size.Height != _automaticHeight)) _userSized = true;
+        };
 
     }
 
@@ -166,7 +181,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                 presenter.IsAlwaysOnTop = true;
 
             // 与悬浮弹窗一样：只要标题栏拖动区，不要系统按钮；保留可拖动边框以便调整大小。
-            WindowHelper.ConfigurePopupTitleBar(this, HeaderBar);
+            WindowHelper.ConfigurePopupTitleBar(this, HeaderDragRegion);
             WindowHelper.DisableWindowTransitions(this);
             ApplyUiStyleSurfaces();
 
@@ -220,16 +235,15 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     }
 
     /// <summary>
-    /// 先把窗口弹出来（加载中的样子），不等任何文件读取；选中项或文件内容读完后再调用 <see cref="ShowAt"/> 填进来。
-    /// 这样按下按键的瞬间就有反馈，慢的只是内容本身。
+    /// 预备复用窗口；读取选中项后由ShowAt填内容。慢读取在120ms后揭示加载壳，快读取直接显示正文。
     /// </summary>
     internal void ShowPending()
     {
+        _loadToken++;
         ReleaseContent();
         _paths = Array.Empty<string>();
         _index = 0;
         _contentSize = null;
-        _folderStats = null;
         Present();
         ShowLoading();
         TitleText.Text = "正在读取…";
@@ -261,7 +275,14 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             _isOpen = true;
             ActivateForeground();
 
-            if (!wasOpen) WindowHelper.UncloakWhenRendered(this);
+            if (!wasOpen)
+            {
+                _previewAnimator.Reset();
+                _userSized = false;
+                _revealed = false;
+                _revealQueued = false;
+                _animationVersion++;
+            }
             KeyCatcher.Focus(FocusState.Programmatic);
         }
         catch (Exception ex)
@@ -308,8 +329,17 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         try
         {
             AppWindow.Move(new PointInt32(-20000, -20000));
+            WindowHelper.SetWindowCloak(this, true);
             Activate();
-            AppWindow.Hide();
+            _previewAnimator.PrepareReveal(AppWindow.Position.Y, CurrentScale());
+            var version = _animationVersion;
+            WindowHelper.WhenRendered(this, () =>
+            {
+                if (_isOpen || version != _animationVersion) return;
+                UpdateFrameInsets();
+                _previewAnimator.Reset();
+                AppWindow.Hide();
+            }, framesToWait: 4);
         }
         catch (Exception ex)
         {
@@ -318,17 +348,34 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     }
 
     /// <summary>隐藏窗口，并释放所有解码相关的资源。下次呼出时重新加载。</summary>
-    internal void HideWindow()
+    internal void HideWindow(bool immediate = false)
     {
+        if (!_isOpen) return;
         _isOpen = false;
         _loadToken++;
-        ReleaseContent();
-        try { AppWindow.Hide(); }
-        catch (Exception ex) { ErrorReporter.Log("FilePreviewWindow.HideWindow", ex); }
+        _contentCancellation.Cancel();
+        _mediaTimer?.Stop();
+        _previewPlayer?.Pause();
+        var version = ++_animationVersion;
+        _revealQueued = false;
+        void Finish()
+        {
+            if (_isOpen || version != _animationVersion) return;
+            try { AppWindow.Hide(); }
+            catch (Exception ex) { ErrorReporter.Log("FilePreviewWindow.HideWindow", ex); }
+            ReleaseContent();
+            _revealed = false;
+        }
+        if (immediate || !_revealed || !AnimationsEnabled) { _previewAnimator.Stop(); Finish(); _previewAnimator.Reset(); }
+        else _previewAnimator.PlayDismiss(CurrentScale(), Finish);
     }
 
     private void ReleaseContent()
     {
+        _contentCancellation.Cancel();
+        _contentCancellation.Dispose();
+        _contentCancellation = new CancellationTokenSource();
+        ResetDocumentState();
         try
         {
             ReleaseMedia();
@@ -350,9 +397,18 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _pdfPath = null;
         _pdfPage = 0;
 
+        // Collapse the web surface before navigating away; otherwise about:blank can flash white.
+        HtmlView.Visibility = Visibility.Collapsed;
         // HTML：回到空白页，释放网页内容（WebView2 进程本身保留，下次打开不用重新初始化）。
         try
         {
+            if (HtmlView.CoreWebView2 != null)
+            {
+                if (_htmlNavigationCompleted != null) HtmlView.CoreWebView2.NavigationCompleted -= _htmlNavigationCompleted;
+                if (_htmlNavigationStarting != null) HtmlView.CoreWebView2.NavigationStarting -= _htmlNavigationStarting;
+            }
+            _htmlNavigationCompleted = null;
+            _htmlNavigationStarting = null;
             if (HtmlView.CoreWebView2 != null) HtmlView.Source = new Uri("about:blank");
         }
         catch (Exception ex) { ErrorReporter.Log("FilePreviewWindow.ReleaseHtml", ex); }
@@ -393,8 +449,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     /// <summary>
     /// 按内容调整窗口大小，窗口中心保持不动（与 QuickLook 一样，小图片就是小窗口）。
-    /// 传入的内容尺寸按 DIP 计算；超过上限时整体等比缩小，不会超出工作区的 60% × 70%。
-    /// 传 null 则使用固定的默认尺寸（文本、无法预览的文件）。
+    /// 传入内容尺寸按DIP计算；整体等比缩小，计入标题/工具条/播放条，并受当前屏幕工作区限制。
     /// </summary>
     private void ApplyWindowSize(double? contentWidth, double? contentHeight, bool large = false)
     {
@@ -403,17 +458,18 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             var scale = CurrentScale();
             // 用窗口自己所在的显示器，而不是光标所在的：切换文件时窗口不能被挪到别的屏幕上。
             var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
-            var maxWidth = work.Width * MaxWidthRatio / scale;
+            if (_userSized) return;
+            var maxWidth = Math.Min(1100, work.Width * MaxWidthRatio / scale);
             var maxHeight = work.Height * MaxHeightRatio / scale;
-            var chromeHeight = ChromeHeightDip + (MediaSurface.Visibility == Visibility.Visible ? MediaBarHeightDip : 0);
+            var chromeHeight = ChromeHeightDip + ToolbarHeight + _frameHeightDip + (Classify(CurrentPath) == Kind.Media ? MediaBarHeightDip : 0);
 
             double width, height;
             if (contentWidth is > 0 && contentHeight is > 0)
             {
                 var fit = Math.Min(1.0, Math.Min(
-                    (maxWidth - ChromeWidthDip) / contentWidth.Value,
+                    (maxWidth - ChromeWidthDip - _frameWidthDip) / contentWidth.Value,
                     Math.Max(1, maxHeight - chromeHeight) / contentHeight.Value));
-                width = contentWidth.Value * fit + ChromeWidthDip;
+                width = contentWidth.Value * fit + ChromeWidthDip + _frameWidthDip;
                 height = contentHeight.Value * fit + chromeHeight;
             }
             else
@@ -426,16 +482,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             width = Math.Clamp(width, Math.Min(MinWidthDip, maxWidth), maxWidth);
             height = Math.Clamp(height, Math.Min(MinHeightDip, maxHeight), maxHeight);
 
-            var current = AppWindow.Position;
-            var size = AppWindow.Size;
-            var centerX = current.X + size.Width / 2;
-            var centerY = current.Y + size.Height / 2;
-
-            var pixelWidth = (int)Math.Round(width * scale);
-            var pixelHeight = (int)Math.Round(height * scale);
-            var x = Math.Clamp(centerX - pixelWidth / 2, work.X, work.X + work.Width - pixelWidth);
-            var y = Math.Clamp(centerY - pixelHeight / 2, work.Y, work.Y + work.Height - pixelHeight);
-            AppWindow.MoveAndResize(new RectInt32(x, y, pixelWidth, pixelHeight));
+            SetPreviewBounds(width, height);
         }
         catch (Exception ex)
         {
@@ -466,6 +513,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     private void ShellRoot_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key != VirtualKey.Escape && new[] { VirtualKey.Control, VirtualKey.Menu, VirtualKey.Shift, VirtualKey.LeftWindows, VirtualKey.RightWindows }
+            .Any(key => Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))) return;
         // 按钮与滑条保留自己的键盘交互；Esc 在任何焦点下都可以关闭预览。
         if (e.Key != VirtualKey.Escape && IsInteractiveSource(e.OriginalSource as DependencyObject)) return;
         if (HandleKey(e.Key)) e.Handled = true;
@@ -475,7 +524,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         while (node != null)
         {
-            if (node is Slider || node is Button button && button != KeyCatcher) return true;
+            if (node is Slider or TextBox or ComboBox || node is Button button && button != KeyCatcher) return true;
             node = VisualTreeHelper.GetParent(node);
         }
         return false;
@@ -485,7 +534,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     /// <summary>
     /// 窗口级的按键：空格 / Esc 关闭，← → 切换文件，Enter 用默认程序打开。
-    /// PDF 时 ↑ ↓ 与 PageUp / PageDown 滚动页面，其它情况下 ↑ ↓ 同样切换文件。
+    /// ↑ ↓ 与 PageUp / PageDown 滚动当前内容，避免同一按键随文件类型变成切换文件。
     /// 返回是否已处理。WebView2 里的按键也走这里（它是独立窗口，按键不经过 PreviewKeyDown）。
     /// </summary>
     private bool HandleKey(VirtualKey key)
@@ -521,11 +570,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                 TextView.ChangeView(null, TextView.VerticalOffset + (key == VirtualKey.PageDown ? TextView.ViewportHeight * 0.9 : 60), null);
                 return true;
             case VirtualKey.Up or VirtualKey.PageUp:
-                _ = StepFileAsync(-1);
-                return true;
             case VirtualKey.Down or VirtualKey.PageDown:
-                _ = StepFileAsync(1);
-                return true;
+                return ScrollActiveContent(key);
             default:
                 return false;
         }
@@ -589,10 +635,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
         ReleaseContent();
         _contentSize = null;
-        _folderStats = null;
         ShowLoading();
         UpdateHeader(path);
         UpdateFooter(path);
+        ConfigurePresentation(path);
 
         try
         {
@@ -603,10 +649,16 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     break;
 
                 case Kind.Image:
+                    if (path.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await LoadSvgAsync(path, token);
+                        break;
+                    }
                     var bitmap = new BitmapImage(ToFileUri(path));
                     bitmap.ImageOpened += (_, _) => OnContentSized(token, path, bitmap.PixelWidth, bitmap.PixelHeight);
+                    bitmap.ImageFailed += (_, e) => { if (token == _loadToken) ImageView_ImageFailed(ImageView, e); };
                     ImageView.Source = bitmap;
-                    ShowOnly(ImageView);
+                    ShowOnly(ImageSurface);
                     break;
 
                 case Kind.Pdf:
@@ -618,6 +670,14 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     break;
 
                 case Kind.OfficeText:
+                    if (path.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var cancellation = _contentCancellation.Token;
+                        var workbook = await Task.Run(() => OfficeTextExtractor.ReadWorkbook(path, cancellation));
+                        if (token != _loadToken) return;
+                        ShowWorkbook(workbook);
+                        break;
+                    }
                     var officeText = await Task.Run(() => OfficeTextExtractor.Extract(path));
                     if (token != _loadToken) return;
                     if (officeText == null)
@@ -628,27 +688,68 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     SetTextPresentation(wrap: true, "Segoe UI");
                     TextBody.Text = officeText;
                     ShowOnly(TextView);
-                    ApplyWindowSize(null, null, large: true);
+                    ViewStatus.Text = path.EndsWith(".pptx", StringComparison.OrdinalIgnoreCase) ? "逐页文字大纲" : "文字预览";
+                    FitTextWindow(760);
                     break;
 
                 case Kind.StructuredText:
-                case Kind.Archive:
+                    if (Path.GetExtension(path).ToLowerInvariant() is ".csv" or ".tsv")
+                    {
+                        try
+                        {
+                            var table = await Task.Run(() => PreviewDataReader.ReadDelimited(path));
+                            if (token != _loadToken) return;
+                            ShowWorkbook(new[] { table });
+                        }
+                        catch (FormatException ex)
+                        {
+                            if (token != _loadToken) return;
+                            await ShowRawTextAsync(path, token, ex.Message);
+                        }
+                        break;
+                    }
                     var structuredText = await Task.Run(() => StructuredPreviewExtractor.Extract(path));
                     if (token != _loadToken) return;
                     if (structuredText == null)
                     {
-                        ShowUnsupported(path);
+                        await ShowRawTextAsync(path, token, "原文预览：文件较大或格式解析失败");
                         return;
                     }
                     SetTextPresentation(wrap: false, "Cascadia Mono");
+                    if (structuredText.Length > MaxTextBytes)
+                        structuredText = structuredText[..MaxTextBytes] + "\n\n… 格式化内容较长，仅显示前一部分。";
                     TextBody.Text = structuredText;
+                    _rawText = structuredText;
                     ShowOnly(TextView);
-                    ApplyWindowSize(null, null, large: true);
+                    FitTextWindow(860);
+                    break;
+
+                case Kind.Archive:
+                    await LoadEntriesAsync(path, token, archive: true);
                     break;
 
                 case Kind.Media:
                     var file = await StorageFile.GetFileFromPathAsync(path);
                     if (token != _loadToken) return;
+                    if (IsAudio(path))
+                    {
+                        AudioInfo.Visibility = Visibility.Visible;
+                        AudioTitle.Text = Path.GetFileNameWithoutExtension(path);
+                        MediaView.Visibility = Visibility.Collapsed;
+                        SetPreviewBounds(540, 280);
+                    }
+                    else
+                    {
+                        AudioInfo.Visibility = Visibility.Collapsed;
+                        MediaView.Visibility = Visibility.Visible;
+                        try
+                        {
+                            var properties = await file.Properties.GetVideoPropertiesAsync();
+                            if (token != _loadToken) return;
+                            if (properties.Width > 0 && properties.Height > 0) ApplyWindowSize(properties.Width, properties.Height);
+                        }
+                        catch { /* Decoder reports natural dimensions after opening. */ }
+                    }
                     ShowOnly(MediaSurface);
                     OpenMedia(file, token, path);
                     break;
@@ -663,17 +764,30 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                         ShowFallback(path, isShortcut ? "快捷方式" : "二进制文件", "没有可用的预览器。按 Enter 用默认程序打开。");
                         return;
                     }
-                    var readable = Path.GetExtension(path).ToLowerInvariant() is ".txt" or ".md" or ".markdown" or ".srt" or ".vtt";
+                    _rawText = text;
+                    if (IsMarkdown(path))
+                    {
+                        var blocks = await Task.Run(() => MarkdownPreviewParser.Parse(text));
+                        if (token != _loadToken) return;
+                        RenderMarkdown(blocks);
+                        break;
+                    }
+                    var readable = IsReadableText(path);
                     SetTextPresentation(readable, readable ? "Segoe UI" : "Consolas");
                     TextBody.Text = text;
                     ShowOnly(TextView);
-                    ApplyWindowSize(null, null, large: true);
+                    FitTextWindow(readable ? 720 : 860);
                     break;
 
                 default:
                     ShowUnsupported(path);
                     break;
             }
+        }
+        catch (OperationCanceledException) { }
+        catch (UnauthorizedAccessException)
+        {
+            if (token == _loadToken) ShowFallback(path, "没有读取权限", "无法读取此文件。可用默认程序打开。");
         }
         catch (Exception ex)
         {
@@ -692,20 +806,25 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         TextBody.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily(font);
     }
 
-    /// <summary>视频打开后取它的分辨率来定窗口大小；纯音频没有画面，保持默认尺寸。</summary>
+    /// <summary>媒体解码就绪后确定尺寸；淡入结束再开始播放，避免播放启动与揭示争抢绘制。</summary>
     private void OnMediaOpened(MediaPlayer sender, object args)
     {
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!IsCurrentMedia(sender)) return;
             var session = sender.PlaybackSession;
+            _mediaReady = true;
             var width = session.NaturalVideoWidth;
             var height = session.NaturalVideoHeight;
             UpdateMediaProgress();
+            UpdateHeader(_mediaPath);
             if (width > 0 && height > 0)
                 OnContentSized(_mediaLoadToken, _mediaPath, (int)width, (int)height);
             else
-                ApplyWindowSize(null, null);
+                SetPreviewBounds(540, 220);
+            ShowOnly(MediaSurface);
+            RevealWhenReady();
+            if (_revealed && !_previewAnimator.IsBusy) TryStartMediaPlayback();
         });
     }
 
@@ -799,9 +918,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         if (_pdf == null || _pdfImages.Count == 0 || !PdfView.IsLoaded) return;
 
-        var viewTop = PdfView.VerticalOffset;
-        var viewBottom = viewTop + PdfView.ViewportHeight;
-        var margin = PdfView.ViewportHeight;
+        var viewTop = PdfView.VerticalOffset / PdfView.ZoomFactor;
+        var viewBottom = viewTop + PdfView.ViewportHeight / PdfView.ZoomFactor;
+        var margin = PdfView.ViewportHeight / PdfView.ZoomFactor;
 
         var firstVisible = -1;
         for (var i = 0; i < _pdfImages.Count; i++)
@@ -886,8 +1005,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// <summary>视口附近第一个还没渲染的页，没有则返回 -1。</summary>
     private int FirstUnrenderedNearView()
     {
-        var viewTop = PdfView.VerticalOffset;
-        var viewBottom = viewTop + PdfView.ViewportHeight;
+        var viewTop = PdfView.VerticalOffset / PdfView.ZoomFactor;
+        var viewBottom = viewTop + PdfView.ViewportHeight / PdfView.ZoomFactor;
         for (var i = 0; i < _pdfImages.Count; i++)
         {
             if (_pdfTops[i] + _pdfHeights[i] < viewTop) continue;
@@ -925,9 +1044,31 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                 _htmlHooked = true;
             }
 
-            ShowOnly(HtmlView);
-            HtmlView.Source = ToFileUri(path);
-            ApplyWindowSize(null, null, large: true);
+            HtmlView.DefaultBackgroundColor = ThemeService.EffectiveTheme == ElementTheme.Dark
+                ? Windows.UI.Color.FromArgb(255, 32, 32, 32) : Windows.UI.Color.FromArgb(255, 250, 250, 250);
+            if (_htmlNavigationCompleted != null) core.NavigationCompleted -= _htmlNavigationCompleted;
+            if (_htmlNavigationStarting != null) core.NavigationStarting -= _htmlNavigationStarting;
+            ulong navigationId = 0;
+            var targetUri = ToFileUri(path);
+            _htmlNavigationStarting = (_, args) =>
+            {
+                if (_isOpen && token == _loadToken && string.Equals(args.Uri, targetUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) navigationId = args.NavigationId;
+            };
+            _htmlNavigationCompleted = (_, args) =>
+            {
+                if (!_isOpen || token != _loadToken || navigationId == 0 || args.NavigationId != navigationId) return;
+                core.NavigationCompleted -= _htmlNavigationCompleted;
+                core.NavigationStarting -= _htmlNavigationStarting;
+                _htmlNavigationCompleted = null;
+                _htmlNavigationStarting = null;
+                if (args.IsSuccess) { ShowOnly(HtmlView); RevealWhenReady(); }
+                else ShowFallback(path, "网页加载失败", "用默认程序打开以查看此文件。");
+            };
+            core.NavigationStarting += _htmlNavigationStarting;
+            core.NavigationCompleted += _htmlNavigationCompleted;
+            HtmlView.Source = targetUri;
+            SetPreviewBounds(900, 640);
+            _ = CheckHtmlTimeoutAsync(token, _contentCancellation.Token);
         }
         catch (Exception ex)
         {
@@ -938,12 +1079,28 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     }
 
     private bool _htmlHooked;
+    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2NavigationCompletedEventArgs>? _htmlNavigationCompleted;
+    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2NavigationStartingEventArgs>? _htmlNavigationStarting;
+
+    private async Task CheckHtmlTimeoutAsync(int token, CancellationToken cancellation)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellation);
+            if (_isOpen && token == _loadToken && _htmlNavigationCompleted != null)
+                ShowFallback(CurrentPath, "网页加载超时", "用默认程序打开以查看此文件。");
+        }
+        catch (OperationCanceledException) { }
+    }
 
     /// <summary>
     /// 注入到网页的脚本：只拦截预览需要的键（空格、Esc、← → 、Enter），其余按键（包括 ↑ ↓ 滚动）保持网页原样。
     /// </summary>
     private const string HtmlKeyScript = @"
 document.addEventListener('keydown', function (e) {
+  var target = e.target;
+  if (e.key !== 'Escape' && target && (target.isContentEditable || target.closest('input,textarea,select,button,a,[role=""slider""]'))) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
   var keys = ['Escape', ' ', 'ArrowLeft', 'ArrowRight', 'Enter'];
   if (keys.indexOf(e.key) >= 0) {
     e.preventDefault();
@@ -1025,80 +1182,17 @@ document.addEventListener('keydown', function (e) {
         ShowFallback(CurrentPath, "无法显示此图片", "系统没有这个格式的解码器。按 Enter 用默认程序打开。");
     }
 
-    /// <summary>
-    /// 文件夹：显示图标、名称，以及与资源管理器属性页一致的摘要（修改时间、总大小、目录数、文件数）。
-    /// 统计在后台线程递归进行，期间先显示「正在计算」，完成后回填；切换到别的文件时结果被丢弃。
-    /// </summary>
-    private void ShowFolder(string path, int token)
-    {
-        ShowOnly(FallbackPanel);
-        FallbackTitle.Text = Path.GetFileName(path.TrimEnd('\\', '/'));
-        FallbackHint.Text = "正在计算文件夹大小…";
-        ApplyWindowSize(null, null);
-        _ = LoadFallbackIconAsync(path, token);
-        _ = ComputeFolderAsync(path, token);
-    }
-
-    private async Task ComputeFolderAsync(string path, int token)
-    {
-        try
-        {
-            var stats = await Task.Run(() => ComputeFolderStats(path));
-            if (!_isOpen || token != _loadToken) return;
-
-            _folderStats = stats;
-            UpdateHeader(path);
-            FallbackHint.Text = $"含 {stats.Directories} 个目录和 {stats.Files} 个文件\n按 Enter 或点击“打开”进入文件夹。";
-        }
-        catch (Exception ex)
-        {
-            ErrorReporter.Log($"FilePreviewWindow.ComputeFolder({path})", ex);
-            if (token == _loadToken) FallbackHint.Text = "无法统计此文件夹（可能没有访问权限）。按 Enter 用资源管理器打开。";
-        }
-    }
-
-    /// <remarks>
-    /// 跳过重解析点（符号链接、联接），否则可能绕回来统计同一批文件；无权限的子目录直接跳过，不中断统计。
-    /// 文件大小直接取枚举时拿到的元数据，不再为每个文件单独打开。
-    /// </remarks>
-    private static FolderStats ComputeFolderStats(string path)
-    {
-        var options = new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            ReturnSpecialDirectories = false,
-            AttributesToSkip = System.IO.FileAttributes.ReparsePoint,
-        };
-
-        long bytes = 0, directories = 0, files = 0;
-        foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos("*", options))
-        {
-            if (entry is DirectoryInfo)
-            {
-                directories++;
-            }
-            else if (entry is FileInfo file)
-            {
-                files++;
-                bytes += file.Length;
-            }
-        }
-        return new FolderStats(bytes, directories, files);
-    }
-
     private void ShowFallback(string path, string title, string hint)
     {
         var token = ++_loadToken;
         ReleaseContent();
         _contentSize = null;
-        _folderStats = null;
         FallbackTitle.Text = title;
         FallbackHint.Text = hint;
         ShowOnly(FallbackPanel);
         UpdateHeader(path);
         UpdateFooter(path);
-        ApplyWindowSize(null, null);
+        SetPreviewBounds(520, 280);
         _ = LoadFallbackIconAsync(path, token);
     }
 
@@ -1125,8 +1219,8 @@ document.addEventListener('keydown', function (e) {
     private void ShowLoading()
     {
         ShowOnly(null);
-        LoadingRing.Visibility = Visibility.Visible;
-        LoadingRing.IsActive = true;
+        var token = _loadToken;
+        _ = ShowDelayedLoadingAsync(token);
     }
 
     /// <summary>内容区只保留 <paramref name="view"/> 可见；传 null 表示只显示加载环。</summary>
@@ -1137,6 +1231,7 @@ document.addEventListener('keydown', function (e) {
 
         LoadingRing.IsActive = false;
         LoadingRing.Visibility = Visibility.Collapsed;
+        if (view != null && view != ImageSurface && view != HtmlView && view != MediaSurface) RevealWhenReady();
     }
 
     /// <summary>标题栏：文件名 + 大小；图片、视频再加像素尺寸（QuickLook 的显示方式）。</summary>
@@ -1148,19 +1243,18 @@ document.addEventListener('keydown', function (e) {
         ToolTipService.SetToolTip(TitleText, path);
         var parts = new List<string>();
         parts.Add(Directory.Exists(path) ? "文件夹" : Path.GetExtension(path).TrimStart('.').ToUpperInvariant() is { Length: > 0 } ext ? $"{ext} 文件" : "文件");
-        if (Directory.Exists(path))
-        {
-            // 文件夹：统计没完成前不显示大小，免得先出现一个错的 0 字节。
-            if (_folderStats is { } stats) parts.Add(FormatSize(stats.Bytes));
-        }
-        else
+        if (!Directory.Exists(path))
         {
             parts.Add(FormatSize(new FileInfo(path).Length));
         }
         if (_contentSize is { } size) parts.Add($"{size.Width} × {size.Height}");
+        if (_previewPlayer?.PlaybackSession.NaturalDuration.TotalSeconds is > 0 and var seconds)
+            parts.Add(FormatMediaTime(seconds));
         var modified = Directory.Exists(path) ? new DirectoryInfo(path).LastWriteTime : new FileInfo(path).LastWriteTime;
-        parts.Add($"修改于 {modified:yyyy-MM-dd HH:mm}");
-        MetaText.Text = string.Join("   ·   ", parts);
+        if (Directory.Exists(path) && _folderStats is { } stats) parts.Add(FormatSize(stats.Bytes));
+        _baseMetaText = string.Join(" · ", parts);
+        _modifiedText = $"修改于 {modified:yyyy-MM-dd HH:mm}";
+        UpdateCompactHeader();
     }
 
     /// <summary>页脚放 PDF 页码和文件序号，修改时间统一在标题信息行显示。</summary>
@@ -1168,11 +1262,12 @@ document.addEventListener('keydown', function (e) {
     {
         if (string.IsNullOrEmpty(path)) return;
 
-        var position = $"{_index + 1} / {_paths.Count}";
+        var position = _paths.Count > 1 ? $"{_index + 1} / {_paths.Count}" : "";
         var pages = _pdfPath != null && string.Equals(_pdfPath, path, StringComparison.OrdinalIgnoreCase) && _pdf != null
             ? $"   第 {_pdfPage + 1} / {_pdf.PageCount} 页"
             : "";
-        FooterText.Text = $"{pages.Trim()}" + (pages.Length > 0 ? "   ·   " : "") + position;
+        FooterText.Text = pages.Trim() + (pages.Length > 0 && position.Length > 0 ? "   ·   " : "") + position;
+        UpdateShortcutHints();
     }
 
     /// <summary>图片 / 视频的像素尺寸已知：更新标题栏并按尺寸调整窗口。只接受仍是当前文件的结果。</summary>
@@ -1184,6 +1279,9 @@ document.addEventListener('keydown', function (e) {
             _contentSize = (width, height);
             UpdateHeader(path);
             ApplyWindowSize(width, height);
+            FitImageSurface();
+            if (ImageSurface.Visibility == Visibility.Visible) ShowOnly(ImageSurface);
+            RevealWhenReady();
         });
     }
 

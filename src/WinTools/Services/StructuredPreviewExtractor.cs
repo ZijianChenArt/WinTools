@@ -48,10 +48,8 @@ internal static class StructuredPreviewExtractor
     {
         var text = ReadLimitedText(path);
         if (text == null) return null;
-        var document = XDocument.Parse(text, LoadOptions.PreserveWhitespace);
-        return document.ToString(SaveOptions.DisableFormatting) == text
-            ? document.ToString(SaveOptions.None)
-            : document.ToString(SaveOptions.None);
+        var document = XDocument.Parse(text);
+        return document.ToString(SaveOptions.None);
     }
 
     private static string? ExtractDelimited(string path, char? forcedDelimiter)

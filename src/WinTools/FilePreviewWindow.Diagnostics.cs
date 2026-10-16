@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
@@ -31,19 +32,24 @@ public sealed partial class FilePreviewWindow
         {
             _capturingPreviewLayouts = true;
             await Task.Delay(2500);
-            foreach (var name in new[] { "sample.txt", "sample.zip", "sample.blend", "sample.mp4", "portrait.mp4" })
+            foreach (var name in new[] { "sample.md", "sample.txt", "empty.txt", "sample.zip", "small.zip", "empty.zip", "sample-folder",
+                "data.csv", "book.xlsx", "data.json", "broken.json", "large.json", "sample.docx", "slides.pptx", "sample.html", "sample.pdf", "sample.svg", "tiny.png", "sample.blend", "sample.wav", "sample.mp4", "portrait.mp4" })
             {
                 var path = Path.Combine(root, name);
-                if (!File.Exists(path)) continue;
+                if (!File.Exists(path) && !Directory.Exists(path)) continue;
                 _paths = new[] { path };
                 _index = 0;
                 Present();
+                var loadingClock = Stopwatch.StartNew();
                 await LoadCurrentAsync();
+                var loadMs = loadingClock.Elapsed.TotalMilliseconds;
                 await Task.Delay(1800);
-                foreach (var width in new[] { 420, 960 })
+                var naturalWidth = AppWindow.Size.Width / CurrentScale();
+                var naturalHeight = AppWindow.Size.Height / CurrentScale();
+                foreach (var width in new[] { 0, 420, 960 })
                 {
                     var scale = CurrentScale();
-                    AppWindow.Resize(new SizeInt32((int)(width * scale), (int)(480 * scale)));
+                    if (width > 0) AppWindow.Resize(new SizeInt32((int)(width * scale), (int)(480 * scale)));
                     await Task.Delay(400);
                     ShellRoot.UpdateLayout();
                     var bitmap = new RenderTargetBitmap();
@@ -63,24 +69,47 @@ public sealed partial class FilePreviewWindow
                     File.Copy(file.Path, Path.Combine(root, $"{name}-{width}.png"), true);
                     var controls = new Dictionary<string, object>();
                     foreach (var element in new FrameworkElement[] { HeaderBar, TitleText, MetaText, ContentHost,
-                        TextView, TextBody, MediaSurface, MediaBar, PlayButton, SeekSlider, MediaTimeText, MuteButton,
+                        PreviewToolbar, SourceButton, WrapButton, SheetSelector, ViewStatus, ReadingView, ReadingBody, ListSurface, EntryList,
+                        TableSurface, TableRows, TableEmpty, ImageSurface, TextView, TextBody, HtmlView, LoadingRing, MediaSurface, MediaBar, PlayButton, SeekSlider, MediaTimeText, MuteButton,
                         VolumeSlider, FooterBar, HintText, FooterText })
                     {
                         var origin = element.TransformToVisual(ShellRoot).TransformPoint(new Windows.Foundation.Point());
                         controls[element.Name] = new { origin.X, origin.Y, Width = element.ActualWidth, Height = element.ActualHeight,
                             Visible = element.Visibility == Visibility.Visible };
                     }
-                    reports.Add(new { name, width, RootWidth = ShellRoot.ActualWidth, RootHeight = ShellRoot.ActualHeight,
+                    reports.Add(new { name, width, naturalWidth, naturalHeight, RootWidth = ShellRoot.ActualWidth, RootHeight = ShellRoot.ActualHeight,
+                        Status = ViewStatus.Text, Entries = EntryList.Items.Count, Rows = TableRows.Items.Count, loadMs,
+                        AnimationsEnabled, AnimationBusy = _previewAnimator.IsBusy, _previewAnimator.LastDurationMs,
+                        _previewAnimator.LastMaxFrameGapMs, _previewAnimator.LastFrameCount,
+                        HtmlSource = HtmlView.CoreWebView2?.Source,
+                        HtmlReady = name.EndsWith(".html") && HtmlView.CoreWebView2 != null
+                            ? await HtmlView.CoreWebView2.ExecuteScriptAsync("JSON.stringify({ready:document.readyState,title:document.title,text:document.body?document.body.innerText.slice(0,100):''})") : null,
                         Text = TextBody.Text[..Math.Min(TextBody.Text.Length, 160)], ExtentWidth = TextView.ExtentWidth,
                         TextViewportWidth = TextView.ViewportWidth, Media = _previewPlayer?.PlaybackSession.PlaybackState.ToString(),
                         Duration = _previewPlayer?.PlaybackSession.NaturalDuration.TotalSeconds, controls });
                 }
-                HideWindow();
+                HideWindow(immediate: true);
             }
+            // Static render/lifecycle checks only: no mouse, keyboard, hover, or progress interactions.
+            var managedBefore = GC.GetTotalMemory(forceFullCollection: true);
+            for (var repeat = 0; repeat < 12; repeat++)
+            {
+                _paths = new[] { Path.Combine(root, "small.zip") }; _index = 0;
+                Present(); await LoadCurrentAsync(); await Task.Delay(180);
+                HideWindow(immediate: true);
+            }
+            await Task.Delay(300);
+            File.WriteAllText(Path.Combine(root, "lifecycle-report.json"), JsonSerializer.Serialize(new
+            {
+                ManagedBefore = managedBefore, ManagedAfter = GC.GetTotalMemory(forceFullCollection: true),
+                PrivateBytes = Process.GetCurrentProcess().PrivateMemorySize64,
+                AnimationBusy = _previewAnimator.IsBusy, MediaTimerRunning = _mediaTimer?.IsRunning,
+                Loading = LoadingRing.IsActive, NativeRowsRetained = EntryList.Items.Count,
+            }, new JsonSerializerOptions { WriteIndented = true }));
             File.WriteAllText(Path.Combine(root, "layout-report.json"), JsonSerializer.Serialize(reports, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex) { File.WriteAllText(Path.Combine(root, "capture-error.txt"), ex.ToString()); }
-        finally { _capturingPreviewLayouts = false; HideWindow(); }
+        finally { _capturingPreviewLayouts = false; HideWindow(immediate: true); }
     }
 }
 #endif

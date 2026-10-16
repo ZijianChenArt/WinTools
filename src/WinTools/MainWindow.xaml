@@ -105,6 +105,12 @@
             </NavigationView.Resources>
 
             <NavigationView.MenuItems>
+                <NavigationViewItemHeader x:Name="NavGroupDesktop" Content="桌面与窗口"
+                                          Style="{StaticResource NavigationGroupHeaderStyle}"/>
+                <NavigationViewItemHeader x:Name="NavGroupFiles" Content="文件与应用"
+                                          Style="{StaticResource NavigationGroupHeaderStyle}"/>
+                <NavigationViewItemHeader x:Name="NavGroupInput" Content="输入辅助"
+                                          Style="{StaticResource NavigationGroupHeaderStyle}"/>
                 <NavigationViewItem x:Name="NavItemThreeFingerDrag" Tag="ThreeFingerDrag">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="{x:Bind local:FeatureIcons.ThreeFingerDrag}" FontFamily="{x:Bind local:FeatureIcons.FontFamily}"/>

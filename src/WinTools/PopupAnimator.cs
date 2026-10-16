@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Windows.Graphics;
@@ -14,24 +16,40 @@ namespace WinTools;
 /// </summary>
 internal sealed class PopupAnimator
 {
-    private const int OpenDurationMs = 250;
-    private const int CloseDurationMs = 150;
-    private const int SlideDip = 12;
+    private readonly int _openDurationMs;
+    private readonly int _closeDurationMs;
+    private readonly int _slideDip;
+    private readonly bool _independentOpacity;
+    private readonly object _opacityGate = new();
+    private CancellationTokenSource? _opacityCancellation;
 
     private readonly Window _window;
+    internal event Action? Revealed;
+#if DEBUG
+    internal double LastDurationMs { get; private set; }
+    internal double LastMaxFrameGapMs { get; private set; }
+    internal int LastFrameCount { get; private set; }
+#endif
     private DispatcherQueueTimer? _timer;
     private bool _revealPending;
-    private byte _alpha = 255;
+    private volatile byte _alpha = 255;
     private int _restY;
     private int _slidePx;
 
-    internal PopupAnimator(Window window) => _window = window;
+    internal PopupAnimator(Window window, int openDurationMs = 250, int closeDurationMs = 150, int slideDip = 12, bool independentOpacity = false)
+    {
+        _window = window;
+        _openDurationMs = openDurationMs;
+        _closeDurationMs = closeDurationMs;
+        _slideDip = slideDip;
+        _independentOpacity = independentOpacity;
+    }
 
     /// <summary>正在播放收起动画。</summary>
     internal bool IsHiding { get; private set; }
 
     /// <summary>已准备或正在播放动画；此期间窗口位置由动画控制，调用方不应把移动当成用户拖动。</summary>
-    internal bool IsBusy => _revealPending || _timer != null;
+    internal bool IsBusy => _revealPending || _timer != null || _opacityCancellation != null;
 
     /// <summary>滑入的起点 Y（物理像素）：窗口应先放在这里再显示。</summary>
     internal int RevealStartY => _restY + _slidePx;
@@ -49,15 +67,15 @@ internal sealed class PopupAnimator
 
     /// <summary>窗口露面前把整窗透明度压到 0，避免显示时闪一帧实体窗口或白底。</summary>
     /// <param name="restY">动画终点 Y（物理像素）。</param>
-    internal void PrepareReveal(int restY, double scale)
+    internal void PrepareReveal(int restY, double scale, byte initialAlpha = 0)
     {
         Stop();
         IsHiding = false;
         _revealPending = true;
         _restY = restY;
-        _slidePx = (int)Math.Round(SlideDip * scale);
+        _slidePx = (int)Math.Round(_slideDip * scale);
         SetLayered(true);
-        SetAlpha(0);
+        SetAlpha(initialAlpha);
     }
 
     /// <summary>从 <see cref="RevealStartY"/> 滑到终点并淡入。应在内容渲染出第一帧之后调用，否则前段淡入的是空白表面。</summary>
@@ -65,8 +83,8 @@ internal sealed class PopupAnimator
     {
         if (!_revealPending) return; // 期间已被 Reset 或收起，放弃这次入场
         _revealPending = false;
-        Animate(RevealStartY, _restY, _alpha, 255, OpenDurationMs, EaseOut,
-            () => SetLayered(false)); // 终点不透明：立刻摘掉分层，把 Mica 还回来
+        Animate(RevealStartY, _restY, _alpha, 255, _openDurationMs, EaseOut,
+            () => { SetLayered(false); Revealed?.Invoke(); }); // 终点不透明：立刻摘掉分层，把 Mica 还回来
     }
 
     /// <summary>下沉淡出，结束后调用 <paramref name="hide"/> 真正隐藏窗口。</summary>
@@ -76,9 +94,9 @@ internal sealed class PopupAnimator
         var fromY = _window.AppWindow.Position.Y;
         var baseY = IsBusy ? _restY : fromY;
         _revealPending = false;
-        _slidePx = (int)Math.Round(SlideDip * scale);
+        _slidePx = (int)Math.Round(_slideDip * scale);
         IsHiding = true;
-        Animate(fromY, baseY + _slidePx, _alpha, 0, CloseDurationMs, EaseIn, () =>
+        Animate(fromY, baseY + _slidePx, _alpha, 0, _closeDurationMs, EaseIn, () =>
         {
             IsHiding = false;
             hide();
@@ -104,6 +122,12 @@ internal sealed class PopupAnimator
 
     internal void Stop()
     {
+        lock (_opacityGate)
+        {
+            _opacityCancellation?.Cancel();
+            _opacityCancellation?.Dispose();
+            _opacityCancellation = null;
+        }
         _timer?.Stop();
         _timer = null;
         if (_rendering != null)
@@ -125,16 +149,36 @@ internal sealed class PopupAnimator
         {
             SetLayered(true);
             SetAlpha(fromAlpha);
+            if (_independentOpacity && fromY == toY)
+            {
+                AnimateOpacity(fromAlpha, toAlpha, durationMs, ease, completed);
+                return;
+            }
             var x = _window.AppWindow.Position.X;
-            var clock = Stopwatch.StartNew();
+            // Start at the first real animation tick. Starting at scheduling time lets cold layout/decode
+            // consume the whole duration before a frame is drawn, turning a fade into a sudden reveal.
+            var clock = new Stopwatch();
+#if DEBUG
+            LastDurationMs = LastMaxFrameGapMs = 0;
+            LastFrameCount = 0;
+            double previousFrame = 0;
+#endif
             var timer = _window.DispatcherQueue.CreateTimer();
             _timer = timer;
-            var lastY = int.MinValue;
+            var lastY = fromY;
             byte lastAlpha = fromAlpha;
             void Step()
             {
+                if (!clock.IsRunning) clock.Start();
                 var progress = Math.Clamp(clock.Elapsed.TotalMilliseconds / durationMs, 0, 1);
                 var eased = ease(progress);
+#if DEBUG
+                var frameTime = clock.Elapsed.TotalMilliseconds;
+                LastMaxFrameGapMs = Math.Max(LastMaxFrameGapMs, frameTime - previousFrame);
+                previousFrame = frameTime;
+                LastFrameCount++;
+                LastDurationMs = frameTime;
+#endif
                 var y = (int)Math.Round(fromY + (toY - fromY) * eased);
                 var alpha = (byte)Math.Round(fromAlpha + (toAlpha - fromAlpha) * eased);
                 if (y != lastY) { _window.AppWindow.Move(new PointInt32(x, y)); lastY = y; }
@@ -157,6 +201,70 @@ internal sealed class PopupAnimator
             try { _window.AppWindow.Move(new PointInt32(_window.AppWindow.Position.X, toY)); } catch { /* ignore */ }
             completed();
         }
+    }
+
+    /// <summary>Only native HWND opacity is touched off the UI thread. Uses a bounded thread-pool task,
+    /// no permanent thread, bitmap cache, XAML access, or UI timer.</summary>
+    private void AnimateOpacity(byte fromAlpha, byte toAlpha, int durationMs, Func<double, double> ease, Action completed)
+    {
+        var hwnd = Hwnd;
+        var queue = _window.DispatcherQueue;
+        var source = new CancellationTokenSource();
+        var cancellation = source.Token;
+        _opacityCancellation = source;
+#if DEBUG
+        LastDurationMs = LastMaxFrameGapMs = 0;
+        LastFrameCount = 0;
+#endif
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var clock = Stopwatch.StartNew();
+#if DEBUG
+                double previous = 0;
+#endif
+                while (!cancellation.IsCancellationRequested)
+                {
+                    var elapsed = clock.Elapsed.TotalMilliseconds;
+                    var progress = Math.Clamp(elapsed / durationMs, 0, 1);
+                    var alpha = (byte)Math.Round(fromAlpha + (toAlpha - fromAlpha) * ease(progress));
+                    lock (_opacityGate)
+                    {
+                        if (cancellation.IsCancellationRequested) return;
+                        if (_alpha != alpha)
+                        {
+                            SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+                            _alpha = alpha;
+                        }
+                    }
+#if DEBUG
+                    LastMaxFrameGapMs = Math.Max(LastMaxFrameGapMs, elapsed - previous);
+                    previous = elapsed;
+                    LastDurationMs = elapsed;
+                    LastFrameCount++;
+#endif
+                    if (progress >= 1) break;
+                    await Task.Delay(8, cancellation).ConfigureAwait(false);
+                }
+                queue.TryEnqueue(() =>
+                {
+                    if (!ReferenceEquals(_opacityCancellation, source)) return;
+                    lock (_opacityGate) { _opacityCancellation = null; source.Dispose(); }
+                    completed();
+                });
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Services.ErrorReporter.Log("PopupAnimator.Opacity", ex);
+                queue.TryEnqueue(() =>
+                {
+                    if (!ReferenceEquals(_opacityCancellation, source)) return;
+                    Stop(); SetAlpha(toAlpha); completed();
+                });
+            }
+        });
     }
 
     private void SetLayered(bool layered)

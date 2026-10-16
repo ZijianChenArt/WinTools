@@ -21,6 +21,8 @@ public sealed partial class FilePreviewWindow
     private string _mediaPath = "";
     private double _mediaVolume = 1;
     private bool _mediaMuted;
+    private bool _mediaReady;
+    private bool _autoPlayPending;
 
     private void InitializeMediaControls()
     {
@@ -37,7 +39,9 @@ public sealed partial class FilePreviewWindow
     {
         _mediaLoadToken = token;
         _mediaPath = path;
-        var player = new MediaPlayer { AutoPlay = true, Volume = _mediaVolume, IsMuted = _mediaMuted };
+        var player = new MediaPlayer { AutoPlay = false, Volume = _mediaVolume, IsMuted = _mediaMuted };
+        _mediaReady = false;
+        _autoPlayPending = true;
         _previewPlayer = player;
         player.MediaOpened += OnMediaOpened;
         player.MediaFailed += OnMediaFailed;
@@ -56,6 +60,8 @@ public sealed partial class FilePreviewWindow
         var player = _previewPlayer;
         _previewPlayer = null;
         _mediaPath = "";
+        _mediaReady = false;
+        _autoPlayPending = false;
         _seeking = false;
         if (player == null) return;
         player.MediaOpened -= OnMediaOpened;
@@ -101,6 +107,7 @@ public sealed partial class FilePreviewWindow
 
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
+        _autoPlayPending = false;
         var player = _previewPlayer;
         if (player == null) return;
         if (player.PlaybackSession.PlaybackState == MediaPlaybackState.Playing) player.Pause();
@@ -144,5 +151,12 @@ public sealed partial class FilePreviewWindow
     {
         // 窄窗口优先保留进度和时间，音量仍可通过静音按钮控制。
         VolumeSlider.Visibility = e.NewSize.Width >= 480 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void TryStartMediaPlayback()
+    {
+        if (!_autoPlayPending || !_mediaReady || _previewPlayer is not { } player || !IsCurrentMedia(player)) return;
+        _autoPlayPending = false;
+        player.Play();
     }
 }

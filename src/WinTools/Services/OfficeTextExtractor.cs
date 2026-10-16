@@ -15,6 +15,17 @@ namespace WinTools.Services;
 /// </summary>
 internal static class OfficeTextExtractor
 {
+    private static XDocument LoadXml(Stream input)
+    {
+        using var reader = System.Xml.XmlReader.Create(input, new System.Xml.XmlReaderSettings
+        {
+            DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = 8 * 1024 * 1024,
+        });
+        return XDocument.Load(reader);
+    }
+
     /// <summary>输出超过这个长度就截断，避免一个大表格把文本框撑爆。</summary>
     private const int MaxChars = 200_000;
 
@@ -54,33 +65,19 @@ internal static class OfficeTextExtractor
         if (entry == null) return null;
 
         using var stream = entry.Open();
-        var document = XDocument.Load(stream);
+        var document = LoadXml(stream);
         var body = document.Root?.Element(W + "body");
         if (body == null) return null;
 
-        // 按文档顺序遍历：段落换行、表格单元格用制表符分隔，文字、制表位、换行符各自对应。
+        // Preserve paragraph and table-row boundaries rather than joining all table cells into one line.
         var builder = new StringBuilder();
-        foreach (var element in body.Descendants())
+        foreach (var element in body.Elements())
         {
-            if (element.Name == W + "t")
+            if (element.Name == W + "p") builder.Append(ParagraphText(element)).Append('\n');
+            else if (element.Name == W + "tbl")
             {
-                builder.Append(element.Value);
-            }
-            else if (element.Name == W + "tab")
-            {
-                builder.Append('\t');
-            }
-            else if (element.Name == W + "br")
-            {
-                builder.Append('\n');
-            }
-            else if (element.Name == W + "tc")
-            {
-                builder.Append('\t');
-            }
-            else if (element.Name == W + "p" && !element.Ancestors(W + "tc").Any())
-            {
-                builder.Append('\n');
+                foreach (var row in element.Elements(W + "tr"))
+                    builder.Append(string.Join('\t', row.Elements(W + "tc").Select(cell => string.Join(' ', cell.Elements(W + "p").Select(ParagraphText))))).Append('\n');
             }
 
             if (builder.Length > MaxChars)
@@ -93,13 +90,30 @@ internal static class OfficeTextExtractor
         return builder.ToString().Trim('\n');
     }
 
+    private static string ParagraphText(XElement paragraph) => string.Concat(paragraph.Descendants().Select(node =>
+        node.Name == W + "t" ? node.Value : node.Name == W + "tab" ? "\t" : node.Name == W + "br" ? "\n" : ""));
+
     #endregion
 
     #region pptx
 
     private static string? ExtractPptx(ZipArchive zip)
     {
-        var slides = zip.Entries
+        var relationships = ReadRelationships(zip, "ppt/_rels/presentation.xml.rels");
+        var presentation = zip.GetEntry("ppt/presentation.xml");
+        var slides = new List<ZipArchiveEntry>();
+        if (presentation != null)
+        {
+            using var input = presentation.Open();
+            var document = LoadXml(input);
+            foreach (var slide in document.Descendants().Where(e => e.Name.LocalName == "sldId"))
+            {
+                var id = (string?)slide.Attribute(OfficeRel + "id");
+                if (id != null && relationships.TryGetValue(id, out var target)
+                    && zip.GetEntry(ResolvePartPath("ppt/", target)) is { } entry) slides.Add(entry);
+            }
+        }
+        if (slides.Count == 0) slides = zip.Entries
             .Where(entry => entry.FullName.StartsWith("ppt/slides/slide", StringComparison.OrdinalIgnoreCase)
                             && entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
             .OrderBy(entry => SlideNumber(entry.FullName))
@@ -110,8 +124,10 @@ internal static class OfficeTextExtractor
         for (var index = 0; index < slides.Count; index++)
         {
             using var stream = slides[index].Open();
-            var document = XDocument.Load(stream);
-            var texts = document.Descendants(A + "t").Select(node => node.Value.Trim())
+            var document = LoadXml(stream);
+            var paragraphs = document.Descendants(A + "p").ToArray();
+            var texts = (paragraphs.Length > 0 ? paragraphs.Select(p => string.Concat(p.Descendants(A + "t").Select(t => t.Value)))
+                : document.Descendants(A + "t").Select(node => node.Value)).Select(text => text.Trim())
                 .Where(value => value.Length > 0).ToList();
             builder.Append("【第 ").Append(index + 1).Append(" 页】\n");
             if (texts.Count > 0) builder.Append(string.Join('\n', texts)).Append('\n');
@@ -132,6 +148,52 @@ internal static class OfficeTextExtractor
 
     #region xlsx
 
+    internal static IReadOnlyList<PreviewTable> ReadWorkbook(string path, System.Threading.CancellationToken cancellation)
+    {
+        using var zip = ZipFile.OpenRead(path);
+        var workbookEntry = zip.GetEntry("xl/workbook.xml") ?? throw new FormatException("缺少工作簿目录。");
+        var sharedStrings = ReadSharedStrings(zip);
+        var relationships = ReadRelationships(zip, "xl/_rels/workbook.xml.rels");
+        using var input = workbookEntry.Open();
+        var workbook = LoadXml(input);
+        var tables = new List<PreviewTable>();
+        var totalChars = 0;
+        foreach (var sheet in workbook.Descendants(S + "sheet").Take(32))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var id = (string?)sheet.Attribute(OfficeRel + "id");
+            if (id == null || !relationships.TryGetValue(id, out var target)) continue;
+            var entry = zip.GetEntry(ResolvePartPath("xl/", target));
+            if (entry == null) continue;
+            using var stream = entry.Open();
+            var document = LoadXml(stream);
+            var rows = new List<string[]>();
+            var truncated = false;
+            foreach (var row in document.Descendants(S + "row"))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (rows.Count >= PreviewDataReader.MaxRows || totalChars >= MaxChars) { truncated = true; break; }
+                var cells = new List<string>();
+                foreach (var cell in row.Elements(S + "c"))
+                {
+                    var column = cell.Attribute("r") == null ? cells.Count : ColumnIndex((string?)cell.Attribute("r"));
+                    if (column < 0 || column >= PreviewDataReader.MaxColumns) { truncated = true; continue; }
+                    while (cells.Count <= column) cells.Add("");
+                    var text = CellText(cell, sharedStrings);
+                    cells[column] = text[..Math.Min(text.Length, 4096)];
+                    totalChars += cells[column].Length;
+                    truncated |= text.Length > 4096;
+                }
+                rows.Add(cells.ToArray());
+            }
+            tables.Add(new PreviewTable((string?)sheet.Attribute("name") ?? "工作表", rows, truncated));
+            if (totalChars >= MaxChars) break;
+        }
+        if (tables.Count > 0 && (workbook.Descendants(S + "sheet").Count() > tables.Count || totalChars >= MaxChars))
+            tables[^1] = tables[^1] with { Truncated = true };
+        return tables;
+    }
+
     private static string? ExtractXlsx(ZipArchive zip)
     {
         var workbookEntry = zip.GetEntry("xl/workbook.xml");
@@ -141,7 +203,7 @@ internal static class OfficeTextExtractor
         var relationships = ReadRelationships(zip, "xl/_rels/workbook.xml.rels");
 
         using var workbookStream = workbookEntry.Open();
-        var workbook = XDocument.Load(workbookStream);
+        var workbook = LoadXml(workbookStream);
 
         var builder = new StringBuilder();
         foreach (var sheet in workbook.Descendants(S + "sheet"))
@@ -171,7 +233,7 @@ internal static class OfficeTextExtractor
     private static void AppendSheet(ZipArchiveEntry entry, IReadOnlyList<string> sharedStrings, StringBuilder builder)
     {
         using var stream = entry.Open();
-        var sheet = XDocument.Load(stream);
+        var sheet = LoadXml(stream);
 
         var rowCount = 0;
         foreach (var row in sheet.Descendants(S + "row"))
@@ -227,7 +289,7 @@ internal static class OfficeTextExtractor
         if (entry == null) return result;
 
         using var stream = entry.Open();
-        var document = XDocument.Load(stream);
+        var document = LoadXml(stream);
         foreach (var item in document.Descendants(S + "si"))
             result.Add(string.Concat(item.Descendants(S + "t").Select(t => t.Value)));
         return result;
@@ -240,7 +302,7 @@ internal static class OfficeTextExtractor
         if (entry == null) return result;
 
         using var stream = entry.Open();
-        var document = XDocument.Load(stream);
+        var document = LoadXml(stream);
         foreach (var relationship in document.Descendants(PackageRel + "Relationship"))
         {
             var id = (string?)relationship.Attribute("Id");

@@ -258,35 +258,31 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         UpdateNavStatusIndicators();
 
+#if DEBUG
+        StartNavigationLayoutCapture();
+#endif
         // 桌面卡片由 App 在主窗口首帧完成后初始化，避免多窗口创建抢占首屏。
     }
 
     #region 初始化
     private void ApplyNavigationOrder()
     {
-
         MainNav.MenuItems.Clear();
-
+        MainNav.MenuItems.Add(NavGroupDesktop);
         MainNav.MenuItems.Add(NavItemDesktopOrganize);
-
-        MainNav.MenuItems.Add(NavItemDesktopClick);
-
-        MainNav.MenuItems.Add(NavItemSpacePreview);
-
-        MainNav.MenuItems.Add(NavItemSpotlight);
-
-        MainNav.MenuItems.Add(NavItemVoiceBall);
         MainNav.MenuItems.Add(NavItemTaskbarInfo);
-
-        MainNav.MenuItems.Add(NavItemDragStash);
-
-        MainNav.MenuItems.Add(NavItemPerAppIme);
-
-        MainNav.MenuItems.Add(NavItemProgramAssoc);
-
+        MainNav.MenuItems.Add(NavItemDesktopClick);
         MainNav.MenuItems.Add(NavItemThreeFingerDrag);
 
+        MainNav.MenuItems.Add(NavGroupFiles);
+        MainNav.MenuItems.Add(NavItemSpacePreview);
+        MainNav.MenuItems.Add(NavItemDragStash);
+        MainNav.MenuItems.Add(NavItemSpotlight);
+        MainNav.MenuItems.Add(NavItemProgramAssoc);
 
+        MainNav.MenuItems.Add(NavGroupInput);
+        MainNav.MenuItems.Add(NavItemPerAppIme);
+        MainNav.MenuItems.Add(NavItemVoiceBall);
     }
 
     /// <summary>建立导航标签与内容面板的映射，统一切换可见页面。</summary>

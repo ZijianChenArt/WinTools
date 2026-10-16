@@ -62,7 +62,7 @@ public static class WindowHelper
     public static void UncloakWhenRendered(Window window, Action? completed = null)
         => WhenRendered(window, () => { SetWindowCloak(window, false); completed?.Invoke(); });
 
-    internal static void WhenRendered(Window window, Action? completed)
+    internal static void WhenRendered(Window window, Action? completed, int framesToWait = 2)
     {
         try
         {
@@ -86,7 +86,7 @@ public static class WindowHelper
             onRendering = (_, _) =>
             {
                 // 等待第 2 帧，确保新内容已合成
-                if (++frames < 2) return;
+                if (++frames < framesToWait) return;
                 Finish();
             };
             Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += onRendering;
