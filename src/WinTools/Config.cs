@@ -146,6 +146,10 @@ public class Config : ObservableObject
     private string _taskbarInfoAlignment = "left";
     [JsonPropertyName("taskbarInfoAlignment")]
     public string TaskbarInfoAlignment { get => _taskbarInfoAlignment; set => SetProperty(ref _taskbarInfoAlignment, value == "center" ? "center" : "left"); }
+    // 图标与信息条对齐方式相同时信息条悬浮在任务栏上方，这是它与任务栏上沿的距离（DIP）。
+    private int _taskbarFloatGap = 4;
+    [JsonPropertyName("taskbarFloatGap")]
+    public int TaskbarFloatGap { get => _taskbarFloatGap; set => SetProperty(ref _taskbarFloatGap, Math.Clamp(value, 0, 400)); }
     private bool _taskbarInfoActions = true;
     [JsonPropertyName("taskbarInfoActions")]
     public bool TaskbarInfoActions { get => _taskbarInfoActions; set => SetProperty(ref _taskbarInfoActions, value); }

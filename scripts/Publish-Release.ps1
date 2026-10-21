@@ -41,8 +41,15 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer
 if (-not (Test-Path -LiteralPath $vswhere)) {
     throw 'Visual Studio Installer (vswhere.exe) was not found.'
 }
-$msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' |
+$msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\amd64\MSBuild.exe' |
     Select-Object -First 1
+if (-not $msbuild) {
+    # The 32-bit host can load a mismatched MSPDB140.DLL when the installed
+    # VS C++ tools are newer than the IDE copy. Prefer the native host above;
+    # keep the generic path as a fallback for older VS installations.
+    $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' |
+        Select-Object -First 1
+}
 if (-not $msbuild) {
     throw 'MSBuild was not found.'
 }

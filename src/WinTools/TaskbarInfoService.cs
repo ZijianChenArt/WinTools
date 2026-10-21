@@ -15,8 +15,9 @@ namespace WinTools;
 
 /// <summary>A non-activating taskbar overlay; does not inject into Explorer.</summary>
 /// <remarks>
-/// Position and size come from <c>TaskbarInfoService.Layout.cs</c>: the overlay is placed in a free gap between taskbar
-/// icon clusters and shrinks through fixed levels instead of overlapping them.
+/// Position and size come from <c>TaskbarInfoService.Layout.cs</c>: the overlay follows the selected left / center
+/// alignment, floats above the taskbar when that position overlaps an icon cluster, and shrinks through fixed levels
+/// only when the taskbar is too narrow.
 /// </remarks>
 internal sealed partial class TaskbarInfoService : IDisposable
 {
@@ -59,6 +60,8 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private string? _lastPlacement;
     private IntPtr _taskbarOwner;
     private bool _visible;
+    private bool _floating; // 悬浮在任务栏上方：画一张胶囊形半透明底卡，弹窗从信息条上沿弹出
+    private int _floatGap = 4; // 悬浮时与任务栏上沿的距离（DIP），设置页可调
     private (int X, int Y, int Width, int Height)? _bounds;
     private DateTime _nextRefresh = DateTime.MinValue;
     internal string Status { get; private set; } = "正在读取 Codex 额度";
@@ -87,6 +90,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
         _enabled = config.EnableTaskbarInfo;
         _actions = config.TaskbarInfoActions;
         _centered = config.TaskbarInfoAlignment == "center";
+        _floatGap = config.TaskbarFloatGap;
         _iconIds = new[]
         {
             _actions && config.TaskbarShowLibrary && config.EnableDesktopCard ? 0 : -1,
@@ -153,30 +157,36 @@ internal sealed partial class TaskbarInfoService : IDisposable
         var height = Math.Max(1, bar.Bottom - bar.Top - (int)(8 * scale));
         ScheduleScan(taskbar, bar, scale);
         PollStatus();
-        if (!TryPlace(bar, scale, out var layout, out var x)) { Hide(); return; }
+        if (!TryPlace(bar, scale, out var layout, out var x, out var floating)) { Hide(); return; }
         Place(layout, scale);
-        var width = layout.Width;
+        _floating = floating;
+        var width = floating ? FloatingWidth(layout, scale) : layout.Width;
         if (x + width > bar.Right) { Hide(); return; }
-        var y = bar.Top + (bar.Bottom - bar.Top - height) / 2;
+        // 悬浮时上下各加一段内边距，内容区（气泡、图标）和在任务栏里时完全一样。
+        var padY = floating ? FloatingPadY(scale) : 0;
+        var windowHeight = height + 2 * padY;
+        var y = floating
+            ? Math.Max(monitor.Monitor.Top, bar.Top - windowHeight - (int)(_floatGap * scale))
+            : bar.Top + (bar.Bottom - bar.Top - height) / 2;
         var dark = (int?)Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) != 1;
-        var drawing = $"{_quotaText}|{_claudeText}|{width}|{height}|{dark}|{scale}|{layout}|{string.Join(',', _shownIcons)}|{_hoveredButton}|{_reading}|{_readingClaude}|{_stashCount}|{_voiceActive}|{_audioName}";
+        var drawing = $"{_quotaText}|{_claudeText}|{width}|{height}|{dark}|{scale}|{layout}|{string.Join(',', _shownIcons)}|{_hoveredButton}|{_reading}|{_readingClaude}|{_stashCount}|{_voiceActive}|{_audioName}|{floating}";
         if (drawing != _lastDrawing)
         {
-            Draw(width, height, scale, dark);
+            Draw(width, height, padY, scale, dark);
             _lastDrawing = drawing;
         }
-        var bounds = (x, y, width, height);
+        var bounds = (x, y, width, windowHeight);
         if (!_visible || _bounds != bounds)
         {
             // Do not reinsert the window at the top of the Z order on every timer tick.
-            if (!SetWindowPos(_hwnd, new IntPtr(-1), x, y, width, height,
+            if (!SetWindowPos(_hwnd, new IntPtr(-1), x, y, width, windowHeight,
                 0x0010 | 0x0200 | (_visible ? 0x0004u : 0x0040u))) // NOACTIVATE | NOOWNERZORDER | NOZORDER/SHOWWINDOW
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             _bounds = bounds;
             _visible = true;
             WarmAudioPicker();
         }
-        var placement = $"任务栏显示区域：{x},{y}，{width}×{height}，收缩级别 {layout.Level}";
+        var placement = $"任务栏{(floating ? "上方悬浮区域" : "显示区域")}：{x},{y}，{width}×{height}，收缩级别 {layout.Level}";
         if (_lastPlacement != placement)
         {
             _lastPlacement = placement;
@@ -225,7 +235,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
         var slot = Array.IndexOf(_shownIcons, 1);
         if (slot < 0) return null;
         if (!GetWindowRect(_hwnd, out var rect) || !GetWindowRect(_taskbarOwner, out var bar)) return null;
-        return (rect.Left + _buttonStart + _buttonWidth * slot + _buttonWidth / 2, bar.Top);
+        return (rect.Left + _buttonStart + _buttonWidth * slot + _buttonWidth / 2, Math.Min(rect.Top, bar.Top));
     }
 
     private void SetHoveredButton(int button)
@@ -348,15 +358,20 @@ internal sealed partial class TaskbarInfoService : IDisposable
         return (name + " " + string.Join(" · ", matches.Select(m => m.Value))).Trim();
     }
 
-    private void Draw(int width, int height, float scale, bool dark)
+    /// <param name="height">内容区高度；悬浮时窗口上下再各多出 <paramref name="padY"/>。</param>
+    private void Draw(int width, int height, int padY, float scale, bool dark)
     {
         var layout = _layout;
-        using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
+        var windowHeight = height + 2 * padY;
+        using var bitmap = new Bitmap(width, windowHeight, PixelFormat.Format32bppPArgb);
         using (var graphics = Graphics.FromImage(bitmap))
         {
             // Alpha=1 makes the transparent hit area clickable without a visible card background.
             graphics.Clear(Color.FromArgb(1, 0, 0, 0));
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            // 悬浮时下面是任意窗口内容，只有线框看不清：补一张胶囊形的半透明底卡。
+            if (_floating) DrawFloatingCard(graphics, width, windowHeight, scale, dark);
+            graphics.TranslateTransform(0, padY);
             graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
             using var font = new Font("Microsoft YaHei UI", 12 * scale, FontStyle.Regular, GraphicsUnit.Pixel);
             using var foreground = new SolidBrush(dark ? Color.WhiteSmoke : Color.FromArgb(30, 30, 35));
@@ -410,7 +425,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
         var old = SelectObject(dc, handle);
         try
         {
-            var size = new SIZE { Width = width, Height = height };
+            var size = new SIZE { Width = width, Height = windowHeight };
             var source = new POINT();
             var blend = new BLENDFUNCTION { Alpha = 255, Format = 1 };
             if (!UpdateLayeredWindow(_hwnd, screen, IntPtr.Zero, ref size, dc, ref source, 0, ref blend, 2))

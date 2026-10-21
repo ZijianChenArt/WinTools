@@ -98,6 +98,24 @@ internal sealed partial class TaskbarInfoService
         _featureIconPaths = null;
     }
 
+    private static void DrawFloatingCard(Graphics graphics, int width, int height, float scale, bool dark)
+    {
+        // 两端是完整的半圆（胶囊形），与里面的圆形音频按钮、额度气泡同一种造型。
+        var rect = new RectangleF(.5f, .5f, width - 1, height - 1);
+        var diameter = System.Math.Min(rect.Width, rect.Height);
+        using var path = new GraphicsPath();
+        path.AddArc(rect.Left, rect.Top, diameter, diameter, 180, 90);
+        path.AddArc(rect.Right - diameter, rect.Top, diameter, diameter, 270, 90);
+        path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(rect.Left, rect.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        // 半透明：能透出下面的内容，同时仍把文字和窗口内容隔开。
+        using var fill = new SolidBrush(dark ? Color.FromArgb(150, 28, 28, 28) : Color.FromArgb(160, 245, 245, 245));
+        graphics.FillPath(fill, path);
+        using var stroke = new Pen(dark ? Color.FromArgb(60, 255, 255, 255) : Color.FromArgb(40, 0, 0, 0), scale);
+        graphics.DrawPath(stroke, path);
+    }
+
     private static void DrawChip(Graphics graphics, RectangleF rect, float scale, bool dark, bool hover)
     {
         rect.Inflate(-scale, -scale);

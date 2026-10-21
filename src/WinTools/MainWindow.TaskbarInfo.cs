@@ -18,6 +18,7 @@ public sealed partial class MainWindow
         {
             TaskbarControl<ToggleSwitch>("TaskbarInfoToggle").IsOn = _config.EnableTaskbarInfo;
             TaskbarControl<ComboBox>("TaskbarAlignmentBox").SelectedIndex = _config.TaskbarInfoAlignment == "center" ? 1 : 0;
+            SetNumberBoxValue(TaskbarControl<NumberBox>("TaskbarFloatGapBox"), _config.TaskbarFloatGap);
             LoadTaskbarEntries();
             UpdateTaskbarInfoStatus();
         }
@@ -85,6 +86,7 @@ public sealed partial class MainWindow
         {
             c.EnableTaskbarInfo = _config.EnableTaskbarInfo;
             c.TaskbarInfoAlignment = _config.TaskbarInfoAlignment;
+            c.TaskbarFloatGap = _config.TaskbarFloatGap;
             c.TaskbarInfoActions = _config.TaskbarInfoActions;
             c.TaskbarShowLibrary = _config.TaskbarShowLibrary;
             c.TaskbarShowVoice = _config.TaskbarShowVoice;
@@ -106,6 +108,15 @@ public sealed partial class MainWindow
     {
         if (_loadingTaskbarInfo) return;
         _config.TaskbarInfoAlignment = ((ComboBox)sender).SelectedIndex == 1 ? "center" : "left";
+        SaveTaskbarInfoSettings();
+    }
+
+    internal void TaskbarFloatGap_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_loadingTaskbarInfo) return;
+        // 清空输入框时恢复为当前值，不写入配置。
+        if (double.IsNaN(sender.Value)) { SetNumberBoxValue(sender, _config.TaskbarFloatGap); return; }
+        _config.TaskbarFloatGap = (int)Math.Round(sender.Value);
         SaveTaskbarInfoSettings();
     }
 

@@ -86,6 +86,7 @@ public sealed class SettingsService
         var defaults = ConfigService.GetDefault();
         Current.EnableTaskbarInfo = defaults.EnableTaskbarInfo;
         Current.TaskbarInfoAlignment = defaults.TaskbarInfoAlignment;
+        Current.TaskbarFloatGap = defaults.TaskbarFloatGap;
         Current.TaskbarInfoActions = defaults.TaskbarInfoActions;
         Current.TaskbarShowLibrary = defaults.TaskbarShowLibrary;
         Current.TaskbarShowVoice = defaults.TaskbarShowVoice;

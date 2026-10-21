@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using WinTools.Services;
 
 namespace WinTools;
@@ -57,10 +58,22 @@ internal sealed partial class TaskbarInfoService
         return default;
     }
 
-    private bool TryPlace(RECT bar, float scale, out Layout layout, out int x)
+    private bool TryPlace(RECT bar, float scale, out Layout layout, out int x, out bool floating)
     {
+        floating = false;
         var margin = (int)(8 * scale);
         var barWidth = bar.Right - bar.Left;
+        // 任务栏图标的对齐方式和信息条一致（都居中 / 都偏左）时，信息条横向必然压在图标上：
+        // 改为悬浮在任务栏上方——居中时在开始按钮正上方居中，偏左时在左侧图标上方，
+        // 宽度不受图标间空隙限制，按整条任务栏宽度选最完整的一档；也不用等图标扫描。
+        if (_centered == TaskbarIconsCentered())
+        {
+            layout = ChooseLayout(Math.Max(1, barWidth - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
+            x = _centered ? bar.Left + (barWidth - FloatingWidth(layout, scale)) / 2 : bar.Left + margin;
+            floating = layout.Width > 0;
+            if (floating) return true;
+        }
+
         var clusters = CurrentClusters(bar);
         if (clusters == null)
         {
@@ -98,6 +111,20 @@ internal sealed partial class TaskbarInfoService
         }
         return found;
     }
+
+    // 悬浮胶囊四边留白一致：额度气泡（高 34dip）到胶囊上、下、右边缘都是 FloatingInsetDip；
+    // 左端第一个图标正好落在胶囊左半圆的圆心附近。
+    private const int FloatingInsetDip = 8;
+
+    /// <summary>右端补的内边距：气泡自身向内缩了 1dip，所以补 Inset - 1。</summary>
+    private static int FloatingWidth(Layout layout, float scale) => layout.Width + (int)((FloatingInsetDip - 1) * scale);
+
+    /// <summary>上下补的内边距：任务栏里气泡离内容区上下边缘已有 3dip，所以补 Inset - 3。</summary>
+    private static int FloatingPadY(float scale) => (int)((FloatingInsetDip - 3) * scale);
+
+    /// <summary>任务栏图标是否居中（设置 → 个性化 → 任务栏行为 → 任务栏对齐方式）；没有该值时是 Win11 默认的居中。</summary>
+    private static bool TaskbarIconsCentered() =>
+        Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarAl", 1) is not int value || value != 0;
 
     /// <summary>把选定的布局换算成各元素的位置，供绘制与点击命中共用。</summary>
     private void Place(Layout layout, float scale)

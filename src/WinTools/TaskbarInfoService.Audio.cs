@@ -50,7 +50,7 @@ internal sealed partial class TaskbarInfoService
         if (_audioPicker.IsOpen) { _audioPicker.HidePicker(); return System.Threading.Tasks.Task.CompletedTask; }
         _audioPicker.IsToggleButtonAt = (x, y) => _visible && GetWindowRect(_hwnd, out var rect)
             && y >= rect.Top && y < rect.Bottom && ButtonAt(x - rect.Left) == 3;
-        _audioPicker.ShowAt(bounds.Left + _deviceStart, bar.Top);
+        _audioPicker.ShowAt(bounds.Left + _deviceStart, Math.Min(bounds.Top, bar.Top));
         return System.Threading.Tasks.Task.CompletedTask;
     }
 }
