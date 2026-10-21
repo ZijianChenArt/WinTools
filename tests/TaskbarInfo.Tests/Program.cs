@@ -55,3 +55,29 @@ if (CodexProcessNetwork.Parse("127.0.0.1:7897") != "http://127.0.0.1:7897"
     || CodexProcessNetwork.Parse("http://user:password@proxy:8080") != null)
     throw new Exception("System proxy parsing failed");
 Console.WriteLine("5 system-proxy parsing checks passed.");
+
+// 瞄准任一入口后，展开全程应保持该入口的屏幕横坐标（允许像素取整误差）。
+foreach (var dpi in new[] { 1f, 1.25f, 1.5f, 2f })
+foreach (var iconCenter in new[] { 26f, 62f, 98f, 138f, 250f })
+{
+    var screenAnchor = 900;
+    var previousScale = .75f;
+    for (var ms = 0; ms <= 220; ms++)
+    {
+        var scale = TaskbarHoverMotion.ScaleAt(.75f, 1, ms);
+        if (scale < previousScale || scale > 1) throw new Exception("Hover scale overshot or reversed");
+        var local = iconCenter * dpi * scale;
+        var left = TaskbarHoverMotion.Left(700, screenAnchor, local, 1, 0, 2000);
+        if (Math.Abs(left + local - screenAnchor) > .51f) throw new Exception("Aimed shortcut moved horizontally");
+        previousScale = scale;
+    }
+}
+if (TaskbarHoverMotion.ScaleAt(.75f, 1, 0) != .75f || TaskbarHoverMotion.ScaleAt(.75f, 1, 220) != 1
+    || TaskbarHoverMotion.ScaleAt(1, .75f, 220) != .75f
+    || TaskbarHoverMotion.Left(700, 900, 150, 0, 0, 2000) != 700
+    || TaskbarHoverMotion.Left(0, 5, 30, 1, 0, 2000) != 0)
+    throw new Exception("Hover endpoints, alignment restore or screen clamp failed");
+var interrupted = TaskbarHoverMotion.ScaleAt(.75f, 1, 80);
+if (TaskbarHoverMotion.ScaleAt(interrupted, .75f, 0) != interrupted)
+    throw new Exception("Reversing hover motion jumped at its first frame");
+Console.WriteLine("Hover anchor stability, easing, interruption, alignment and screen-edge checks passed.");

@@ -85,10 +85,14 @@ internal sealed partial class TaskbarInfoService : IDisposable
         _timer = _dispatcher.CreateTimer();
         _timer.Interval = TimeSpan.FromSeconds(1);
         _timer.Tick += (_, _) => SafeTick();
+        _hoverTimer = _dispatcher.CreateTimer();
+        _hoverTimer.Interval = TimeSpan.FromMilliseconds(16);
+        _hoverTimer.Tick += (_, _) => HoverFrame();
     }
 
     internal void Apply(Config config)
     {
+        ResetHover();
         _enabled = config.EnableTaskbarInfo;
         _actions = config.TaskbarInfoActions;
         _centered = config.TaskbarInfoAlignment == "center";
@@ -162,16 +166,25 @@ internal sealed partial class TaskbarInfoService : IDisposable
         if (!TryPlace(bar, scale, out var layout, out var x, out var floating)) { Hide(); return; }
         // 只收小悬浮模式。间距仍使用屏幕 DPI，不能随内容缩放；底边固定，展开向上生长。
         var screenScale = scale;
-        if (floating && !_pointerInside)
+        if (floating)
         {
-            scale *= FloatingIdleScale;
-            height = Math.Max(1, (int)(height * FloatingIdleScale));
-            if (!TryPlace(bar, scale, out layout, out x, out floating)) { Hide(); return; }
-            if (!_centered) x = bar.Left + (int)(8 * screenScale);
+            scale *= _floatingScale;
+            height = Math.Max(1, (int)(height * _floatingScale));
+            // 保持同一档内容，避免动画中途因可用宽度变化增减入口。
+            layout = BuildLayout(layout.Level, scale);
+            var floatingWidth = FloatingWidth(layout, scale);
+            x = _centered ? bar.Left + (bar.Right - bar.Left - floatingWidth) / 2 : bar.Left + (int)(8 * screenScale);
         }
         Place(layout, scale);
         _floating = floating;
         var width = floating ? FloatingWidth(layout, scale) : layout.Width;
+        if (floating && _hoverAnchorX is int anchor)
+        {
+            // 离开后的收回同时回到原来的偏左 / 居中位置。
+            var returning = _hoverTarget == FloatingIdleScale && _leaveAfter == 0;
+            var weight = returning ? Math.Clamp((_floatingScale - FloatingIdleScale) / Math.Max(.0001f, _hoverFrom - FloatingIdleScale), 0, 1) : 1;
+            x = TaskbarHoverMotion.Left(x, anchor, HoverAnchorLocal(width), weight, bar.Left, Math.Max(bar.Left, bar.Right - width));
+        }
         if (x + width > bar.Right) { Hide(); return; }
         // 悬浮时上下各加一段内边距，内容区（气泡、图标）和在任务栏里时完全一样。
         var padY = floating ? FloatingPadY(scale) : 0;
@@ -202,7 +215,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             WarmAudioPicker();
         }
         var placement = $"任务栏{(floating ? "上方悬浮区域" : "显示区域")}：{x},{y}，{width}×{height}，收缩级别 {layout.Level}";
-        if (_lastPlacement != placement)
+        if (!_hoverTimer.IsRunning && _lastPlacement != placement)
         {
             _lastPlacement = placement;
             ErrorReporter.Log("TaskbarInfo.Placement", placement);
@@ -218,6 +231,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     private void Hide()
     {
+        ResetHover();
         if (!_visible) return;
         ShowWindow(_hwnd, 0);
         _visible = false;
@@ -275,8 +289,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             }
             if (!_pointerInside)
             {
-                _pointerInside = true;
-                SafeTick();
+                EnterOverlay((short)(lParam.ToInt64() & 0xffff));
             }
             else SetHoveredButton(HitAt((short)(lParam.ToInt64() & 0xffff)));
             return IntPtr.Zero;
@@ -286,7 +299,12 @@ internal sealed partial class TaskbarInfoService : IDisposable
             _trackingMouse = false;
             _pointerInside = false;
             _hoveredButton = -1;
-            // 留白区域没有 hoveredButton，也需要收小。
+            // 跨越边缘时留出缓冲；重新移入会取消收回，并从当前尺寸继续。
+            if (_floating)
+            {
+                _leaveAfter = Environment.TickCount64 + 160;
+                _hoverTimer.Start();
+            }
             SafeTick();
             return IntPtr.Zero;
         }
@@ -462,6 +480,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _hoverTimer.Stop();
         _timer.Stop();
         _lifetime.Cancel();
         DisposeFeatureIcons();
