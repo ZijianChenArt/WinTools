@@ -70,10 +70,13 @@ internal sealed partial class TaskbarInfoService : IDisposable
     internal string CodexDisplayText => _quotaText.Replace("Codex", "").Trim();
     internal event Action? StatusChanged;
 
-    internal TaskbarInfoService()
+    internal TaskbarInfoService() : this(null) { }
+
+    private TaskbarInfoService(TaskbarInfoService? quotaSource)
     {
+        _quotaSource = quotaSource;
         _subclass = WindowProc;
-        _hwnd = CreateWindowEx(0x08080080, "STATIC", "WinTools 任务栏信息", 0x80000000,
+        _hwnd = CreateWindowEx(0x08080080, "STATIC", quotaSource == null ? "WinTools 任务栏信息" : "WinTools 任务栏额度", 0x80000000,
             0, 0, 1, 1, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         if (_hwnd == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
         if (!SetWindowSubclass(_hwnd, _subclass, 1, 0))
@@ -94,7 +97,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         ResetHover();
         _enabled = config.EnableTaskbarInfo;
-        _actions = config.TaskbarInfoActions;
+        _actions = _quotaSource == null && config.TaskbarInfoActions;
         _centered = config.TaskbarInfoAlignment == "center";
         _floatGap = config.TaskbarFloatGap;
         _iconIds = new[]
@@ -106,6 +109,9 @@ internal sealed partial class TaskbarInfoService : IDisposable
         _showAudio = _actions; // 音频设备入口恒显示，没有单独的开关
         _lastDrawing = null;
         _bounds = null;
+        if (_quotaSource != null) return;
+        _quotaOverlay ??= new TaskbarInfoService(this);
+        _quotaOverlay.Apply(config);
         if (_enabled) { _timer.Start(); SafeTick(); }
         else { _timer.Stop(); Hide(); }
         StatusChanged?.Invoke();
@@ -115,7 +121,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     private void SafeTick()
     {
-        try { Tick(); }
+        try { Tick(); _quotaOverlay?.SafeTick(); }
         catch (Exception ex)
         {
             _timer.Stop();
@@ -129,8 +135,12 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private void Tick()
     {
         if (_disposed || !_enabled) return;
-        if (DateTime.UtcNow >= _nextClaudeRefresh && !_readingClaude) _ = RefreshClaudeAsync();
-        if (DateTime.UtcNow >= _nextRefresh) _ = RefreshAsync();
+        if (_quotaSource != null) CopyQuotaState();
+        else
+        {
+            if (DateTime.UtcNow >= _nextClaudeRefresh && !_readingClaude) _ = RefreshClaudeAsync();
+            if (DateTime.UtcNow >= _nextRefresh) _ = RefreshAsync();
+        }
         var taskbar = FindWindow("Shell_TrayWnd", null);
         if (taskbar == IntPtr.Zero || !IsWindowVisible(taskbar) || !GetWindowRect(taskbar, out var bar)) { Hide(); return; }
         if (_taskbarOwner != taskbar)
@@ -161,9 +171,13 @@ internal sealed partial class TaskbarInfoService : IDisposable
         }
         var scale = Math.Max(1, GetDpiForWindow(taskbar) / 96f);
         var height = Math.Max(1, bar.Bottom - bar.Top - (int)(8 * scale));
-        ScheduleScan(taskbar, bar, scale);
-        PollStatus();
-        if (!TryPlace(bar, scale, out var layout, out var x, out var floating)) { Hide(); return; }
+        if (_quotaSource == null)
+        {
+            ScheduleScan(taskbar, bar, scale);
+            PollStatus();
+            _quotaOverlay?.CopyQuotaState();
+        }
+        if (!TryPlace(bar, scale, out var layout, out var x, out var floating)) { Hide(false); return; }
         // 只收小悬浮模式。间距仍使用屏幕 DPI，不能随内容缩放；底边固定，展开向上生长。
         var screenScale = scale;
         if (floating)
@@ -229,8 +243,9 @@ internal sealed partial class TaskbarInfoService : IDisposable
         if (_showAudio && !_readingAudio && DateTime.UtcNow >= _nextAudioRead) _ = RefreshAudioNameAsync();
     }
 
-    private void Hide()
+    private void Hide(bool includeQuota = true)
     {
+        if (includeQuota) _quotaOverlay?.Hide();
         ResetHover();
         if (!_visible) return;
         ShowWindow(_hwnd, 0);
@@ -315,8 +330,9 @@ internal sealed partial class TaskbarInfoService : IDisposable
             if (message == 0x0202 && button < 0) return IntPtr.Zero;
             if (button is 4 or 5)
             {
-                if (button == 4) _ = RefreshAsync();
-                else _ = RefreshClaudeAsync();
+                var source = _quotaSource ?? this;
+                if (button == 4) _ = source.RefreshAsync();
+                else _ = source.RefreshClaudeAsync();
                 SafeTick();
                 return IntPtr.Zero;
             }
@@ -327,7 +343,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
                 try
                 {
                     if (action == "audio") _ = ShowAudioDevicesAsync();
-                    else ActionRequested?.Invoke(action);
+                    else (_quotaSource ?? this).ActionRequested?.Invoke(action);
                 }
                 catch (Exception ex) { ErrorReporter.Log("TaskbarInfo.Action", ex); }
             });
@@ -480,6 +496,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _quotaOverlay?.Dispose();
         _hoverTimer.Stop();
         _timer.Stop();
         _lifetime.Cancel();

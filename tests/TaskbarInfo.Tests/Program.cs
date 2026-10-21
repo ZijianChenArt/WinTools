@@ -81,3 +81,34 @@ var interrupted = TaskbarHoverMotion.ScaleAt(.75f, 1, 80);
 if (TaskbarHoverMotion.ScaleAt(interrupted, .75f, 0) != interrupted)
     throw new Exception("Reversing hover motion jumped at its first frame");
 Console.WriteLine("Hover anchor stability, easing, interruption, alignment and screen-edge checks passed.");
+
+// 四种对齐：相同则按钮悬浮、额度放到另一侧；不同则在任务栏并排显示。
+foreach (var infoCentered in new[] { false, true })
+foreach (var iconsCentered in new[] { false, true })
+{
+    var floating = infoCentered == iconsCentered;
+    var preferred = TaskbarStripPlacement.QuotaPreferredLeft(0, 1200, 200, 8,
+        infoCentered, floating, floating ? null : 300);
+    var expected = floating ? (infoCentered ? 8 : 500) : 308;
+    if (preferred != expected) throw new Exception("Four-way quota alignment policy failed");
+    var blocked = iconsCentered
+        ? new[] { (Left: 450, Right: 750), (Left: 1100, Right: 1200) }
+        : new[] { (Left: 0, Right: 350), (Left: 1100, Right: 1200) };
+    if (!TaskbarStripPlacement.TryFind(0, 1200, blocked, 200, preferred, 8, out var quotaX))
+        throw new Exception("Expected safe taskbar quota slot");
+    foreach (var block in blocked)
+        if (quotaX < block.Right + 8 && quotaX + 200 > block.Left - 8)
+            throw new Exception("Quota overlaps system icons");
+}
+if (!TaskbarStripPlacement.TryFind(-1200, 0, new[] { (Left: -750, Right: -450), (Left: -100, Right: 0) },
+        200, -1192, 8, out var negativeX) || negativeX != -1192)
+    throw new Exception("Negative-coordinate monitor layout failed");
+if (!TaskbarStripPlacement.TryFind(0, 1200, new[] { (Left: 0, Right: 200), (Left: 150, Right: 350), (Left: 1100, Right: 1200) },
+        200, 500, 8, out var mergedX) || mergedX != 500)
+    throw new Exception("Overlapping system reservations lost a valid slot");
+if (TaskbarStripPlacement.TryFind(0, 500, new[] { (Left: 0, Right: 500) }, 80, 8, 8, out _))
+    throw new Exception("Quota must not cover icons when taskbar is full");
+if (!TaskbarStripPlacement.TryFind(0, 900, new[] { (Left: 8, Right: 200), (Left: 700, Right: 900) },
+        200, 208, 8, out var besideButtons) || besideButtons != 208)
+    throw new Exception("Quota must reserve the in-taskbar buttons");
+Console.WriteLine("Four taskbar alignments, icon/button avoidance, negative monitor and full-taskbar checks passed.");

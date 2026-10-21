@@ -240,7 +240,7 @@
                                 <ComboBoxItem Content="居中"/>
                             </ComboBox>
                         </tk:SettingsCard>
-                        <tk:SettingsCard Header="悬浮高度" Description="任务栏图标与信息区对齐方式相同时，信息区悬浮在图标上方，这里设置它与任务栏的距离">
+                        <tk:SettingsCard Header="悬浮高度" Description="任务栏图标与信息区对齐方式相同时，仅按钮悬浮在上方；额度留在任务栏。这里设置悬浮按钮与任务栏的距离">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE74A;"/>
                             </tk:SettingsCard.HeaderIcon>

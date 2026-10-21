@@ -17,7 +17,6 @@ internal sealed partial class TaskbarInfoService
     private readonly record struct Layout(int Level, int IconCount, int Audio, bool Menu, bool Compact, int Codex, int Claude, int Width);
 
     private const int LastLevel = 5;
-    private const int PreferredMaxLevel = 3; // 空隙够放额度气泡才算「合适」，否则继续找别的空隙
 
     private Layout BuildLayout(int level, float scale)
     {
@@ -30,9 +29,9 @@ internal sealed partial class TaskbarInfoService
 
         var audio = _showAudio ? 1 : 0; // 始终是只有耳机图标的圆形按钮，设备名在弹窗里看
         var compact = level >= 1;
-        var showCodex = level <= 3;
+        var showCodex = _quotaSource != null && level <= 3;
         // 没连接 Claude（读不到额度）时不占位。
-        var showClaude = level <= 2 && !_claudeText.Contains("暂不可用");
+        var showClaude = _quotaSource != null && level <= 2 && !_claudeText.Contains("暂不可用");
 
         var width = 0;
         if (icons > 0 || audio > 0)
@@ -61,6 +60,7 @@ internal sealed partial class TaskbarInfoService
     private bool TryPlace(RECT bar, float scale, out Layout layout, out int x, out bool floating)
     {
         floating = false;
+        if (_quotaSource != null) return TryPlaceQuota(bar, scale, out layout, out x);
         var margin = (int)(8 * scale);
         var barWidth = bar.Right - bar.Left;
         // 任务栏图标的对齐方式和信息条一致（都居中 / 都偏左）时，信息条横向必然压在图标上：
@@ -80,36 +80,30 @@ internal sealed partial class TaskbarInfoService
             // 还没拿到图标位置就先别画：此时用保守估计会把信息条放在 bar.Left 上，
             // 正好压在任务栏左侧的系统图标（小组件等）上，直到下一次扫描完成才跳开。
             if (!_scanSettled) { layout = default; x = 0; return false; }
-            // 读不到图标位置（UI Automation 不可用）：沿用「不超过任务栏一半」的保守估计。
-            layout = ChooseLayout(Math.Max(1, barWidth / 2 - (int)(64 * scale)), scale);
-            x = _centered ? bar.Left + (barWidth - layout.Width) / 2 : bar.Left + margin;
-            return layout.Width > 0;
+            // 扫描不可用时只允许按钮悬浮；额度窗口等待可信空隙，避免遮住系统图标。
+            layout = ChooseLayout(Math.Max(1, barWidth - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
+            x = _centered ? bar.Left + (barWidth - FloatingWidth(layout, scale)) / 2 : bar.Left + margin;
+            floating = layout.Width > 0;
+            return floating;
         }
 
-        // 图标簇之间的空隙，从左到右。
-        var gaps = new List<(int Left, int Right)>();
-        var cursor = bar.Left;
-        foreach (var cluster in clusters)
+        // 对齐不同：先尝试把按钮和额度作为完整一组放在任务栏里，但仍独立绘制。
+        for (var level = 0; level <= 1; level++)
         {
-            if (cluster.Left > cursor) gaps.Add((cursor, cluster.Left));
-            cursor = Math.Max(cursor, cluster.Right);
+            var candidate = BuildLayout(level, scale);
+            if (candidate.Width <= 0) break;
+            var quotaWidth = _quotaOverlay?.BuildLayout(level, scale).Width ?? 0;
+            var groupWidth = candidate.Width + (quotaWidth > 0 ? margin + quotaWidth : 0);
+            var preferred = _centered ? bar.Left + (barWidth - groupWidth) / 2 : bar.Left + margin;
+            if (!TaskbarStripPlacement.TryFind(bar.Left, bar.Right, clusters, groupWidth, preferred, margin, out x)) continue;
+            layout = candidate;
+            return true;
         }
-        if (bar.Right > cursor) gaps.Add((cursor, bar.Right));
-
-        var found = false;
-        layout = default;
-        x = 0;
-        foreach (var gap in gaps)
-        {
-            var available = gap.Right - gap.Left - 2 * margin;
-            if (available <= 0) continue;
-            var candidate = ChooseLayout(available, scale);
-            if (candidate.Width <= 0) continue;
-            var candidateX = _centered ? gap.Left + (gap.Right - gap.Left - candidate.Width) / 2 : gap.Left + margin;
-            if (candidate.Level <= PreferredMaxLevel) { layout = candidate; x = candidateX; return true; }
-            if (!found || candidate.Level < layout.Level) { layout = candidate; x = candidateX; found = true; }
-        }
-        return found;
+        // 空间不足时保留完整按钮，在上方悬浮，额度仍单独寻找任务栏空位。
+        layout = ChooseLayout(Math.Max(1, barWidth - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
+        x = _centered ? bar.Left + (barWidth - FloatingWidth(layout, scale)) / 2 : bar.Left + margin;
+        floating = layout.Width > 0;
+        return floating;
     }
 
     // 悬浮胶囊四边留白一致：额度气泡（高 34dip）到胶囊上、下、右边缘都是 FloatingInsetDip；

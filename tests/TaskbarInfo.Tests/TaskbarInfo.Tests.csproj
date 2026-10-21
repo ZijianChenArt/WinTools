@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/WinTools/Services/TaskbarStripPlacement.cs" Link="TaskbarStripPlacement.cs"/>
     <Compile Include="../../src/WinTools/Services/TaskbarHoverMotion.cs" Link="TaskbarHoverMotion.cs"/>
     <Compile Include="../../src/WinTools/Services/CodexProcessNetwork.cs" Link="CodexProcessNetwork.cs"/>
     <Compile Include="../../src/WinTools/Services/CodexQuotaReader.cs" Link="CodexQuotaReader.cs"/>
