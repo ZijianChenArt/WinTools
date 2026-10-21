@@ -61,7 +61,9 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private IntPtr _taskbarOwner;
     private bool _visible;
     private bool _floating; // 悬浮在任务栏上方：画一张胶囊形半透明底卡，弹窗从信息条上沿弹出
-    private int _floatGap = 4; // 悬浮时与任务栏上沿的距离（DIP），设置页可调
+    private int _floatGap = 10; // 悬浮时与任务栏上沿的距离（DIP），设置页可调
+    private const float FloatingIdleScale = .75f;
+    private bool _pointerInside;
     private (int X, int Y, int Width, int Height)? _bounds;
     private DateTime _nextRefresh = DateTime.MinValue;
     internal string Status { get; private set; } = "正在读取 Codex 额度";
@@ -158,6 +160,15 @@ internal sealed partial class TaskbarInfoService : IDisposable
         ScheduleScan(taskbar, bar, scale);
         PollStatus();
         if (!TryPlace(bar, scale, out var layout, out var x, out var floating)) { Hide(); return; }
+        // 只收小悬浮模式。间距仍使用屏幕 DPI，不能随内容缩放；底边固定，展开向上生长。
+        var screenScale = scale;
+        if (floating && !_pointerInside)
+        {
+            scale *= FloatingIdleScale;
+            height = Math.Max(1, (int)(height * FloatingIdleScale));
+            if (!TryPlace(bar, scale, out layout, out x, out floating)) { Hide(); return; }
+            if (!_centered) x = bar.Left + (int)(8 * screenScale);
+        }
         Place(layout, scale);
         _floating = floating;
         var width = floating ? FloatingWidth(layout, scale) : layout.Width;
@@ -166,8 +177,12 @@ internal sealed partial class TaskbarInfoService : IDisposable
         var padY = floating ? FloatingPadY(scale) : 0;
         var windowHeight = height + 2 * padY;
         var y = floating
-            ? Math.Max(monitor.Monitor.Top, bar.Top - windowHeight - (int)(_floatGap * scale))
+            ? Math.Max(monitor.Monitor.Top, bar.Top - windowHeight - (int)(_floatGap * screenScale))
             : bar.Top + (bar.Bottom - bar.Top - height) / 2;
+        // 尺寸变化后用新的屏幕坐标重算命中，避免仍高亮 / 点击缩小状态下的旧按钮。
+        _hoveredButton = _pointerInside && GetCursorPos(out var cursor)
+            && cursor.X >= x && cursor.X < x + width && cursor.Y >= y && cursor.Y < y + windowHeight
+            ? HitAt(cursor.X - x) : -1;
         var dark = (int?)Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) != 1;
         var drawing = $"{_quotaText}|{_claudeText}|{width}|{height}|{dark}|{scale}|{layout}|{string.Join(',', _shownIcons)}|{_hoveredButton}|{_reading}|{_readingClaude}|{_stashCount}|{_voiceActive}|{_audioName}|{floating}";
         if (drawing != _lastDrawing)
@@ -208,6 +223,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
         _visible = false;
         _hoveredButton = -1;
         _trackingMouse = false;
+        _pointerInside = false;
     }
 
     private int ButtonAt(int x)
@@ -257,13 +273,21 @@ internal sealed partial class TaskbarInfoService : IDisposable
                 var tracking = new TRACKMOUSEEVENT { Size = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(), Flags = 2, Hwnd = hwnd };
                 _trackingMouse = TrackMouseEvent(ref tracking);
             }
-            SetHoveredButton(HitAt((short)(lParam.ToInt64() & 0xffff)));
+            if (!_pointerInside)
+            {
+                _pointerInside = true;
+                SafeTick();
+            }
+            else SetHoveredButton(HitAt((short)(lParam.ToInt64() & 0xffff)));
             return IntPtr.Zero;
         }
         if (message == 0x02A3) // WM_MOUSELEAVE
         {
             _trackingMouse = false;
-            SetHoveredButton(-1);
+            _pointerInside = false;
+            _hoveredButton = -1;
+            // 留白区域没有 hoveredButton，也需要收小。
+            SafeTick();
             return IntPtr.Zero;
         }
         if (message is 0x0202 or 0x0205)
@@ -451,6 +475,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public uint Size, Flags; public IntPtr Hwnd; public uint HoverTime; }
     [DllImport("user32.dll")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT tracking);
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     private delegate IntPtr SubclassProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, nuint id, nuint data);
     [DllImport("comctl32.dll")] private static extern bool SetWindowSubclass(IntPtr hwnd, SubclassProc callback, nuint id, nuint data);
     [DllImport("comctl32.dll")] private static extern bool RemoveWindowSubclass(IntPtr hwnd, SubclassProc callback, nuint id);
