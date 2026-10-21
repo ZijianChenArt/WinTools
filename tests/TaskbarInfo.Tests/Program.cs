@@ -56,31 +56,32 @@ if (CodexProcessNetwork.Parse("127.0.0.1:7897") != "http://127.0.0.1:7897"
     throw new Exception("System proxy parsing failed");
 Console.WriteLine("5 system-proxy parsing checks passed.");
 
-// 瞄准任一入口后，展开全程应保持该入口的屏幕横坐标（允许像素取整误差）。
+// 不论偏左或居中，展开全程保持完整按钮条的中点，不读取鼠标坐标。
 foreach (var dpi in new[] { 1f, 1.25f, 1.5f, 2f })
-foreach (var iconCenter in new[] { 26f, 62f, 98f, 138f, 250f })
+foreach (var expandedLeft in new[] { -1192, 8, 700 })
 {
-    var screenAnchor = 900;
+    var expandedWidth = (int)(163 * dpi);
+    var fixedCenter = expandedLeft + expandedWidth / 2f;
     var previousScale = .75f;
     for (var ms = 0; ms <= 220; ms++)
     {
         var scale = TaskbarHoverMotion.ScaleAt(.75f, 1, ms);
         if (scale < previousScale || scale > 1) throw new Exception("Hover scale overshot or reversed");
-        var local = iconCenter * dpi * scale;
-        var left = TaskbarHoverMotion.Left(700, screenAnchor, local, 1, 0, 2000);
-        if (Math.Abs(left + local - screenAnchor) > .51f) throw new Exception("Aimed shortcut moved horizontally");
+        var width = (int)(expandedWidth * scale);
+        var left = TaskbarHoverMotion.Left(expandedLeft, expandedWidth, width, -1200, 2000);
+        if (Math.Abs(left + width / 2f - fixedCenter) > .51f) throw new Exception("Fixed expansion center moved");
         previousScale = scale;
     }
 }
 if (TaskbarHoverMotion.ScaleAt(.75f, 1, 0) != .75f || TaskbarHoverMotion.ScaleAt(.75f, 1, 220) != 1
     || TaskbarHoverMotion.ScaleAt(1, .75f, 220) != .75f
-    || TaskbarHoverMotion.Left(700, 900, 150, 0, 0, 2000) != 700
-    || TaskbarHoverMotion.Left(0, 5, 30, 1, 0, 2000) != 0)
+    || TaskbarHoverMotion.Left(700, 160, 160, 0, 2000) != 700
+    || TaskbarHoverMotion.Left(-20, 160, 160, 0, 2000) != 0)
     throw new Exception("Hover endpoints, alignment restore or screen clamp failed");
 var interrupted = TaskbarHoverMotion.ScaleAt(.75f, 1, 80);
 if (TaskbarHoverMotion.ScaleAt(interrupted, .75f, 0) != interrupted)
     throw new Exception("Reversing hover motion jumped at its first frame");
-Console.WriteLine("Hover anchor stability, easing, interruption, alignment and screen-edge checks passed.");
+Console.WriteLine("Fixed hover center, easing, interruption, alignment and screen-edge checks passed.");
 
 // 四种对齐：相同则按钮悬浮、额度放到另一侧；不同则在任务栏并排显示。
 foreach (var infoCentered in new[] { false, true })

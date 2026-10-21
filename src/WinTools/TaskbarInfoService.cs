@@ -182,23 +182,17 @@ internal sealed partial class TaskbarInfoService : IDisposable
         var screenScale = scale;
         if (floating)
         {
+            var expandedWidth = FloatingWidth(layout, scale);
             scale *= _floatingScale;
             height = Math.Max(1, (int)(height * _floatingScale));
             // 保持同一档内容，避免动画中途因可用宽度变化增减入口。
             layout = BuildLayout(layout.Level, scale);
             var floatingWidth = FloatingWidth(layout, scale);
-            x = _centered ? bar.Left + (bar.Right - bar.Left - floatingWidth) / 2 : bar.Left + (int)(8 * screenScale);
+            x = TaskbarHoverMotion.Left(x, expandedWidth, floatingWidth, bar.Left, Math.Max(bar.Left, bar.Right - floatingWidth));
         }
         Place(layout, scale);
         _floating = floating;
         var width = floating ? FloatingWidth(layout, scale) : layout.Width;
-        if (floating && _hoverAnchorX is int anchor)
-        {
-            // 离开后的收回同时回到原来的偏左 / 居中位置。
-            var returning = _hoverTarget == FloatingIdleScale && _leaveAfter == 0;
-            var weight = returning ? Math.Clamp((_floatingScale - FloatingIdleScale) / Math.Max(.0001f, _hoverFrom - FloatingIdleScale), 0, 1) : 1;
-            x = TaskbarHoverMotion.Left(x, anchor, HoverAnchorLocal(width), weight, bar.Left, Math.Max(bar.Left, bar.Right - width));
-        }
         if (x + width > bar.Right) { Hide(); return; }
         // 悬浮时上下各加一段内边距，内容区（气泡、图标）和在任务栏里时完全一样。
         var padY = floating ? FloatingPadY(scale) : 0;
@@ -304,7 +298,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             }
             if (!_pointerInside)
             {
-                EnterOverlay((short)(lParam.ToInt64() & 0xffff));
+                EnterOverlay();
             }
             else SetHoveredButton(HitAt((short)(lParam.ToInt64() & 0xffff)));
             return IntPtr.Zero;
