@@ -140,14 +140,15 @@ internal sealed class ExplorerPreviewService
         if (foreground == IntPtr.Zero || !IsExplorerWindow(foreground)) return false;
         if (!IsFileListFocused(foreground)) return false;
 
-        _swallowingSpace = true;
-        // 先在 UI 线程弹出加载中的窗口，让用户马上看到反应；选中项在工作线程读取，读完再填进窗口。
-        _dispatcher.TryEnqueue(FilePreviewService.ShowPending);
         // 标签式资源管理器的多个 ShellBrowser 共享同一个顶层 HWND；同时记录
         // 当前 DirectUIHWND，后台读取时才能精确定位活动标签。
         var threadId = GetWindowThreadProcessId(foreground, out _);
         var gui = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
         var focus = GetGUIThreadInfo(threadId, ref gui) ? gui.hwndFocus : IntPtr.Zero;
+        if (focus == IntPtr.Zero || ClassName(focus) != "DirectUIHWND") return false;
+        _swallowingSpace = true;
+        // 必须先记录焦点；ShowPending 会激活预览窗口，之后再读取可能丢失活动标签。
+        _dispatcher.TryEnqueue(FilePreviewService.ShowPending);
         _selectionQueue.Add(new SelectionRequest(foreground, focus));
         return true;
     }
@@ -283,6 +284,8 @@ internal static class ExplorerSelection
         var count = (int)type.InvokeMember("Count", BindingFlags.GetProperty, null, shellWindows, null)!;
         object? fallbackWindow = null;
         var matchedWindow = false;
+        var candidateCount = 0;
+        var hasComparableView = false;
         for (var i = 0; i < count; i++)
         {
             object? window;
@@ -302,11 +305,14 @@ internal static class ExplorerSelection
             if ((IntPtr)hwnd == explorerWindow)
             {
                 fallbackWindow ??= window;
+                candidateCount++;
+                if (focusWindow == IntPtr.Zero) continue;
                 // Windows 11 标签页共享顶层 HWND。优先用 ShellView 的窗口句柄
                 // 与按键时记录的 DirectUIHWND 匹配；旧式单窗口仍走回退路径。
                 if (focusWindow != IntPtr.Zero)
                 {
                     if (!TryGetShellViewWindow(window, out var viewWindow)) continue;
+                    hasComparableView = true;
                     // IShellView.GetWindow 返回 SHELLDLL_DefView，焦点在它的子窗口 DirectUIHWND 上，
                     // 所以用「相同或包含」判断，而不是相等。
                     if (viewWindow != focusWindow && !IsChild(viewWindow, focusWindow)) continue;
@@ -319,7 +325,8 @@ internal static class ExplorerSelection
         }
 
         // 某些旧版 Explorer 的 ShellView 不暴露可比较的窗口句柄，保留单窗口兼容路径。
-        if (!matchedWindow && fallbackWindow != null)
+        // 多标签下不能猜第一个窗口；已有可比较的视图却不匹配时也不能回退到旧标签。
+        if (!matchedWindow && candidateCount == 1 && !hasComparableView && fallbackWindow != null)
             paths.AddRange(ReadSelectionFromBrowser(fallbackWindow));
 
         return paths;

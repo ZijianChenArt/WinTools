@@ -654,11 +654,13 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                         await LoadSvgAsync(path, token);
                         break;
                     }
-                    var bitmap = new BitmapImage(ToFileUri(path));
+                    // 同一路径可能已被覆盖；绕过 WinUI 的 URI 图片缓存。
+                    var bitmap = new BitmapImage { CreateOptions = BitmapCreateOptions.IgnoreImageCache };
                     bitmap.ImageOpened += (_, _) => OnContentSized(token, path, bitmap.PixelWidth, bitmap.PixelHeight);
                     bitmap.ImageFailed += (_, e) => { if (token == _loadToken) ImageView_ImageFailed(ImageView, e); };
                     ImageView.Source = bitmap;
                     ShowOnly(ImageSurface);
+                    bitmap.UriSource = ToFileUri(path);
                     break;
 
                 case Kind.Pdf:

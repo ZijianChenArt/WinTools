@@ -316,7 +316,12 @@ public sealed partial class FilePreviewWindow
         image.OpenFailed += (_, _) => { if (token == _loadToken) ShowFallback(path, "无法显示此 SVG", "系统无法渲染此矢量图。用默认程序打开以查看。"); };
         ImageView.Source = image;
         ShowOnly(ImageSurface);
-        image.UriSource = ToFileUri(path);
+        // 使用本次打开的文件流，避免同名 SVG 更新后仍命中 URI 缓存。
+        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
+        if (token != _loadToken) return;
+        using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.Read);
+        if (token != _loadToken) return;
+        await image.SetSourceAsync(stream);
     }
 
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => ChangeZoom(.8f);
