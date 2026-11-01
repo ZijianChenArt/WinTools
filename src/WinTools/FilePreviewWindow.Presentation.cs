@@ -52,6 +52,7 @@ public sealed partial class FilePreviewWindow
 
     private void ResetDocumentState()
     {
+        StopPreviewPan();
         _directoryVersion++;
         _pendingBounds = null;
         _rawText = "";
@@ -85,7 +86,7 @@ public sealed partial class FilePreviewWindow
 
     private void ConfigurePresentation(string path)
     {
-        foreach (var control in new FrameworkElement[] { SourceButton, WrapButton, ListUpButton, SheetSelector, ZoomTools })
+        foreach (var control in new FrameworkElement[] { SourceButton, WrapButton, ListUpButton, SheetSelector })
             control.Visibility = Visibility.Collapsed;
         SourceButton.Content = "源码";
         WrapButton.Content = "自动换行";
@@ -95,7 +96,6 @@ public sealed partial class FilePreviewWindow
         switch (kind)
         {
             case Kind.Image: case Kind.Pdf:
-                ZoomTools.Visibility = Visibility.Visible;
                 width = 720; height = 560; break;
             case Kind.Html: width = 900; height = 640; break;
             case Kind.Text:
@@ -115,23 +115,23 @@ public sealed partial class FilePreviewWindow
             case Kind.Media:
                 width = IsAudio(path) ? 540 : 760; height = IsAudio(path) ? 220 : 520; break;
         }
-        PreviewToolbar.Visibility = kind is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.Archive or Kind.Image or Kind.Pdf
+        PreviewToolbar.Visibility = kind is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.Archive
             ? Visibility.Visible : Visibility.Collapsed;
         SetPreviewBounds(width, height);
     }
 
     private void UpdateCompactHeader()
     {
-        if (MetaText == null || TitleText == null || HeaderHelp == null || HeaderOpen == null) return;
+        if (MetaText == null || TitleText == null || HeaderOpen == null) return;
         var pieces = new[] { _baseMetaText, ViewStatus.Text, FooterText.Text }.Where(s => !string.IsNullOrWhiteSpace(s));
         var details = string.Join(" · ", pieces);
         MetaText.Text = details;
         var width = HeaderBar.ActualWidth;
-        var available = width - PreviewToolbar.ActualWidth - HeaderHelp.ActualWidth - HeaderOpen.ActualWidth - 200;
+        var available = width - PreviewToolbar.ActualWidth - HeaderOpen.ActualWidth - 200;
         MetaText.Visibility = available >= 96 ? Visibility.Visible : Visibility.Collapsed;
         MetaText.MaxWidth = Math.Max(0, Math.Min(320, available));
         ToolTipService.SetToolTip(MetaText, details + "\n" + _modifiedText);
-        ToolTipService.SetToolTip(TitleText, CurrentPath + "\n" + details + "\n" + _modifiedText + "\n空格 / Esc 关闭 · Enter 打开");
+        ToolTipService.SetToolTip(TitleText, CurrentPath + "\n" + details + "\n" + _modifiedText + "\n" + GetPreviewShortcutHelp());
     }
 
     private void ShowFolder(string path, int token)
@@ -169,7 +169,9 @@ public sealed partial class FilePreviewWindow
         if (_previewAnimator.IsBusy) { _pendingBounds = (width, height); return; }
         var scale = CurrentScale();
         var work = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).WorkArea;
-        var fit = PreviewLayoutPolicy.Fit(width, height, work.Width / scale, work.Height / scale);
+        var isPdf = Classify(CurrentPath) == Kind.Pdf;
+        var fit = PreviewLayoutPolicy.Fit(width, height, work.Width / scale, work.Height / scale,
+            isPdf ? PdfMaxWidthRatio : MaxWidthRatio, isPdf ? PdfMaxHeightRatio : MaxHeightRatio);
         var pixelWidth = (int)Math.Round(fit.Width * scale);
         var pixelHeight = (int)Math.Round(fit.Height * scale);
         var old = AppWindow.Size;
@@ -245,13 +247,21 @@ public sealed partial class FilePreviewWindow
 
     private void UpdateShortcutHints()
     {
-        HintText.Text = _paths.Count > 1 && ShellRoot.ActualWidth >= 580 ? "Esc 关闭 · ← → 切换" : "空格 / Esc 关闭";
-        ShortcutHelp.Text = "Esc 关闭预览\n空格 关闭预览（正文焦点）\nEnter 用默认程序打开"
-            + (_paths.Count > 1 ? "\n← → 切换文件" : "")
-            + (Classify(CurrentPath) is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.Archive or Kind.Folder or Kind.Pdf or Kind.Html
+        var isPdf = Classify(CurrentPath) == Kind.Pdf;
+        HintText.Text = isPdf ? "Esc 关闭 · ← → 翻页"
+            : _paths.Count > 1 && ShellRoot.ActualWidth >= 580 ? "Esc 关闭 · ← → 切换" : "空格 / Esc 关闭";
+        ToolTipService.SetToolTip(HintText, GetPreviewShortcutHelp());
+    }
+
+    private string GetPreviewShortcutHelp()
+    {
+        var kind = Classify(CurrentPath);
+        return "Esc 关闭预览\n空格 关闭预览（正文焦点）\nEnter 用默认程序打开"
+            + (kind == Kind.Pdf ? "\n← 上一页 / → 下一页" : _paths.Count > 1 ? "\n← → 切换文件" : "")
+            + (kind is Kind.Image or Kind.Pdf ? "\nCtrl + 滚轮 缩放\n放大后按住鼠标左键拖动画面" : "")
+            + (kind is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.Archive or Kind.Folder or Kind.Pdf or Kind.Html
                 ? "\n↑ ↓ / PageUp / PageDown 滚动" : "")
             + "\n按钮、滑条和输入框保留各自的键盘操作。";
-        ToolTipService.SetToolTip(HintText, ShortcutHelp.Text);
     }
 
     private bool ScrollActiveContent(VirtualKey key)
@@ -322,19 +332,6 @@ public sealed partial class FilePreviewWindow
         using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.Read);
         if (token != _loadToken) return;
         await image.SetSourceAsync(stream);
-    }
-
-    private void ZoomOut_Click(object sender, RoutedEventArgs e) => ChangeZoom(.8f);
-    private void ZoomIn_Click(object sender, RoutedEventArgs e) => ChangeZoom(1.25f);
-    private void ZoomFit_Click(object sender, RoutedEventArgs e)
-    {
-        var scroll = PdfView.Visibility == Visibility.Visible ? PdfView : ImageSurface;
-        scroll.ChangeView(0, 0, 1, true);
-    }
-    private void ChangeZoom(float factor)
-    {
-        var scroll = PdfView.Visibility == Visibility.Visible ? PdfView : ImageSurface;
-        scroll.ChangeView(null, null, Math.Clamp(scroll.ZoomFactor * factor, scroll.MinZoomFactor, scroll.MaxZoomFactor));
     }
 
     private void WrapButton_Click(object sender, RoutedEventArgs e)

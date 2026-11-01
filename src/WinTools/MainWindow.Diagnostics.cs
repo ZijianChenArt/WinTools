@@ -30,11 +30,14 @@ public sealed partial class MainWindow
         {
             Directory.CreateDirectory(output);
             await Task.Delay(3500);
+            if (Environment.GetEnvironmentVariable("WINTOOLS_NAV_QA_PAGE") == NavTags.TaskbarInfo)
+                MainNav.SelectedItem = NavItemTaskbarInfo;
             var reports = new List<object>();
             foreach (var (name, width, height, open) in new[]
             {
                 ("expanded", 1040, 760, true),
                 ("compact", 760, 650, false),
+                ("narrow", 600, 650, false),
                 ("short", 900, 450, true),
                 ("wide", 1600, 900, true),
             })

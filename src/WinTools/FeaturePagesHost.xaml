@@ -231,7 +231,7 @@
                 <StackPanel>
                     <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
                     <StackPanel Style="{StaticResource PageCardStackStyle}">
-                        <tk:SettingsCard Header="显示位置" Description="选择信息区在任务栏上的位置">
+                        <tk:SettingsCard Header="显示位置" Description="选择额度信息在任务栏上的位置；悬浮按钮可独立拖动">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE8B9;"/>
                             </tk:SettingsCard.HeaderIcon>
@@ -240,11 +240,20 @@
                                 <ComboBoxItem Content="居中"/>
                             </ComboBox>
                         </tk:SettingsCard>
-                        <tk:SettingsCard Header="悬浮高度" Description="任务栏图标与信息区对齐方式相同时，仅按钮悬浮在上方；额度留在任务栏。这里设置悬浮按钮与任务栏的距离">
+                        <tk:SettingsCard Header="悬浮快捷按钮" Description="开启后按钮独立悬浮，可拖动最左侧把手调整位置；关闭后按钮放回任务栏。额度信息仍留在任务栏">
+                            <tk:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE8A7;"/>
+                            </tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarFloatingToggle" OnContent="开" OffContent="关" Toggled="TaskbarFloating_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="TaskbarFloatGapCard" Header="悬浮高度" Description="设置初始位置与任务栏的距离。拖动后会记住新位置；修改高度或重置位置后恢复居中悬浮">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE74A;"/>
                             </tk:SettingsCard.HeaderIcon>
-                            <NumberBox x:Name="TaskbarFloatGapBox" Minimum="0" Maximum="400" SmallChange="2" LargeChange="10" Style="{StaticResource PageSettingNumberBoxStyle}" ValueChanged="TaskbarFloatGap_ValueChanged"/>
+                            <StackPanel Style="{StaticResource PageInlineControlsStyle}">
+                                <NumberBox x:Name="TaskbarFloatGapBox" Minimum="0" Maximum="400" SmallChange="2" LargeChange="10" Style="{StaticResource PageSettingNumberBoxStyle}" ValueChanged="TaskbarFloatGap_ValueChanged"/>
+                                <Button Content="重置位置" Click="TaskbarFloatPositionReset_Click"/>
+                            </StackPanel>
                         </tk:SettingsCard>
                     </StackPanel>
 

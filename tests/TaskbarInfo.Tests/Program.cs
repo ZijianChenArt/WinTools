@@ -83,15 +83,15 @@ if (TaskbarHoverMotion.ScaleAt(interrupted, .75f, 0) != interrupted)
     throw new Exception("Reversing hover motion jumped at its first frame");
 Console.WriteLine("Fixed hover center, easing, interruption, alignment and screen-edge checks passed.");
 
-// 四种对齐：相同则按钮悬浮、额度放到另一侧；不同则在任务栏并排显示。
+// 悬浮独立于两种对齐：悬浮时额度仍按用户选择的位置显示，非悬浮时避开按钮。
 foreach (var infoCentered in new[] { false, true })
 foreach (var iconsCentered in new[] { false, true })
+foreach (var floating in new[] { false, true })
 {
-    var floating = infoCentered == iconsCentered;
     var preferred = TaskbarStripPlacement.QuotaPreferredLeft(0, 1200, 200, 8,
         infoCentered, floating, floating ? null : 300);
-    var expected = floating ? (infoCentered ? 8 : 500) : 308;
-    if (preferred != expected) throw new Exception("Four-way quota alignment policy failed");
+    var expected = floating ? (infoCentered ? 500 : 8) : 308;
+    if (preferred != expected) throw new Exception("Independent floating/quota alignment policy failed");
     var blocked = iconsCentered
         ? new[] { (Left: 450, Right: 750), (Left: 1100, Right: 1200) }
         : new[] { (Left: 0, Right: 350), (Left: 1100, Right: 1200) };
@@ -112,4 +112,22 @@ if (TaskbarStripPlacement.TryFind(0, 500, new[] { (Left: 0, Right: 500) }, 80, 8
 if (!TaskbarStripPlacement.TryFind(0, 900, new[] { (Left: 8, Right: 200), (Left: 700, Right: 900) },
         200, 208, 8, out var besideButtons) || besideButtons != 208)
     throw new Exception("Quota must reserve the in-taskbar buttons");
-Console.WriteLine("Four taskbar alignments, icon/button avoidance, negative monitor and full-taskbar checks passed.");
+Console.WriteLine("Independent floating, taskbar alignment, icon/button avoidance, negative monitor and full-taskbar checks passed.");
+
+// 拖动位置以完整尺寸的中心/底边保存，悬停缩放与显示器变化不应把它拉回任务栏中间。
+foreach (var work in new[] { (Left: 0, Top: 0, Right: 1920, Bottom: 1040), (Left: -1920, Top: -1080, Right: 0, Bottom: 0) })
+foreach (var requested in new[] { (X: int.MinValue, Y: int.MinValue), (X: 500, Y: 400), (X: int.MaxValue, Y: int.MaxValue) })
+{
+    var anchor = TaskbarFloatPlacement.ClampAnchor(requested.X, requested.Y, 201, 63,
+        work.Left, work.Top, work.Right, work.Bottom);
+    var expanded = TaskbarFloatPlacement.Position(anchor.CenterX, anchor.BottomY, 201, 63);
+    if (expanded.X < work.Left || expanded.X + 201 > work.Right || expanded.Y < work.Top || expanded.Y + 63 > work.Bottom)
+        throw new Exception("Expanded floating toolbar escaped the target monitor");
+    var idle = TaskbarFloatPlacement.Position(anchor.CenterX, anchor.BottomY, 151, 47);
+    if (Math.Abs((expanded.X + 201 / 2d) - (idle.X + 151 / 2d)) > .51 || expanded.Y + 63 != idle.Y + 47)
+        throw new Exception("Dragged floating anchor moved during hover scaling");
+}
+var saved = TaskbarFloatPlacement.ClampAnchor(600, 500, 200, 60, 0, 0, 1920, 1040);
+if (saved != (600, 500) || TaskbarFloatPlacement.Position(saved.CenterX, saved.BottomY, 200, 60) != (500, 440))
+    throw new Exception("Valid custom floating position was reset");
+Console.WriteLine("Floating anchor persistence, hover stability, screen edges and negative-monitor checks passed.");

@@ -14,6 +14,7 @@ internal sealed partial class TaskbarInfoService
     {
         _pointerInside = true;
         _leaveAfter = 0;
+        if (_draggingFloat) return;
         if (!_floating) { SafeTick(); return; }
         AnimateHover(1);
     }
@@ -30,6 +31,7 @@ internal sealed partial class TaskbarInfoService
 
     private void HoverFrame()
     {
+        if (_draggingFloat) { _hoverTimer.Stop(); return; }
         if (_disposed || !_enabled || !_visible) { ResetHover(); return; }
         if (_leaveAfter != 0 && Environment.TickCount64 >= _leaveAfter)
         {

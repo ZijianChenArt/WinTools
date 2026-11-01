@@ -146,7 +146,16 @@ public class Config : ObservableObject
     private string _taskbarInfoAlignment = "left";
     [JsonPropertyName("taskbarInfoAlignment")]
     public string TaskbarInfoAlignment { get => _taskbarInfoAlignment; set => SetProperty(ref _taskbarInfoAlignment, value == "center" ? "center" : "left"); }
-    // 图标与信息条对齐方式相同时信息条悬浮在任务栏上方，这是它与任务栏上沿的距离（DIP）。
+    private bool _taskbarInfoFloating = true;
+    [JsonPropertyName("taskbarInfoFloating")]
+    public bool TaskbarInfoFloating { get => _taskbarInfoFloating; set => SetProperty(ref _taskbarInfoFloating, value); }
+    // 悬浮快捷按钮的展开尺寸中心与底边（屏幕物理像素）；未拖动时按任务栏上方居中放置。
+    private int? _taskbarFloatCenterX, _taskbarFloatBottomY;
+    [JsonPropertyName("taskbarFloatCenterX")]
+    public int? TaskbarFloatCenterX { get => _taskbarFloatCenterX; set => SetProperty(ref _taskbarFloatCenterX, value); }
+    [JsonPropertyName("taskbarFloatBottomY")]
+    public int? TaskbarFloatBottomY { get => _taskbarFloatBottomY; set => SetProperty(ref _taskbarFloatBottomY, value); }
+    // 未拖动时，悬浮快捷按钮与任务栏上沿的距离（DIP）。
     private int _taskbarFloatGap = 10;
     [JsonPropertyName("taskbarFloatGap")]
     public int TaskbarFloatGap { get => _taskbarFloatGap; set => SetProperty(ref _taskbarFloatGap, Math.Clamp(value, 0, 400)); }

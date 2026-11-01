@@ -12,6 +12,8 @@ public sealed partial class FeaturePagesHost : UserControl
     internal MainWindow? Owner { get; set; }
     private void TaskbarAlignment_Changed(object sender, SelectionChangedEventArgs e) => Owner?.TaskbarAlignment_Changed(sender, e);
     private void TaskbarFloatGap_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args) => Owner?.TaskbarFloatGap_ValueChanged(sender, args);
+    private void TaskbarFloating_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarFloating_Toggled(sender, e);
+    private void TaskbarFloatPositionReset_Click(object sender, RoutedEventArgs e) => Owner?.TaskbarFloatPositionReset_Click(sender, e);
     private void QuotaConnect_Click(object sender, RoutedEventArgs e) => Owner?.QuotaConnect_Click(sender, e);
     private void QuotaCheck_Click(object sender, RoutedEventArgs e) => Owner?.QuotaCheck_Click(sender, e);
     private void QuotaCancel_Click(object sender, RoutedEventArgs e) => Owner?.QuotaCancel_Click(sender, e);

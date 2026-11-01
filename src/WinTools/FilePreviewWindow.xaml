@@ -18,12 +18,12 @@
         <Grid x:Name="HeaderBar" Style="{StaticResource PreviewHeaderStyle}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <Grid x:Name="HeaderDragRegion"><TextBlock x:Name="TitleText" Style="{StaticResource PreviewTitleStyle}"/></Grid>
             <TextBlock x:Name="MetaText" Grid.Column="1" Style="{StaticResource PreviewCaptionStyle}"/>
         <Grid x:Name="PreviewToolbar" Grid.Column="2" Style="{StaticResource PreviewToolbarStyle}" Visibility="Collapsed">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button x:Name="SourceButton" Content="源码" Style="{StaticResource PreviewActionStyle}" Visibility="Collapsed"
                         Click="SourceButton_Click" ToolTipService.ToolTip="切换阅读视图与原文"/>
@@ -34,16 +34,8 @@
                           SelectionChanged="SheetSelector_SelectionChanged" AutomationProperties.Name="工作表"/>
             </StackPanel>
             <TextBlock x:Name="ViewStatus" Visibility="Collapsed" Grid.Column="1" Style="{StaticResource PreviewViewStatusStyle}"/>
-            <StackPanel x:Name="ZoomTools" Grid.Column="2" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
-                <Button Content="−" Style="{StaticResource PreviewActionStyle}" Click="ZoomOut_Click" ToolTipService.ToolTip="缩小" AutomationProperties.Name="缩小"/>
-                <Button Content="适合" Style="{StaticResource PreviewActionStyle}" Click="ZoomFit_Click" ToolTipService.ToolTip="适合窗口"/>
-                <Button Content="+" Style="{StaticResource PreviewActionStyle}" Click="ZoomIn_Click" ToolTipService.ToolTip="放大" AutomationProperties.Name="放大"/>
-            </StackPanel>
         </Grid>
-            <Button x:Name="HeaderHelp" Grid.Column="3" Content="?" Style="{StaticResource PreviewActionStyle}" AutomationProperties.Name="快捷键帮助">
-                <Button.Flyout><Flyout><TextBlock x:Name="ShortcutHelp" TextWrapping="Wrap" Style="{StaticResource PreviewHelpTextStyle}"/></Flyout></Button.Flyout>
-            </Button>
-            <Button x:Name="HeaderOpen" Grid.Column="4" Content="打开" Style="{StaticResource PreviewActionStyle}"
+            <Button x:Name="HeaderOpen" Grid.Column="3" Content="打开" Style="{StaticResource PreviewActionStyle}"
                     Click="OpenButton_Click" ToolTipService.ToolTip="用默认程序打开（Enter）"/>
         </Grid>
         <!-- 内容区：同一时间只显示其中一个。 -->

@@ -16,8 +16,7 @@ namespace WinTools;
 /// <summary>A non-activating taskbar overlay; does not inject into Explorer.</summary>
 /// <remarks>
 /// Position and size come from <c>TaskbarInfoService.Layout.cs</c>: the overlay follows the selected left / center
-/// alignment, floats above the taskbar when that position overlaps an icon cluster, and shrinks through fixed levels
-/// only when the taskbar is too narrow.
+/// alignment in the taskbar, or uses an independently enabled draggable floating button bar. Quota stays in the taskbar.
 /// </remarks>
 internal sealed partial class TaskbarInfoService : IDisposable
 {
@@ -61,6 +60,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private IntPtr _taskbarOwner;
     private bool _visible;
     private bool _floating; // 悬浮在任务栏上方：画一张胶囊形半透明底卡，弹窗从信息条上沿弹出
+    private bool _floatingEnabled;
     private int _floatGap = 10; // 悬浮时与任务栏上沿的距离（DIP），设置页可调
     private const float FloatingIdleScale = .75f;
     private bool _pointerInside;
@@ -95,10 +95,14 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     internal void Apply(Config config)
     {
+        StopFloatingDrag();
         ResetHover();
         _enabled = config.EnableTaskbarInfo;
         _actions = _quotaSource == null && config.TaskbarInfoActions;
         _centered = config.TaskbarInfoAlignment == "center";
+        _floatingEnabled = _quotaSource == null && config.TaskbarInfoFloating;
+        _floatCenterX = config.TaskbarFloatCenterX;
+        _floatBottomY = config.TaskbarFloatBottomY;
         _floatGap = config.TaskbarFloatGap;
         _iconIds = new[]
         {
@@ -160,6 +164,12 @@ internal sealed partial class TaskbarInfoService : IDisposable
         if (bar.Right - bar.Left < bar.Bottom - bar.Top || bar.Top < monitor.Monitor.Bottom - 200
             || Math.Min(bar.Bottom, monitor.Monitor.Bottom) - Math.Max(bar.Top, monitor.Monitor.Top) < (bar.Bottom - bar.Top) * .75)
         { Hide(); return; }
+        // 自由拖动只改变按钮窗的位置；额度和任务栏扫描仍使用原任务栏。跨屏保留任务栏的 DPI。
+        if (FloatingButtons && _floatCenterX is int centerX && _floatBottomY is int bottomY)
+        {
+            var target = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
+            if (GetMonitorInfo(MonitorFromPoint(new POINT { X = centerX, Y = (int)Math.Max(int.MinValue, (long)bottomY - 1) }, 2), ref target)) monitor = target;
+        }
         var foreground = GetForegroundWindow();
         if (foreground != IntPtr.Zero && foreground != taskbar && GetWindowRect(foreground, out var front)
             && front.Left <= monitor.Monitor.Left && front.Top <= monitor.Monitor.Top
@@ -177,31 +187,38 @@ internal sealed partial class TaskbarInfoService : IDisposable
             PollStatus();
             _quotaOverlay?.CopyQuotaState();
         }
-        if (!TryPlace(bar, scale, out var layout, out var x, out var floating)) { Hide(false); return; }
+        if (!TryPlace(bar, monitor.Work, scale, out var layout, out var x, out var floating)) { Hide(false); return; }
         // 只收小悬浮模式。间距仍使用屏幕 DPI，不能随内容缩放；底边固定，展开向上生长。
         var screenScale = scale;
         if (floating)
         {
             var expandedWidth = FloatingWidth(layout, scale);
+            var expandedHeight = height + 2 * FloatingPadY(scale);
+            var anchor = TaskbarFloatPlacement.ClampAnchor(
+                _floatCenterX ?? bar.Left + (bar.Right - bar.Left) / 2,
+                _floatBottomY ?? bar.Top - (int)(_floatGap * screenScale), expandedWidth, expandedHeight,
+                monitor.Work.Left, monitor.Work.Top, monitor.Work.Right, monitor.Work.Bottom);
+            _resolvedFloatCenterX = anchor.CenterX;
+            _resolvedFloatBottomY = anchor.BottomY;
             scale *= _floatingScale;
             height = Math.Max(1, (int)(height * _floatingScale));
             // 保持同一档内容，避免动画中途因可用宽度变化增减入口。
             layout = BuildLayout(layout.Level, scale);
             var floatingWidth = FloatingWidth(layout, scale);
-            x = TaskbarHoverMotion.Left(x, expandedWidth, floatingWidth, bar.Left, Math.Max(bar.Left, bar.Right - floatingWidth));
+            x = TaskbarFloatPlacement.Position(anchor.CenterX, anchor.BottomY, floatingWidth, 0).X;
         }
         Place(layout, scale);
         _floating = floating;
         var width = floating ? FloatingWidth(layout, scale) : layout.Width;
-        if (x + width > bar.Right) { Hide(); return; }
+        if (!floating && x + width > bar.Right) { Hide(); return; }
         // 悬浮时上下各加一段内边距，内容区（气泡、图标）和在任务栏里时完全一样。
         var padY = floating ? FloatingPadY(scale) : 0;
         var windowHeight = height + 2 * padY;
         var y = floating
-            ? Math.Max(monitor.Monitor.Top, bar.Top - windowHeight - (int)(_floatGap * screenScale))
+            ? TaskbarFloatPlacement.Position(_resolvedFloatCenterX, _resolvedFloatBottomY, width, windowHeight).Y
             : bar.Top + (bar.Bottom - bar.Top - height) / 2;
         // 尺寸变化后用新的屏幕坐标重算命中，避免仍高亮 / 点击缩小状态下的旧按钮。
-        _hoveredButton = _pointerInside && GetCursorPos(out var cursor)
+        _hoveredButton = !_draggingFloat && _pointerInside && GetCursorPos(out var cursor)
             && cursor.X >= x && cursor.X < x + width && cursor.Y >= y && cursor.Y < y + windowHeight
             ? HitAt(cursor.X - x) : -1;
         var dark = (int?)Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) != 1;
@@ -223,7 +240,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             WarmAudioPicker();
         }
         var placement = $"任务栏{(floating ? "上方悬浮区域" : "显示区域")}：{x},{y}，{width}×{height}，收缩级别 {layout.Level}";
-        if (!_hoverTimer.IsRunning && _lastPlacement != placement)
+        if (!_draggingFloat && !_hoverTimer.IsRunning && _lastPlacement != placement)
         {
             _lastPlacement = placement;
             ErrorReporter.Log("TaskbarInfo.Placement", placement);
@@ -239,6 +256,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     private void Hide(bool includeQuota = true)
     {
+        StopFloatingDrag();
         if (includeQuota) _quotaOverlay?.Hide();
         ResetHover();
         if (!_visible) return;
@@ -286,6 +304,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, nuint id, nuint data)
     {
+        if (HandleFloatingDrag(hwnd, message, wParam, out var dragResult)) return dragResult;
         // Keep typing focus in the previous app. The native tray menu supplies keyboard access.
         if (message == 0x0021) return new IntPtr(3); // MA_NOACTIVATE
         if (message == 0x0084) return new IntPtr(1); // HTCLIENT (STATIC otherwise passes input to its parent)
@@ -427,6 +446,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
             using var font = new Font("Microsoft YaHei UI", 12 * scale, FontStyle.Regular, GraphicsUnit.Pixel);
             using var foreground = new SolidBrush(dark ? Color.WhiteSmoke : Color.FromArgb(30, 30, 35));
+            if (_floating) DrawDragHandle(graphics, scale, height, dark);
             using var format = new StringFormat { LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
             using var refreshFormat = new StringFormat(format) { Alignment = StringAlignment.Center };
             if (_codexDrawWidth > 0)
@@ -489,6 +509,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        StopFloatingDrag();
         _disposed = true;
         _quotaOverlay?.Dispose();
         _hoverTimer.Stop();
@@ -522,6 +543,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int count);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(POINT point, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int w, int h, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int show);

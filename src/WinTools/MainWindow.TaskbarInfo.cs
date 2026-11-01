@@ -18,7 +18,9 @@ public sealed partial class MainWindow
         {
             TaskbarControl<ToggleSwitch>("TaskbarInfoToggle").IsOn = _config.EnableTaskbarInfo;
             TaskbarControl<ComboBox>("TaskbarAlignmentBox").SelectedIndex = _config.TaskbarInfoAlignment == "center" ? 1 : 0;
+            TaskbarControl<ToggleSwitch>("TaskbarFloatingToggle").IsOn = _config.TaskbarInfoFloating;
             SetNumberBoxValue(TaskbarControl<NumberBox>("TaskbarFloatGapBox"), _config.TaskbarFloatGap);
+            TaskbarControl<SettingsCard>("TaskbarFloatGapCard").IsEnabled = _config.TaskbarInfoFloating;
             LoadTaskbarEntries();
             UpdateTaskbarInfoStatus();
         }
@@ -86,6 +88,7 @@ public sealed partial class MainWindow
         {
             c.EnableTaskbarInfo = _config.EnableTaskbarInfo;
             c.TaskbarInfoAlignment = _config.TaskbarInfoAlignment;
+            c.TaskbarInfoFloating = _config.TaskbarInfoFloating;
             c.TaskbarFloatGap = _config.TaskbarFloatGap;
             c.TaskbarInfoActions = _config.TaskbarInfoActions;
             c.TaskbarShowLibrary = _config.TaskbarShowLibrary;
@@ -111,12 +114,36 @@ public sealed partial class MainWindow
         SaveTaskbarInfoSettings();
     }
 
+    internal void TaskbarFloating_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTaskbarInfo) return;
+        _config.TaskbarInfoFloating = ((ToggleSwitch)sender).IsOn;
+        TaskbarControl<SettingsCard>("TaskbarFloatGapCard").IsEnabled = _config.TaskbarInfoFloating;
+        SaveTaskbarInfoSettings();
+    }
+
+    internal void TaskbarFloatPositionReset_Click(object sender, RoutedEventArgs e)
+    {
+        if (_loadingTaskbarInfo) return;
+        ResetTaskbarFloatingPosition();
+        SaveTaskbarInfoSettings();
+    }
+
+    private void ResetTaskbarFloatingPosition()
+    {
+        _config.TaskbarFloatCenterX = null;
+        _config.TaskbarFloatBottomY = null;
+        // ConfigService.Update reads a separate snapshot; update just these fields when explicitly resetting.
+        ConfigService.Update(c => { c.TaskbarFloatCenterX = null; c.TaskbarFloatBottomY = null; });
+    }
+
     internal void TaskbarFloatGap_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
     {
         if (_loadingTaskbarInfo) return;
         // 清空输入框时恢复为当前值，不写入配置。
         if (double.IsNaN(sender.Value)) { SetNumberBoxValue(sender, _config.TaskbarFloatGap); return; }
         _config.TaskbarFloatGap = (int)Math.Round(sender.Value);
+        ResetTaskbarFloatingPosition();
         SaveTaskbarInfoSettings();
     }
 

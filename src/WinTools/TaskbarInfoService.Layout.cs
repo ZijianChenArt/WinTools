@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using Microsoft.Win32;
 using WinTools.Services;
 
 namespace WinTools;
@@ -17,11 +16,13 @@ internal sealed partial class TaskbarInfoService
     private readonly record struct Layout(int Level, int IconCount, int Audio, bool Menu, bool Compact, int Codex, int Claude, int Width);
 
     private const int LastLevel = 5;
+    private const int DragHandleDip = 20;
+    private bool FloatingButtons => _quotaSource == null && _floatingEnabled;
 
     private Layout BuildLayout(int level, float scale)
     {
         var button = (int)(36 * scale);
-        var pad = (int)(8 * scale);
+        var pad = (int)((8 + (FloatingButtons ? DragHandleDip : 0)) * scale);
         var gap = (int)(8 * scale);
         var icons = _iconIds.Length;
         if (level >= LastLevel)
@@ -57,37 +58,32 @@ internal sealed partial class TaskbarInfoService
         return default;
     }
 
-    private bool TryPlace(RECT bar, float scale, out Layout layout, out int x, out bool floating)
+    private bool TryPlace(RECT bar, RECT floatingArea, float scale, out Layout layout, out int x, out bool floating)
     {
         floating = false;
         if (_quotaSource != null) return TryPlaceQuota(bar, scale, out layout, out x);
         var margin = (int)(8 * scale);
         var barWidth = bar.Right - bar.Left;
-        // 任务栏图标的对齐方式和信息条一致（都居中 / 都偏左）时，信息条横向必然压在图标上：
-        // 改为悬浮在任务栏上方——居中时在开始按钮正上方居中，偏左时在左侧图标上方，
-        // 宽度不受图标间空隙限制，按整条任务栏宽度选最完整的一档；也不用等图标扫描。
-        if (_centered == TaskbarIconsCentered())
+        // 是否悬浮仅由独立开关决定；悬浮按钮默认居中，任务栏额度的对齐不影响它。
+        if (_floatingEnabled)
         {
-            layout = ChooseLayout(Math.Max(1, barWidth - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
-            x = _centered ? bar.Left + (barWidth - FloatingWidth(layout, scale)) / 2 : bar.Left + margin;
+            var available = floatingArea.Right - floatingArea.Left;
+            layout = ChooseLayout(Math.Max(1, available - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
+            x = floatingArea.Left + (available - FloatingWidth(layout, scale)) / 2;
             floating = layout.Width > 0;
-            if (floating) return true;
+            return floating;
         }
 
         var clusters = CurrentClusters(bar);
         if (clusters == null)
         {
-            // 还没拿到图标位置就先别画：此时用保守估计会把信息条放在 bar.Left 上，
-            // 正好压在任务栏左侧的系统图标（小组件等）上，直到下一次扫描完成才跳开。
-            if (!_scanSettled) { layout = default; x = 0; return false; }
-            // 扫描不可用时只允许按钮悬浮；额度窗口等待可信空隙，避免遮住系统图标。
-            layout = ChooseLayout(Math.Max(1, barWidth - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
-            x = _centered ? bar.Left + (barWidth - FloatingWidth(layout, scale)) / 2 : bar.Left + margin;
-            floating = layout.Width > 0;
-            return floating;
+            // 没有可信图标位置时不盲放；关闭悬浮后也不能因扫描失败而自行变成悬浮。
+            layout = default;
+            x = 0;
+            return false;
         }
 
-        // 对齐不同：先尝试把按钮和额度作为完整一组放在任务栏里，但仍独立绘制。
+        // 先尝试把按钮和额度作为完整一组放在任务栏里，但仍独立绘制。
         for (var level = 0; level <= 1; level++)
         {
             var candidate = BuildLayout(level, scale);
@@ -99,11 +95,19 @@ internal sealed partial class TaskbarInfoService
             layout = candidate;
             return true;
         }
-        // 空间不足时保留完整按钮，在上方悬浮，额度仍单独寻找任务栏空位。
-        layout = ChooseLayout(Math.Max(1, barWidth - 2 * margin - (int)(FloatingInsetDip * scale)), scale);
-        x = _centered ? bar.Left + (barWidth - FloatingWidth(layout, scale)) / 2 : bar.Left + margin;
-        floating = layout.Width > 0;
-        return floating;
+        // 没有完整组的空位时，按钮逐级收缩，额度另找安全空位；不自动改为悬浮。
+        for (var level = 0; level <= LastLevel; level++)
+        {
+            var candidate = BuildLayout(level, scale);
+            if (candidate.Width <= 0) break;
+            var preferred = _centered ? bar.Left + (barWidth - candidate.Width) / 2 : bar.Left + margin;
+            if (!TaskbarStripPlacement.TryFind(bar.Left, bar.Right, clusters, candidate.Width, preferred, margin, out x)) continue;
+            layout = candidate;
+            return true;
+        }
+        layout = default;
+        x = 0;
+        return false;
     }
 
     // 悬浮胶囊四边留白一致：额度气泡（高 34dip）到胶囊上、下、右边缘都是 FloatingInsetDip；
@@ -116,16 +120,12 @@ internal sealed partial class TaskbarInfoService
     /// <summary>上下补的内边距：任务栏里气泡离内容区上下边缘已有 3dip，所以补 Inset - 3。</summary>
     private static int FloatingPadY(float scale) => (int)((FloatingInsetDip - 3) * scale);
 
-    /// <summary>任务栏图标是否居中（设置 → 个性化 → 任务栏行为 → 任务栏对齐方式）；没有该值时是 Win11 默认的居中。</summary>
-    private static bool TaskbarIconsCentered() =>
-        Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarAl", 1) is not int value || value != 0;
-
     /// <summary>把选定的布局换算成各元素的位置，供绘制与点击命中共用。</summary>
     private void Place(Layout layout, float scale)
     {
         _layout = layout;
         _buttonWidth = (int)(36 * scale);
-        _buttonStart = (int)(8 * scale);
+        _buttonStart = (int)((8 + (FloatingButtons ? DragHandleDip : 0)) * scale);
         var gap = 8 * scale;
         _shownIcons = layout.Menu ? new[] { MenuId } : _iconIds;
 

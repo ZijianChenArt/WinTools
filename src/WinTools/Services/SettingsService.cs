@@ -86,6 +86,9 @@ public sealed class SettingsService
         var defaults = ConfigService.GetDefault();
         Current.EnableTaskbarInfo = defaults.EnableTaskbarInfo;
         Current.TaskbarInfoAlignment = defaults.TaskbarInfoAlignment;
+        Current.TaskbarInfoFloating = defaults.TaskbarInfoFloating;
+        Current.TaskbarFloatCenterX = defaults.TaskbarFloatCenterX;
+        Current.TaskbarFloatBottomY = defaults.TaskbarFloatBottomY;
         Current.TaskbarFloatGap = defaults.TaskbarFloatGap;
         Current.TaskbarInfoActions = defaults.TaskbarInfoActions;
         Current.TaskbarShowLibrary = defaults.TaskbarShowLibrary;

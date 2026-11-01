@@ -25,7 +25,7 @@ using WinTools.Services;
 namespace WinTools;
 
 /// <summary>
-/// 文件预览（仿 QuickLook）：桌面卡片里选中项目按空格呼出，Esc / 空格关闭，左右键切换同一卡片里的文件。
+/// 文件预览（仿 QuickLook）：选中项目按空格呼出，Esc / 空格关闭，左右键在 PDF 中翻页、其它类型切换文件。
 /// 只做常用格式：图片、PDF（逐页）、文本与代码、音视频；其余类型显示系统图标。
 /// </summary>
 /// <remarks>
@@ -40,6 +40,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     // 图片、视频、PDF按比例；文本、列表等由Presentation分部按内容测量。所有尺寸均为DIP。
     private const double MaxWidthRatio = 0.85;
     private const double MaxHeightRatio = 0.82;
+    private const double PdfMaxWidthRatio = 0.90;
+    private const double PdfMaxHeightRatio = 0.90;
     private const double MinWidthDip = 380;
     private const double MinHeightDip = 180;
     private const double DefaultWidthDip = 640;
@@ -148,6 +150,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             TryStartMediaPlayback();
         };
         InitializeMediaControls();
+        InitializeZoomInteractions();
         HeaderBar.SizeChanged += (_, _) => UpdateCompactHeader();
         PreviewToolbar.SizeChanged += (_, _) => UpdateCompactHeader();
         ViewStatus.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) => UpdateCompactHeader());
@@ -352,6 +355,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         if (!_isOpen) return;
         _isOpen = false;
+        StopPreviewPan();
         _loadToken++;
         _contentCancellation.Cancel();
         _mediaTimer?.Stop();
@@ -449,7 +453,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     /// <summary>
     /// 按内容调整窗口大小，窗口中心保持不动（与 QuickLook 一样，小图片就是小窗口）。
-    /// 传入内容尺寸按DIP计算；整体等比缩小，计入标题/工具条/播放条，并受当前屏幕工作区限制。
+    /// 传入内容尺寸按DIP计算；整体等比适配，large允许放大，计入标题/工具条/播放条，并受当前屏幕工作区限制。
     /// </summary>
     private void ApplyWindowSize(double? contentWidth, double? contentHeight, bool large = false)
     {
@@ -459,14 +463,15 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             // 用窗口自己所在的显示器，而不是光标所在的：切换文件时窗口不能被挪到别的屏幕上。
             var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
             if (_userSized) return;
-            var maxWidth = Math.Min(1100, work.Width * MaxWidthRatio / scale);
-            var maxHeight = work.Height * MaxHeightRatio / scale;
-            var chromeHeight = ChromeHeightDip + ToolbarHeight + _frameHeightDip + (Classify(CurrentPath) == Kind.Media ? MediaBarHeightDip : 0);
+            var kind = Classify(CurrentPath);
+            var maxWidth = Math.Min(kind == Kind.Pdf ? 1300 : 1100, work.Width * (kind == Kind.Pdf ? PdfMaxWidthRatio : MaxWidthRatio) / scale);
+            var maxHeight = work.Height * (kind == Kind.Pdf ? PdfMaxHeightRatio : MaxHeightRatio) / scale;
+            var chromeHeight = ChromeHeightDip + ToolbarHeight + _frameHeightDip + (kind == Kind.Media ? MediaBarHeightDip : 0);
 
             double width, height;
             if (contentWidth is > 0 && contentHeight is > 0)
             {
-                var fit = Math.Min(1.0, Math.Min(
+                var fit = Math.Min(large ? double.PositiveInfinity : 1.0, Math.Min(
                     (maxWidth - ChromeWidthDip - _frameWidthDip) / contentWidth.Value,
                     Math.Max(1, maxHeight - chromeHeight) / contentHeight.Value));
                 width = contentWidth.Value * fit + ChromeWidthDip + _frameWidthDip;
@@ -533,7 +538,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private void OpenButton_Click(object sender, RoutedEventArgs e) => OpenWithDefaultApp();
 
     /// <summary>
-    /// 窗口级的按键：空格 / Esc 关闭，← → 切换文件，Enter 用默认程序打开。
+    /// 窗口级的按键：空格 / Esc 关闭，← → 在 PDF 中翻页、其它类型切换文件，Enter 用默认程序打开。
     /// ↑ ↓ 与 PageUp / PageDown 滚动当前内容，避免同一按键随文件类型变成切换文件。
     /// 返回是否已处理。WebView2 里的按键也走这里（它是独立窗口，按键不经过 PreviewKeyDown）。
     /// </summary>
@@ -541,12 +546,18 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         if (!_isOpen) return false;
 
-        var isPdf = _pdfPath != null && string.Equals(_pdfPath, CurrentPath, StringComparison.OrdinalIgnoreCase);
+        var isPdf = Classify(CurrentPath) == Kind.Pdf;
         switch (key)
         {
             case VirtualKey.Escape:
             case VirtualKey.Space:
                 HideWindow();
+                return true;
+            case VirtualKey.Left when isPdf:
+                StepPdfPage(-1);
+                return true;
+            case VirtualKey.Right when isPdf:
+                StepPdfPage(1);
                 return true;
             case VirtualKey.Left:
                 _ = StepFileAsync(-1);
@@ -580,6 +591,16 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private void ScrollPdf(double delta)
     {
         PdfView.ChangeView(null, Math.Max(0, PdfView.VerticalOffset + delta), null);
+    }
+
+    private void StepPdfPage(int delta)
+    {
+        if (_pdf == null || _pdfTops.Count == 0) return;
+        _pdfPage = Math.Clamp(_pdfPage + delta, 0, _pdfTops.Count - 1);
+        UpdateFooter(CurrentPath);
+        // 页位置以未缩放的 DIP 保存；直接跳转，避免连按方向键时还在追赶上一段滚动动画。
+        var offset = Math.Min(_pdfTops[_pdfPage] * PdfView.ZoomFactor, PdfView.ScrollableHeight);
+        PdfView.ChangeView(null, offset, null, disableAnimation: true);
     }
 
     private Task StepFileAsync(int delta)
@@ -842,7 +863,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     /// <summary>
     /// 打开 PDF：先为每一页建一个按页面比例占好位置的 Image（不渲染），再让视口附近的页按需渲染。
-    /// 窗口按第一页的大小定尺寸。
+    /// 按第一页的比例放大到当前显示器允许的阅读尺寸。
     /// </summary>
     private async Task LoadPdfAsync(string path, int token)
     {
@@ -871,8 +892,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             _pdfTops.Add(0);
             _pdfHeights.Add(0);
 
-            // 第一页决定窗口尺寸；窗口调整后 PdfView.SizeChanged 会触发重新排版，页面宽度跟着内容区走。
-            if (i == 0) ApplyWindowSize(size.Width, size.Height);
+            // 保留页面比例，同时允许把小尺寸 PDF 放大；后续滚动和缩放不再改外窗。
+            if (i == 0) ApplyWindowSize(size.Width, size.Height, large: true);
         }
 
         ShowOnly(PdfView);
@@ -939,6 +960,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             else if (veryFar && _pdfImages[i].Source != null)
                 _pdfImages[i].Source = null;
         }
+
+        // 短的末页可能无法滚到视口顶端；已到选中页可达的位置时，保留该页，避免翻页卡住或回退跳页。
+        var selectedOffset = Math.Min(_pdfTops[_pdfPage] * PdfView.ZoomFactor, PdfView.ScrollableHeight);
+        if (Math.Abs(PdfView.VerticalOffset - selectedOffset) < 1) firstVisible = _pdfPage;
 
         if (firstVisible >= 0 && firstVisible != _pdfPage)
         {

@@ -10,8 +10,7 @@ internal static class TaskbarStripPlacement
         bool centered, bool buttonsFloating, int? buttonRight)
     {
         if (!buttonsFloating && buttonRight is int edge) return edge + margin;
-        var quotaCentered = buttonsFloating ? !centered : centered;
-        return quotaCentered ? left + (right - left - width) / 2 : left + margin;
+        return centered ? left + (right - left - width) / 2 : left + margin;
     }
 
     // 将系统图标和任务栏内的按钮作为障碍，选择最接近首选位置的完整空隙。

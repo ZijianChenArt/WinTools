@@ -30,6 +30,9 @@ namespace WinTools
         public void Change() => PropertyChanged?.Invoke(this, new("Sample"));
         public object? EnableTaskbarInfo { get; set; }
         public object? TaskbarInfoAlignment { get; set; }
+        public bool TaskbarInfoFloating { get; set; } = true;
+        public int? TaskbarFloatCenterX { get; set; }
+        public int? TaskbarFloatBottomY { get; set; }
         public int TaskbarFloatGap { get; set; } = 10;
         public object? TaskbarInfoActions { get; set; }
         public object? TaskbarShowLibrary { get; set; }

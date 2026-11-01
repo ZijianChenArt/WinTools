@@ -116,6 +116,16 @@ internal sealed partial class TaskbarInfoService
         graphics.DrawPath(stroke, path);
     }
 
+    private static void DrawDragHandle(Graphics graphics, float scale, int height, bool dark)
+    {
+        using var brush = new SolidBrush(dark ? Color.FromArgb(155, 235, 235, 235) : Color.FromArgb(145, 45, 45, 50));
+        var diameter = Math.Max(1, 2 * scale);
+        for (var row = 0; row < 3; row++)
+        for (var column = 0; column < 2; column++)
+            graphics.FillEllipse(brush, (12 + column * 5) * scale, height / 2f + (row - 1) * 5 * scale - diameter / 2,
+                diameter, diameter);
+    }
+
     private static void DrawChip(Graphics graphics, RectangleF rect, float scale, bool dark, bool hover)
     {
         rect.Inflate(-scale, -scale);
