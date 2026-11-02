@@ -33,7 +33,7 @@ public sealed partial class FilePreviewWindow
             _capturingPreviewLayouts = true;
             await Task.Delay(2500);
             foreach (var name in new[] { "sample.md", "sample.txt", "empty.txt", "sample.zip", "small.zip", "empty.zip", "sample-folder",
-                "data.csv", "book.xlsx", "data.json", "broken.json", "large.json", "sample.docx", "slides.pptx", "sample.html", "sample.pdf", "sample.svg", "tiny.png", "sample.blend", "sample.wav", "sample.mp4", "portrait.mp4" })
+                "data.csv", "book.xlsx", "data.json", "broken.json", "large.json", "sample.docx", "slides.pptx", "sample.doc", "slides.ppt", "sample.html", "sample.pdf", "sample.svg", "tiny.png", "sample.blend", "sample.wav", "sample.mp4", "portrait.mp4" })
             {
                 var path = Path.Combine(root, name);
                 if (!File.Exists(path) && !Directory.Exists(path)) continue;
@@ -79,6 +79,8 @@ public sealed partial class FilePreviewWindow
                     }
                     reports.Add(new { name, width, naturalWidth, naturalHeight, RootWidth = ShellRoot.ActualWidth, RootHeight = ShellRoot.ActualHeight,
                         Status = ViewStatus.Text, Entries = EntryList.Items.Count, Rows = TableRows.Items.Count, loadMs,
+                        PdfPageCount = _pdf?.PageCount, PdfVisible = PdfView.Visibility == Visibility.Visible,
+                        PdfSourceMatchesOriginal = _pdfPath == CurrentPath, OriginalPath = CurrentPath,
                         AnimationsEnabled, AnimationBusy = _previewAnimator.IsBusy, _previewAnimator.LastDurationMs,
                         _previewAnimator.LastMaxFrameGapMs, _previewAnimator.LastFrameCount,
                         HtmlSource = HtmlView.CoreWebView2?.Source,

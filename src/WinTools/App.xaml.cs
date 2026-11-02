@@ -37,6 +37,8 @@ public partial class App : Application, IWindowRegistry
         try { File.AppendAllText(StartupTracePath, $"{DateTime.Now:O} {message}{Environment.NewLine}"); } catch { }
     }
     private const string SingleInstanceKey = "WinTools";
+    private static readonly bool OfficeWorkerMode = Environment.GetCommandLineArgs() is { Length: > 1 } commandLine
+        && commandLine[1] == "--render-office";
 
     /// <summary>进程正在退出：托盘「退出 WinTools」或系统注销 / 关机。
     /// 所有「关闭时只隐藏」的窗口都必须查这个标志再决定要不要 <c>e.Cancel = true</c>，
@@ -133,7 +135,7 @@ public partial class App : Application, IWindowRegistry
         {
             // 退出路径（托盘退出 / 会话结束）已经各自落过盘了。会话结束那条还处在
             // csrss 的同步 SendMessage 里，此时读 XAML 必抛 COMException，不能再走一遍。
-            if (IsShuttingDown) return;
+            if (IsShuttingDown || OfficeWorkerMode) return;
             RunSession.MarkCleanExit("进程退出事件（非托盘 / 非会话结束路径）");
             SaveConfigOnExit();
         };
@@ -147,6 +149,13 @@ public partial class App : Application, IWindowRegistry
         TraceStartup("OnLaunched: entered");
         try
         {
+            var commandLine = Environment.GetCommandLineArgs();
+            if (commandLine.Length > 1 && commandLine[1] == "--render-office")
+            {
+                var job = commandLine.Length == 3 ? OfficePreviewRenderer.GetWorkerDirectory(commandLine[2]) : null;
+                Environment.Exit(job != null && Directory.Exists(job) ? OfficePreviewWorker.Run(job) : 2);
+                return;
+            }
             TraceStartup("OnLaunched: before OnLaunchedCoreAsync");
             await OnLaunchedCoreAsync(args.Arguments);
             TraceStartup("OnLaunched: after OnLaunchedCoreAsync");

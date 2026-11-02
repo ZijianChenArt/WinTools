@@ -73,8 +73,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         ".fbx", ".dwg", ".dxf", ".skp", ".sketch", ".fig", ".xd",
         ".exe", ".dll", ".msi", ".sys", ".bin", ".dat", ".db", ".sqlite", ".pyc", ".class", ".o", ".so",
         ".rar", ".7z", ".tar", ".gz", ".xz", ".cab", ".iso", ".dmg", ".apk",
-        // .docx / .xlsx / .pptx 不在这里：它们是 zip 包里的 XML，可以直接提取文字。
-        ".doc", ".xls", ".ppt", ".wps", ".et", ".dps",
+        // Word / PowerPoint 优先由本地 Office 渲染页面；XLSX 使用表格预览。
+        ".xls", ".wps", ".et", ".dps",
         ".lnk", ".url",
     };
 
@@ -88,7 +88,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         ".csv", ".tsv", ".json", ".xml",
     };
 
-    private enum Kind { Image, Pdf, Text, StructuredText, Media, Html, OfficeText, Archive, Folder, Unsupported }
+    private enum Kind { Image, Pdf, Text, StructuredText, Media, Html, OfficeDocument, OfficeText, Archive, Folder, Unsupported }
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -173,6 +173,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     #region 窗口配置
 
     internal string CurrentPath => _index >= 0 && _index < _paths.Count ? _paths[_index] : "";
+
+    private bool IsPagedPreview => Classify(CurrentPath) == Kind.Pdf
+        || _pdf != null && string.Equals(_pdfPath, CurrentPath, StringComparison.OrdinalIgnoreCase);
 
     internal bool IsOpen => _isOpen;
 
@@ -464,8 +467,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
             if (_userSized) return;
             var kind = Classify(CurrentPath);
-            var maxWidth = Math.Min(kind == Kind.Pdf ? 1300 : 1100, work.Width * (kind == Kind.Pdf ? PdfMaxWidthRatio : MaxWidthRatio) / scale);
-            var maxHeight = work.Height * (kind == Kind.Pdf ? PdfMaxHeightRatio : MaxHeightRatio) / scale;
+            var isPaged = IsPagedPreview;
+            var maxWidth = Math.Min(isPaged ? 1300 : 1100, work.Width * (isPaged ? PdfMaxWidthRatio : MaxWidthRatio) / scale);
+            var maxHeight = work.Height * (isPaged ? PdfMaxHeightRatio : MaxHeightRatio) / scale;
             var chromeHeight = ChromeHeightDip + ToolbarHeight + _frameHeightDip + (kind == Kind.Media ? MediaBarHeightDip : 0);
 
             double width, height;
@@ -546,7 +550,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         if (!_isOpen) return false;
 
-        var isPdf = Classify(CurrentPath) == Kind.Pdf;
+        var isPdf = IsPagedPreview;
         switch (key)
         {
             case VirtualKey.Escape:
@@ -637,9 +641,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         if (ImageExtensions.Contains(extension)) return Kind.Image;
         if (string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase)) return Kind.Pdf;
         if (HtmlExtensions.Contains(extension)) return Kind.Html;
-        if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(extension, ".pptx", StringComparison.OrdinalIgnoreCase)) return Kind.OfficeText;
+        if (OfficePreviewRenderer.IsSupported(path)) return Kind.OfficeDocument;
+        if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)) return Kind.OfficeText;
         if (StructuredExtensions.Contains(extension)) return Kind.StructuredText;
         if (string.Equals(extension, ".zip", StringComparison.OrdinalIgnoreCase)) return Kind.Archive;
         if (MediaExtensions.Contains(extension)) return Kind.Media;
@@ -692,8 +695,11 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     await LoadHtmlAsync(path, token);
                     break;
 
+                case Kind.OfficeDocument:
+                    await LoadOfficeDocumentAsync(path, token);
+                    break;
+
                 case Kind.OfficeText:
-                    if (path.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
                     {
                         var cancellation = _contentCancellation.Token;
                         var workbook = await Task.Run(() => OfficeTextExtractor.ReadWorkbook(path, cancellation));
@@ -701,19 +707,6 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                         ShowWorkbook(workbook);
                         break;
                     }
-                    var officeText = await Task.Run(() => OfficeTextExtractor.Extract(path));
-                    if (token != _loadToken) return;
-                    if (officeText == null)
-                    {
-                        ShowUnsupported(path);
-                        return;
-                    }
-                    SetTextPresentation(wrap: true, "Segoe UI");
-                    TextBody.Text = officeText;
-                    ShowOnly(TextView);
-                    ViewStatus.Text = path.EndsWith(".pptx", StringComparison.OrdinalIgnoreCase) ? "逐页文字大纲" : "文字预览";
-                    FitTextWindow(760);
-                    break;
 
                 case Kind.StructuredText:
                     if (Path.GetExtension(path).ToLowerInvariant() is ".csv" or ".tsv")
@@ -865,14 +858,14 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// 打开 PDF：先为每一页建一个按页面比例占好位置的 Image（不渲染），再让视口附近的页按需渲染。
     /// 按第一页的比例放大到当前显示器允许的阅读尺寸。
     /// </summary>
-    private async Task LoadPdfAsync(string path, int token)
+    private async Task LoadPdfAsync(string path, int token, string? sourcePath = null)
     {
         var file = await StorageFile.GetFileFromPathAsync(path);
         var document = await PdfDocument.LoadFromFileAsync(file);
         if (token != _loadToken) return;
 
         _pdf = document;
-        _pdfPath = path;
+        _pdfPath = sourcePath ?? path;
         _pdfPage = 0;
 
         PdfPages.Children.Clear();
@@ -898,7 +891,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
         ShowOnly(PdfView);
         PdfView.ChangeView(null, 0, null, disableAnimation: true);
-        UpdateFooter(path);
+        UpdateFooter(_pdfPath);
         RelayoutPdf();
     }
 

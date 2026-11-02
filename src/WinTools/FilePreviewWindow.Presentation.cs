@@ -95,7 +95,7 @@ public sealed partial class FilePreviewWindow
         var height = 300d;
         switch (kind)
         {
-            case Kind.Image: case Kind.Pdf:
+            case Kind.Image: case Kind.Pdf: case Kind.OfficeDocument:
                 width = 720; height = 560; break;
             case Kind.Html: width = 900; height = 640; break;
             case Kind.Text:
@@ -169,7 +169,7 @@ public sealed partial class FilePreviewWindow
         if (_previewAnimator.IsBusy) { _pendingBounds = (width, height); return; }
         var scale = CurrentScale();
         var work = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).WorkArea;
-        var isPdf = Classify(CurrentPath) == Kind.Pdf;
+        var isPdf = IsPagedPreview;
         var fit = PreviewLayoutPolicy.Fit(width, height, work.Width / scale, work.Height / scale,
             isPdf ? PdfMaxWidthRatio : MaxWidthRatio, isPdf ? PdfMaxHeightRatio : MaxHeightRatio);
         var pixelWidth = (int)Math.Round(fit.Width * scale);
@@ -247,7 +247,7 @@ public sealed partial class FilePreviewWindow
 
     private void UpdateShortcutHints()
     {
-        var isPdf = Classify(CurrentPath) == Kind.Pdf;
+        var isPdf = IsPagedPreview;
         HintText.Text = isPdf ? "Esc 关闭 · ← → 翻页"
             : _paths.Count > 1 && ShellRoot.ActualWidth >= 580 ? "Esc 关闭 · ← → 切换" : "空格 / Esc 关闭";
         ToolTipService.SetToolTip(HintText, GetPreviewShortcutHelp());
@@ -256,10 +256,11 @@ public sealed partial class FilePreviewWindow
     private string GetPreviewShortcutHelp()
     {
         var kind = Classify(CurrentPath);
+        var isPaged = IsPagedPreview;
         return "Esc 关闭预览\n空格 关闭预览（正文焦点）\nEnter 用默认程序打开"
-            + (kind == Kind.Pdf ? "\n← 上一页 / → 下一页" : _paths.Count > 1 ? "\n← → 切换文件" : "")
-            + (kind is Kind.Image or Kind.Pdf ? "\nCtrl + 滚轮 缩放\n放大后按住鼠标左键拖动画面" : "")
-            + (kind is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.Archive or Kind.Folder or Kind.Pdf or Kind.Html
+            + (isPaged ? "\n← 上一页 / → 下一页" : _paths.Count > 1 ? "\n← → 切换文件" : "")
+            + (kind == Kind.Image || isPaged ? "\nCtrl + 滚轮 缩放\n放大后按住鼠标左键拖动画面" : "")
+            + (kind is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.OfficeDocument or Kind.Archive or Kind.Folder or Kind.Pdf or Kind.Html
                 ? "\n↑ ↓ / PageUp / PageDown 滚动" : "")
             + "\n按钮、滑条和输入框保留各自的键盘操作。";
     }
