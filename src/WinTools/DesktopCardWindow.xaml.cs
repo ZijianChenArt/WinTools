@@ -905,11 +905,19 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         ApplyScaleAwareSize();
     }
 
+    private void ShowWithoutActivation()
+    {
+        // Show() 默认会激活并抬高窗口。桌面卡片首次显示、重新开启或刷新时应留在
+        // 其它应用之后；只有快捷键 / 分区库主动呼出的 TOPMOST 状态需要保留。
+        AppWindow.Show(activateWindow: false);
+        if (!IsTopmost()) LowerFromFront();
+    }
+
     public void ShowCard()
     {
         try
         {
-            AppWindow.Show();
+            ShowWithoutActivation();
             if (_hasPresentedFirstFrame) return;
 
             _hasPresentedFirstFrame = true;
@@ -931,13 +939,13 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
                 // 已经创建过、随后因关闭分区功能而隐藏的卡片，也必须先变为全透明再 Show。
                 // 否则重新开启时会先闪出完整卡片，之后才开始淡入。
                 PrepareFadeIn();
-                AppWindow.Show();
+                ShowWithoutActivation();
                 return;
             }
 
             WindowHelper.SetWindowCloak(this, true);
             ShellRoot.Opacity = 0;
-            AppWindow.Show();
+            ShowWithoutActivation();
         }
         catch { /* ignore */ }
     }
@@ -980,7 +988,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         {
             _hasPresentedFirstFrame = true;
             PrepareFadeIn();
-            AppWindow.Show();
+            ShowWithoutActivation();
             WindowHelper.UncloakWhenRendered(this, PlayRevealAnimation);
         }
         catch { /* ignore */ }
@@ -1153,7 +1161,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             if (IsTopmost()) return;
 
             AppWindow.Hide();
-            AppWindow.Show();
+            ShowWithoutActivation();
             SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
             if (!IsTopmost())
             {

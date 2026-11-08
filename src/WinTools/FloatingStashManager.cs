@@ -131,7 +131,7 @@ public sealed class FloatingStashManager : IDisposable
             // 文件夹窗口同理：在没有文件的空白处按下再拖是拉框选择（2026-10-03 用户反馈）。
             bool fromFileManager = IsFromFileManager(sourceHwnd)
                 && !IsDesktopBlankArea(sourceHwnd, downX, downY)
-                && !IsExplorerWindowBlankArea(sourceHwnd, downX, downY);
+                && !IsExplorerNonFileDragArea(sourceHwnd, downX, downY);
             _dispatcher.TryEnqueue(() =>
             {
                 if (!_enabled || token != _dragDecisionToken) return;
@@ -326,14 +326,15 @@ public sealed class FloatingStashManager : IDisposable
             // Explorer 的文件重命名框是文件列表里的 Edit/RichEdit 子窗口。
             // 在这个控件里拖动鼠标只是选中文字，不是拖动文件；如果继续按
             // SHELLDLL_DefView 判断，会把它误报成文件拖拽并弹出暂存窗口。
-            if (IsTextEditingControl(hwnd)) return false;
+            // 同时排除传统列标题：它也属于文件列表子窗口，但拖动只是在调列宽/列顺序。
+            if (IsNonFileDragControl(hwnd)) return false;
 
             var root = GetAncestor(hwnd, GA_ROOT);
             if (root == IntPtr.Zero) root = hwnd;
 
             GetWindowThreadProcessId(root, out uint pid);
             if (pid == 0) return false;
-            var proc = Process.GetProcessById((int)pid);
+            using var proc = Process.GetProcessById((int)pid);
             if (!string.Equals(proc.ProcessName, "explorer", StringComparison.OrdinalIgnoreCase))
                 return false;
 
@@ -350,13 +351,14 @@ public sealed class FloatingStashManager : IDisposable
         catch { return false; }
     }
 
-    private static bool IsTextEditingControl(IntPtr hwnd)
+    private static bool IsNonFileDragControl(IntPtr hwnd)
     {
         var current = hwnd;
         while (current != IntPtr.Zero)
         {
             var className = GetWindowClassName(current);
-            if (className is "Edit" or "RichEdit20A" or "RichEdit20W" or "RichEdit50W"
+            // Classic Explorer headers are separate HWNDs; resizing/reordering columns is not a file drag.
+            if (className is "SysHeader32" or "Edit" or "RichEdit20A" or "RichEdit20W" or "RichEdit50W"
                 or "RICHEDIT50W" or "RichEditD2DPT")
                 return true;
 
@@ -407,13 +409,13 @@ public sealed class FloatingStashManager : IDisposable
         catch { return true; }
     }
 
-    /// <summary>资源管理器文件夹窗口（CabinetWClass）里，按下点是否落在没有文件的空白处。桌面另有规则。</summary>
-    private static bool IsExplorerWindowBlankArea(IntPtr sourceHwnd, int screenX, int screenY)
+    /// <summary>资源管理器里是否从空白处或列标题开始拖动。桌面另有规则。</summary>
+    private static bool IsExplorerNonFileDragArea(IntPtr sourceHwnd, int screenX, int screenY)
     {
         var root = GetAncestor(sourceHwnd, GA_ROOT);
         if (root == IntPtr.Zero) root = sourceHwnd;
         if (GetWindowClassName(root) != "CabinetWClass") return false;
-        return ExplorerItemProbe.IsBlankArea(screenX, screenY);
+        return ExplorerItemProbe.IsNonFileDragArea(screenX, screenY);
     }
 
     private static string GetWindowClassName(IntPtr hwnd)

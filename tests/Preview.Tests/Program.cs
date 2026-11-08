@@ -1,4 +1,6 @@
 using System.IO.Compression;
+using System.Diagnostics;
+using System.Text.Json;
 using WinTools.Services;
 
 void Require(bool condition, string message) { if (!condition) throw new Exception(message); }
@@ -22,6 +24,87 @@ foreach (var work in new[] { (360d, 240d), (1536d, 824d), (2560d, 1400d) })
     Require(fit.Width > 0 && fit.Height > 0 && fit.Width < work.Item1 && fit.Height < work.Item2, "Preview exceeds work area");
 }
 Require(PreviewLayoutPolicy.ListHeight(3) < 340 && PreviewLayoutPolicy.ListHeight(2000) < 620, "Small ZIP or long list height wrong");
+// Compare viewport queries against a full-scan oracle across varied page sizes and gaps.
+var random = new Random(2401);
+var pageTops = new double[10_000];
+var pageHeights = new double[pageTops.Length];
+var documentBottom = 0d;
+for (var page = 0; page < pageTops.Length; page++)
+{
+    pageTops[page] = documentBottom;
+    pageHeights[page] = random.Next(80, 2400);
+    documentBottom += pageHeights[page] + random.Next(0, 33);
+}
+int[] NaivePages(double from, double to) => Enumerable.Range(0, pageTops.Length)
+    .Where(page => pageTops[page] + pageHeights[page] >= from && pageTops[page] <= to).ToArray();
+void CheckPdfRange(double from, double to)
+{
+    var expected = NaivePages(from, to);
+    var range = PdfPageRange.Find(pageTops, pageHeights, from, to);
+    Require(Enumerable.Range(range.First, range.Count).SequenceEqual(expected), $"PDF viewport mismatch [{from}, {to}]");
+}
+foreach (var page in new[] { 0, 1, 20, 4999, 9998, 9999 })
+{
+    CheckPdfRange(pageTops[page], pageTops[page]);
+    CheckPdfRange(pageTops[page] + pageHeights[page], pageTops[page] + pageHeights[page]);
+    CheckPdfRange(pageTops[page] - 1, pageTops[page] + pageHeights[page] + 1);
+    if (page + 1 < pageTops.Length && pageTops[page + 1] > pageTops[page] + pageHeights[page])
+        CheckPdfRange(pageTops[page] + pageHeights[page] + .1, pageTops[page + 1] - .1);
+}
+CheckPdfRange(-1000, -1);
+CheckPdfRange(documentBottom + 1, documentBottom + 2000);
+CheckPdfRange(double.NegativeInfinity, double.PositiveInfinity);
+Require(PdfPageRange.Find(Array.Empty<double>(), Array.Empty<double>(), 0, 100).IsEmpty, "Empty PDF range is not empty");
+Require(PdfPageRange.Find(pageTops, pageHeights, 100, 99).IsEmpty, "Reversed PDF viewport accepted");
+Require(PdfPageRange.Find(pageTops, pageHeights, double.NaN, 100).IsEmpty, "NaN PDF viewport accepted");
+for (var query = 0; query < 600; query++)
+{
+    var from = random.NextDouble() * (documentBottom + 4000) - 2000;
+    CheckPdfRange(from, from + random.NextDouble() * 6000);
+}
+// Assert scaling by accesses, not a flaky machine-dependent time threshold.
+var countedTops = new CountedList(pageTops);
+var countedHeights = new CountedList(pageHeights);
+var tailRange = PdfPageRange.Find(countedTops, countedHeights, pageTops[^2], documentBottom);
+Require(tailRange.EndExclusive == pageTops.Length && tailRange.Count == 2, "PDF last-page range is wrong");
+Require(countedTops.Reads + countedHeights.Reads < 100, "PDF viewport lookup scans the full document");
+if (args.Contains("--benchmark-pdf"))
+{
+    var queries = Enumerable.Range(0, 2000).Select(_ => random.NextDouble() * documentBottom).ToArray();
+    long checksum = 0;
+    // Warm both paths before collecting elapsed time; do not assert a speed ratio.
+    foreach (var from in queries.Take(100))
+    {
+        checksum += NaivePages(from, from + 1200).Length;
+        checksum += PdfPageRange.Find(pageTops, pageHeights, from, from + 1200).Count;
+    }
+    var originalSamples = new List<double>();
+    var optimizedSamples = new List<double>();
+    int CountIntersectingNaively(double from, double to)
+    {
+        var count = 0;
+        for (var page = 0; page < pageTops.Length; page++)
+            if (pageTops[page] + pageHeights[page] >= from && pageTops[page] <= to) count++;
+        return count;
+    }
+    double MeasurePdf(bool optimized)
+    {
+        var clock = Stopwatch.StartNew();
+        foreach (var from in queries)
+            checksum += optimized ? PdfPageRange.Find(pageTops, pageHeights, from, from + 1200).Count : CountIntersectingNaively(from, from + 1200);
+        return clock.Elapsed.TotalMicroseconds / queries.Length;
+    }
+    for (var batch = 0; batch < 9; batch++)
+    {
+        if (batch % 2 == 0) { originalSamples.Add(MeasurePdf(false)); optimizedSamples.Add(MeasurePdf(true)); }
+        else { optimizedSamples.Add(MeasurePdf(true)); originalSamples.Add(MeasurePdf(false)); }
+    }
+    var report = new { Pages = pageTops.Length, QueriesPerBatch = queries.Length, Batches = 9,
+        NaiveMedianMicroseconds = originalSamples.Order().ElementAt(4),
+        BinaryMedianMicroseconds = optimizedSamples.Order().ElementAt(4), Checksum = checksum,
+        Scope = "Viewport lookup microbenchmark; excludes PDF decoding, image rendering and UI layout" };
+    Console.WriteLine("PDF_RANGE_BENCHMARK " + JsonSerializer.Serialize(report));
+}
 var root = Path.Combine(Path.GetTempPath(), "WinTools-preview-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
 try
@@ -68,7 +151,7 @@ try
     }
     var outline = OfficeTextExtractor.Extract(pptx)!;
     Require(outline.IndexOf("Second XML", StringComparison.Ordinal) < outline.IndexOf("First XML", StringComparison.Ordinal), "PPTX presentation ordering ignored");
-    if (args.Length == 1)
+    if (args.Length == 1 && !args.Contains("--benchmark-pdf"))
     {
         var destination = Path.GetFullPath(args[0]);
         Directory.CreateDirectory(destination);
@@ -95,6 +178,15 @@ try
     }
 }
 finally { Directory.Delete(root, true); }
-Console.WriteLine("Preview data, Markdown, sizing, cancellation and Office regression checks passed.");
+Console.WriteLine("Preview data, Markdown, sizing, cancellation, PDF ranges and Office regression checks passed.");
+
+sealed class CountedList(double[] values) : IReadOnlyList<double>
+{
+    public int Reads { get; private set; }
+    public int Count => values.Length;
+    public double this[int index] { get { Reads++; return values[index]; } }
+    public IEnumerator<double> GetEnumerator() => ((IEnumerable<double>)values).GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => values.GetEnumerator();
+}
 
 namespace WinTools.Services { internal static class ErrorReporter { internal static void Log(string source, Exception ex) { } } }

@@ -16,3 +16,4 @@ _diff_backup/
 *_zbak/
 *_bak_*/
 *.old/
+/scripts/model-preview/node_modules/

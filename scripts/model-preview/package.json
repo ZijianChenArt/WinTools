@@ -1,0 +1,7 @@
+{
+  "name": "wintools-model-preview",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "devDependencies": { "esbuild": "0.25.9", "three": "0.187.0" }
+}

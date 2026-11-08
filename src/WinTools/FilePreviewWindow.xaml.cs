@@ -46,6 +46,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private const double MinHeightDip = 180;
     private const double DefaultWidthDip = 640;
     private const double DefaultHeightDip = 440;
+    private const double WebWidthDip = 1200;
+    private const double WebHeightDip = 820;
 
     /// <summary>内容区之外的占位：左右各12；所有信息集中在44 DIP单行标题栏。</summary>
     private const double ChromeWidthDip = 24;
@@ -70,7 +72,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private static readonly HashSet<string> UnsupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".ai", ".psd", ".psb", ".eps", ".indd", ".idml", ".ae", ".aep", ".prproj", ".blend", ".max", ".3ds",
-        ".fbx", ".dwg", ".dxf", ".skp", ".sketch", ".fig", ".xd",
+        ".dwg", ".dxf", ".skp", ".sketch", ".fig", ".xd",
         ".exe", ".dll", ".msi", ".sys", ".bin", ".dat", ".db", ".sqlite", ".pyc", ".class", ".o", ".so",
         ".rar", ".7z", ".tar", ".gz", ".xz", ".cab", ".iso", ".dmg", ".apk",
         // Word / PowerPoint 优先由本地 Office 渲染页面；XLSX 使用表格预览。
@@ -88,7 +90,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         ".csv", ".tsv", ".json", ".xml",
     };
 
-    private enum Kind { Image, Pdf, Text, StructuredText, Media, Html, OfficeDocument, OfficeText, Archive, Folder, Unsupported }
+    private enum Kind { Image, Pdf, Text, StructuredText, Media, Html, Model, OfficeDocument, OfficeText, Archive, Folder, Unsupported }
+    private Kind _currentKind = Kind.Unsupported;
+    private FileInfo? _currentFileInfo;
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -119,7 +123,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private readonly List<double> _pdfHeights = new();
     private readonly List<double> _pdfAspects = new();
     private double _pdfLayoutWidth;
-    private bool _pdfRendering;
+    private int _pdfRenderToken = -1;
+    private readonly HashSet<int> _pdfRenderedPages = new();
+    private bool _preparingPdf;
 
     /// <summary>当前内容的像素尺寸（图片、视频），加载完成后才有；用于标题栏显示和窗口自适应。</summary>
     private (int Width, int Height)? _contentSize;
@@ -174,8 +180,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     internal string CurrentPath => _index >= 0 && _index < _paths.Count ? _paths[_index] : "";
 
-    private bool IsPagedPreview => Classify(CurrentPath) == Kind.Pdf
+    private bool IsPagedDocumentLayout => _currentKind == Kind.Pdf
         || _pdf != null && string.Equals(_pdfPath, CurrentPath, StringComparison.OrdinalIgnoreCase);
+    private bool IsPagedPreview => IsPagedDocumentLayout && !_preparingPdf;
 
     internal bool IsOpen => _isOpen;
 
@@ -248,6 +255,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _loadToken++;
         ReleaseContent();
         _paths = Array.Empty<string>();
+        _currentKind = Kind.Unsupported;
+        _currentFileInfo = null;
         _index = 0;
         _contentSize = null;
         Present();
@@ -399,26 +408,14 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _pdfTops.Clear();
         _pdfHeights.Clear();
         _pdfAspects.Clear();
+        _pdfRenderedPages.Clear();
+        _pdfRenderToken = -1;
         _pdfLayoutWidth = 0;
         _pdf = null;
         _pdfPath = null;
         _pdfPage = 0;
 
-        // Collapse the web surface before navigating away; otherwise about:blank can flash white.
-        HtmlView.Visibility = Visibility.Collapsed;
-        // HTML：回到空白页，释放网页内容（WebView2 进程本身保留，下次打开不用重新初始化）。
-        try
-        {
-            if (HtmlView.CoreWebView2 != null)
-            {
-                if (_htmlNavigationCompleted != null) HtmlView.CoreWebView2.NavigationCompleted -= _htmlNavigationCompleted;
-                if (_htmlNavigationStarting != null) HtmlView.CoreWebView2.NavigationStarting -= _htmlNavigationStarting;
-            }
-            _htmlNavigationCompleted = null;
-            _htmlNavigationStarting = null;
-            if (HtmlView.CoreWebView2 != null) HtmlView.Source = new Uri("about:blank");
-        }
-        catch (Exception ex) { ErrorReporter.Log("FilePreviewWindow.ReleaseHtml", ex); }
+        ReleaseWebPreview();
 
     }
 
@@ -466,8 +463,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             // 用窗口自己所在的显示器，而不是光标所在的：切换文件时窗口不能被挪到别的屏幕上。
             var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
             if (_userSized) return;
-            var kind = Classify(CurrentPath);
-            var isPaged = IsPagedPreview;
+            var kind = _currentKind;
+            var isPaged = IsPagedDocumentLayout;
             var maxWidth = Math.Min(isPaged ? 1300 : 1100, work.Width * (isPaged ? PdfMaxWidthRatio : MaxWidthRatio) / scale);
             var maxHeight = work.Height * (isPaged ? PdfMaxHeightRatio : MaxHeightRatio) / scale;
             var chromeHeight = ChromeHeightDip + ToolbarHeight + _frameHeightDip + (kind == Kind.Media ? MediaBarHeightDip : 0);
@@ -635,9 +632,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     private static Kind Classify(string path)
     {
-        if (Directory.Exists(path)) return Kind.Folder;
-
         var extension = Path.GetExtension(path);
+        if (extension.Equals(".fbx", StringComparison.OrdinalIgnoreCase) || extension.Equals(".obj", StringComparison.OrdinalIgnoreCase)) return Kind.Model;
         if (ImageExtensions.Contains(extension)) return Kind.Image;
         if (string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase)) return Kind.Pdf;
         if (HtmlExtensions.Contains(extension)) return Kind.Html;
@@ -660,13 +656,23 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         ReleaseContent();
         _contentSize = null;
         ShowLoading();
-        UpdateHeader(path);
-        UpdateFooter(path);
-        ConfigurePresentation(path);
-
+        _currentKind = Classify(path);
+        _currentFileInfo = null;
         try
         {
-            switch (Classify(path))
+            _currentFileInfo = new FileInfo(path);
+            _currentFileInfo.Refresh();
+            var attributes = _currentFileInfo.Attributes;
+            if (attributes == (System.IO.FileAttributes)(-1))
+            {
+                _currentFileInfo = null;
+                throw new FileNotFoundException();
+            }
+            if ((attributes & System.IO.FileAttributes.Directory) != 0) _currentKind = Kind.Folder;
+            UpdateHeader(path);
+            UpdateFooter(path);
+            ConfigurePresentation(path);
+            switch (_currentKind)
             {
                 case Kind.Folder:
                     ShowFolder(path, token);
@@ -693,6 +699,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
                 case Kind.Html:
                     await LoadHtmlAsync(path, token);
+                    break;
+
+                case Kind.Model:
+                    await LoadModelAsync(path, token);
                     break;
 
                 case Kind.OfficeDocument:
@@ -771,7 +781,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     break;
 
                 case Kind.Text:
-                    var text = await ReadTextAsync(path);
+                    var text = await ReadTextAsync(path, _contentCancellation.Token);
                     if (token != _loadToken) return;
                     if (text == null)
                     {
@@ -801,6 +811,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             }
         }
         catch (OperationCanceledException) { }
+        catch (FileNotFoundException)
+        {
+            if (token == _loadToken) ShowFallback(path, "文件已移动或删除", "重新选择文件后再试。");
+        }
         catch (UnauthorizedAccessException)
         {
             if (token == _loadToken) ShowFallback(path, "没有读取权限", "无法读取此文件。可用默认程序打开。");
@@ -860,10 +874,12 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// </summary>
     private async Task LoadPdfAsync(string path, int token, string? sourcePath = null)
     {
-        var file = await StorageFile.GetFileFromPathAsync(path);
-        var document = await PdfDocument.LoadFromFileAsync(file);
+        var cancellation = _contentCancellation.Token;
+        var file = await StorageFile.GetFileFromPathAsync(path).AsTask(cancellation);
+        var document = await PdfDocument.LoadFromFileAsync(file).AsTask(cancellation);
         if (token != _loadToken) return;
 
+        _preparingPdf = sourcePath != null;
         _pdf = document;
         _pdfPath = sourcePath ?? path;
         _pdfPage = 0;
@@ -873,6 +889,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _pdfTops.Clear();
         _pdfHeights.Clear();
         _pdfAspects.Clear();
+        _pdfRenderedPages.Clear();
         _pdfLayoutWidth = 0;
 
         for (uint i = 0; i < document.PageCount; i++)
@@ -889,10 +906,44 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             if (i == 0) ApplyWindowSize(size.Width, size.Height, large: true);
         }
 
+        if (_preparingPdf)
+        {
+            // Keep the readable text underneath until the first real page bitmap is ready.
+            PdfView.Opacity = 0;
+            PdfView.IsHitTestVisible = false;
+            PdfView.Visibility = Visibility.Visible;
+            try
+            {
+                while (_previewAnimator.IsBusy) await Task.Delay(16, cancellation);
+                var laidOut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                WindowHelper.WhenRendered(this, () => laidOut.TrySetResult(), framesToWait: 2);
+                await laidOut.Task.WaitAsync(cancellation);
+                if (token != _loadToken) return;
+                PdfView.UpdateLayout();
+                PdfView.ChangeView(null, 0, null, disableAnimation: true);
+                RelayoutPdf();
+                if (!await RenderPdfPageAsync(0))
+                {
+                    if (token != _loadToken) return;
+                    throw new InvalidOperationException("无法渲染文档页面");
+                }
+            }
+            finally
+            {
+                if (token == _loadToken)
+                {
+                    _preparingPdf = false;
+                    PdfView.Opacity = 1;
+                    PdfView.IsHitTestVisible = true;
+                }
+            }
+        }
+        if (token != _loadToken) return;
         ShowOnly(PdfView);
         PdfView.ChangeView(null, 0, null, disableAnimation: true);
         UpdateFooter(_pdfPath);
         RelayoutPdf();
+        UpdatePdfViewport();
     }
 
     /// <summary>
@@ -907,6 +958,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         var width = Math.Max(200, available - 16);
         if (Math.Abs(width - _pdfLayoutWidth) < 0.5) return;
         _pdfLayoutWidth = width;
+        _pdfRenderedPages.Clear();
 
         double top = 0;
         for (var i = 0; i < _pdfImages.Count; i++)
@@ -932,27 +984,25 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// </summary>
     private void UpdatePdfViewport()
     {
-        if (_pdf == null || _pdfImages.Count == 0 || !PdfView.IsLoaded) return;
+        if (_preparingPdf || _pdf == null || _pdfImages.Count == 0 || !PdfView.IsLoaded) return;
 
         var viewTop = PdfView.VerticalOffset / PdfView.ZoomFactor;
         var viewBottom = viewTop + PdfView.ViewportHeight / PdfView.ZoomFactor;
         var margin = PdfView.ViewportHeight / PdfView.ZoomFactor;
 
-        var firstVisible = -1;
-        for (var i = 0; i < _pdfImages.Count; i++)
+        var near = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop - margin, viewBottom + margin);
+        var keep = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop - margin * 2, viewBottom + margin * 2);
+        var visible = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop, double.PositiveInfinity);
+        var firstVisible = visible.IsEmpty ? -1 : visible.First;
+        foreach (var i in _pdfRenderedPages.ToArray())
         {
-            var top = _pdfTops[i];
-            var bottom = top + _pdfHeights[i];
-            var nearView = bottom >= viewTop - margin && top <= viewBottom + margin;
-            var veryFar = bottom < viewTop - margin * 2 || top > viewBottom + margin * 2;
-
-            if (firstVisible < 0 && bottom >= viewTop) firstVisible = i;
-
-            if (nearView && _pdfImages[i].Source == null)
-                StartRenderingPdf();
-            else if (veryFar && _pdfImages[i].Source != null)
+            if (i < keep.First || i >= keep.EndExclusive)
+            {
                 _pdfImages[i].Source = null;
+                _pdfRenderedPages.Remove(i);
+            }
         }
+        if (!near.IsEmpty) StartRenderingPdf();
 
         // 短的末页可能无法滚到视口顶端；已到选中页可达的位置时，保留该页，避免翻页卡住或回退跳页。
         var selectedOffset = Math.Min(_pdfTops[_pdfPage] * PdfView.ZoomFactor, PdfView.ScrollableHeight);
@@ -971,24 +1021,24 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// </summary>
     private void StartRenderingPdf()
     {
-        if (_pdfRendering) return;
-        _ = RenderVisiblePdfPagesAsync();
+        if (_pdfRenderToken == _loadToken) return;
+        _ = RenderVisiblePdfPagesAsync(_loadToken);
     }
 
-    private async Task RenderVisiblePdfPagesAsync()
+    private async Task RenderVisiblePdfPagesAsync(int token)
     {
-        _pdfRendering = true;
+        _pdfRenderToken = token;
         try
         {
             int next;
-            while ((next = FirstUnrenderedNearView()) >= 0)
+            while (token == _loadToken && (next = FirstUnrenderedNearView()) >= 0)
             {
                 if (!await RenderPdfPageAsync(next)) break;
             }
         }
         finally
         {
-            _pdfRendering = false;
+            if (_pdfRenderToken == token) _pdfRenderToken = -1;
         }
     }
 
@@ -996,25 +1046,31 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private async Task<bool> RenderPdfPageAsync(int index)
     {
         var token = _loadToken;
+        var document = _pdf;
+        var layoutWidth = _pdfLayoutWidth;
+        var cancellation = _contentCancellation.Token;
         try
         {
-            if (_pdf == null || index >= _pdfImages.Count) return false;
+            if (document == null || index >= _pdfImages.Count) return false;
 
             var scale = ContentHost.XamlRoot?.RasterizationScale ?? 1.0;
             var targetWidth = (uint)Math.Clamp(_pdfLayoutWidth * scale, 480, 3072);
 
-            using var page = _pdf.GetPage((uint)index);
+            using var page = document.GetPage((uint)index);
             using var stream = new InMemoryRandomAccessStream();
-            await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = targetWidth });
+            await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = targetWidth }).AsTask(cancellation);
             stream.Seek(0);
 
             var bitmap = new BitmapImage();
-            await bitmap.SetSourceAsync(stream);
-            if (token != _loadToken) return false;
+            await bitmap.SetSourceAsync(stream).AsTask(cancellation);
+            if (token != _loadToken || document != _pdf) return false;
+            if (Math.Abs(layoutWidth - _pdfLayoutWidth) >= .5) return true; // A resize invalidated this bitmap; render the current width next.
 
             _pdfImages[index].Source = bitmap;
+            _pdfRenderedPages.Add(index);
             return true;
         }
+        catch (OperationCanceledException) { return false; }
         catch (Exception ex)
         {
             ErrorReporter.Log($"FilePreviewWindow.PdfPage({index})", ex);
@@ -1027,119 +1083,16 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         var viewTop = PdfView.VerticalOffset / PdfView.ZoomFactor;
         var viewBottom = viewTop + PdfView.ViewportHeight / PdfView.ZoomFactor;
-        for (var i = 0; i < _pdfImages.Count; i++)
+        var range = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop, viewBottom);
+        for (var i = range.First; i < range.EndExclusive; i++)
         {
-            if (_pdfTops[i] + _pdfHeights[i] < viewTop) continue;
-            if (_pdfTops[i] > viewBottom) break;
             if (_pdfImages[i].Source == null) return i;
         }
+        var margin = PdfView.ViewportHeight / PdfView.ZoomFactor;
+        range = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop - margin, viewBottom + margin);
+        for (var i = range.First; i < range.EndExclusive; i++)
+            if (_pdfImages[i].Source == null) return i;
         return -1;
-    }
-
-    /// <summary>
-    /// HTML 用 WebView2 渲染（与 Edge 同一内核）。WebView2 是独立的子窗口，按键不会经过窗口的 PreviewKeyDown，
-    /// 所以用 AcceleratorKeyPressed 把空格 / Esc / 方向键转回 <see cref="HandleKey"/>。
-    /// 弹窗与新窗口请求被拦截，避免网页把预览窗口之外的东西打开。
-    /// </summary>
-    private async Task LoadHtmlAsync(string path, int token)
-    {
-        try
-        {
-            await HtmlView.EnsureCoreWebView2Async();
-            if (token != _loadToken) return;
-
-            var core = HtmlView.CoreWebView2;
-            if (core == null)
-            {
-                ShowFallback(path, "无法显示网页", "需要 WebView2 运行时。按 Enter 用默认程序打开。");
-                return;
-            }
-
-            if (!_htmlHooked)
-            {
-                core.NewWindowRequested += (_, args) => args.Handled = true;
-                // 网页获得焦点后按键不再经过窗口；注入脚本把预览用到的键转发回来。必须在导航前注入。
-                await core.AddScriptToExecuteOnDocumentCreatedAsync(HtmlKeyScript);
-                HtmlView.WebMessageReceived += (_, args) => OnHtmlKeyMessage(args.TryGetWebMessageAsString());
-                _htmlHooked = true;
-            }
-
-            HtmlView.DefaultBackgroundColor = ThemeService.EffectiveTheme == ElementTheme.Dark
-                ? Windows.UI.Color.FromArgb(255, 32, 32, 32) : Windows.UI.Color.FromArgb(255, 250, 250, 250);
-            if (_htmlNavigationCompleted != null) core.NavigationCompleted -= _htmlNavigationCompleted;
-            if (_htmlNavigationStarting != null) core.NavigationStarting -= _htmlNavigationStarting;
-            ulong navigationId = 0;
-            var targetUri = ToFileUri(path);
-            _htmlNavigationStarting = (_, args) =>
-            {
-                if (_isOpen && token == _loadToken && string.Equals(args.Uri, targetUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)) navigationId = args.NavigationId;
-            };
-            _htmlNavigationCompleted = (_, args) =>
-            {
-                if (!_isOpen || token != _loadToken || navigationId == 0 || args.NavigationId != navigationId) return;
-                core.NavigationCompleted -= _htmlNavigationCompleted;
-                core.NavigationStarting -= _htmlNavigationStarting;
-                _htmlNavigationCompleted = null;
-                _htmlNavigationStarting = null;
-                if (args.IsSuccess) { ShowOnly(HtmlView); RevealWhenReady(); }
-                else ShowFallback(path, "网页加载失败", "用默认程序打开以查看此文件。");
-            };
-            core.NavigationStarting += _htmlNavigationStarting;
-            core.NavigationCompleted += _htmlNavigationCompleted;
-            HtmlView.Source = targetUri;
-            SetPreviewBounds(900, 640);
-            _ = CheckHtmlTimeoutAsync(token, _contentCancellation.Token);
-        }
-        catch (Exception ex)
-        {
-            ErrorReporter.Log($"FilePreviewWindow.Html({path})", ex);
-            if (token == _loadToken)
-                ShowFallback(path, "无法显示网页", "需要 WebView2 运行时。按 Enter 用默认程序打开。");
-        }
-    }
-
-    private bool _htmlHooked;
-    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2NavigationCompletedEventArgs>? _htmlNavigationCompleted;
-    private Windows.Foundation.TypedEventHandler<CoreWebView2, CoreWebView2NavigationStartingEventArgs>? _htmlNavigationStarting;
-
-    private async Task CheckHtmlTimeoutAsync(int token, CancellationToken cancellation)
-    {
-        try
-        {
-            await Task.Delay(TimeSpan.FromSeconds(10), cancellation);
-            if (_isOpen && token == _loadToken && _htmlNavigationCompleted != null)
-                ShowFallback(CurrentPath, "网页加载超时", "用默认程序打开以查看此文件。");
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    /// <summary>
-    /// 注入到网页的脚本：只拦截预览需要的键（空格、Esc、← → 、Enter），其余按键（包括 ↑ ↓ 滚动）保持网页原样。
-    /// </summary>
-    private const string HtmlKeyScript = @"
-document.addEventListener('keydown', function (e) {
-  var target = e.target;
-  if (e.key !== 'Escape' && target && (target.isContentEditable || target.closest('input,textarea,select,button,a,[role=""slider""]'))) return;
-  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
-  var keys = ['Escape', ' ', 'ArrowLeft', 'ArrowRight', 'Enter'];
-  if (keys.indexOf(e.key) >= 0) {
-    e.preventDefault();
-    window.chrome.webview.postMessage(e.key);
-  }
-}, true);";
-
-    private void OnHtmlKeyMessage(string? key)
-    {
-        var mapped = key switch
-        {
-            "Escape" => VirtualKey.Escape,
-            " " => VirtualKey.Space,
-            "ArrowLeft" => VirtualKey.Left,
-            "ArrowRight" => VirtualKey.Right,
-            "Enter" => VirtualKey.Enter,
-            _ => VirtualKey.None,
-        };
-        if (mapped != VirtualKey.None) HandleKey(mapped);
     }
 
     /// <summary>无法预览的类型：不读内容，直接显示类型名和提示。图标仍然在后台取，取到再填。</summary>
@@ -1156,7 +1109,7 @@ document.addEventListener('keydown', function (e) {
     /// 读取前 <see cref="MaxTextBytes"/> 字节并解码；内容像二进制（含 NUL 字节）时返回 null。
     /// 先只读前 4KB 判断是不是二进制：二进制直接返回，不再读后面的内容。
     /// </summary>
-    private static async Task<string?> ReadTextAsync(string path)
+    private static async Task<string?> ReadTextAsync(string path, CancellationToken cancellation = default)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous);
@@ -1166,7 +1119,7 @@ document.addEventListener('keydown', function (e) {
 
         // UTF-16 文本允许含 NUL；其它情况下前 4KB 有 NUL 就视为二进制。
         var probeLength = Math.Min(length, 4096);
-        var read = await ReadFullyAsync(stream, buffer, 0, probeLength);
+        var read = await ReadFullyAsync(stream, buffer, 0, probeLength, cancellation);
         var utf16 = read >= 2 && ((buffer[0] == 0xFF && buffer[1] == 0xFE) || (buffer[0] == 0xFE && buffer[1] == 0xFF));
         if (!utf16)
         {
@@ -1174,22 +1127,22 @@ document.addEventListener('keydown', function (e) {
                 if (buffer[i] == 0) return null;
         }
 
-        read += await ReadFullyAsync(stream, buffer, read, length - read);
+        read += await ReadFullyAsync(stream, buffer, read, length - read, cancellation);
 
         using var reader = new StreamReader(new MemoryStream(buffer, 0, read), detectEncodingFromByteOrderMarks: true);
-        var text = await reader.ReadToEndAsync();
+        var text = await reader.ReadToEndAsync(cancellation);
         if (stream.Length > MaxTextBytes)
             text += $"\n\n… 仅显示前 {MaxTextBytes / 1024} KB（文件共 {FormatSize(stream.Length)}）";
         return text;
     }
 
     /// <summary>读满 <paramref name="count"/> 字节或读到文件末尾，返回实际读到的字节数。</summary>
-    private static async Task<int> ReadFullyAsync(Stream stream, byte[] buffer, int offset, int count)
+    private static async Task<int> ReadFullyAsync(Stream stream, byte[] buffer, int offset, int count, CancellationToken cancellation)
     {
         var total = 0;
         while (total < count)
         {
-            var n = await stream.ReadAsync(buffer.AsMemory(offset + total, count - total));
+            var n = await stream.ReadAsync(buffer.AsMemory(offset + total, count - total), cancellation);
             if (n == 0) break;
             total += n;
         }
@@ -1262,18 +1215,19 @@ document.addEventListener('keydown', function (e) {
         TitleText.Text = Path.GetFileName(path);
         ToolTipService.SetToolTip(TitleText, path);
         var parts = new List<string>();
-        parts.Add(Directory.Exists(path) ? "文件夹" : Path.GetExtension(path).TrimStart('.').ToUpperInvariant() is { Length: > 0 } ext ? $"{ext} 文件" : "文件");
-        if (!Directory.Exists(path))
+        var isFolder = _currentKind == Kind.Folder;
+        parts.Add(isFolder ? "文件夹" : Path.GetExtension(path).TrimStart('.').ToUpperInvariant() is { Length: > 0 } ext ? $"{ext} 文件" : "文件");
+        if (!isFolder && _currentFileInfo?.Exists == true)
         {
-            parts.Add(FormatSize(new FileInfo(path).Length));
+            parts.Add(FormatSize(_currentFileInfo.Length));
         }
         if (_contentSize is { } size) parts.Add($"{size.Width} × {size.Height}");
         if (_previewPlayer?.PlaybackSession.NaturalDuration.TotalSeconds is > 0 and var seconds)
             parts.Add(FormatMediaTime(seconds));
-        var modified = Directory.Exists(path) ? new DirectoryInfo(path).LastWriteTime : new FileInfo(path).LastWriteTime;
-        if (Directory.Exists(path) && _folderStats is { } stats) parts.Add(FormatSize(stats.Bytes));
+        var modified = _currentFileInfo?.LastWriteTime;
+        if (isFolder && _folderStats is { } stats) parts.Add(FormatSize(stats.Bytes));
         _baseMetaText = string.Join(" · ", parts);
-        _modifiedText = $"修改于 {modified:yyyy-MM-dd HH:mm}";
+        _modifiedText = modified is { } modifiedTime ? $"修改于 {modifiedTime:yyyy-MM-dd HH:mm}" : "";
         UpdateCompactHeader();
     }
 

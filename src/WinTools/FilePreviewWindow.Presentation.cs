@@ -53,6 +53,9 @@ public sealed partial class FilePreviewWindow
     private void ResetDocumentState()
     {
         StopPreviewPan();
+        _preparingPdf = false;
+        PdfView.Opacity = 1;
+        PdfView.IsHitTestVisible = true;
         _directoryVersion++;
         _pendingBounds = null;
         _rawText = "";
@@ -90,14 +93,14 @@ public sealed partial class FilePreviewWindow
             control.Visibility = Visibility.Collapsed;
         SourceButton.Content = "源码";
         WrapButton.Content = "自动换行";
-        var kind = Classify(path);
+        var kind = _currentKind;
         var width = 540d;
         var height = 300d;
         switch (kind)
         {
             case Kind.Image: case Kind.Pdf: case Kind.OfficeDocument:
                 width = 720; height = 560; break;
-            case Kind.Html: width = 900; height = 640; break;
+            case Kind.Html: case Kind.Model: width = WebWidthDip; height = WebHeightDip; break;
             case Kind.Text:
                 SourceButton.Visibility = IsMarkdown(path) ? Visibility.Visible : Visibility.Collapsed;
                 WrapButton.Visibility = IsMarkdown(path) ? Visibility.Collapsed : Visibility.Visible;
@@ -169,7 +172,7 @@ public sealed partial class FilePreviewWindow
         if (_previewAnimator.IsBusy) { _pendingBounds = (width, height); return; }
         var scale = CurrentScale();
         var work = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).WorkArea;
-        var isPdf = IsPagedPreview;
+        var isPdf = IsPagedDocumentLayout;
         var fit = PreviewLayoutPolicy.Fit(width, height, work.Width / scale, work.Height / scale,
             isPdf ? PdfMaxWidthRatio : MaxWidthRatio, isPdf ? PdfMaxHeightRatio : MaxHeightRatio);
         var pixelWidth = (int)Math.Round(fit.Width * scale);
@@ -255,11 +258,12 @@ public sealed partial class FilePreviewWindow
 
     private string GetPreviewShortcutHelp()
     {
-        var kind = Classify(CurrentPath);
+        var kind = _currentKind;
         var isPaged = IsPagedPreview;
         return "Esc 关闭预览\n空格 关闭预览（正文焦点）\nEnter 用默认程序打开"
             + (isPaged ? "\n← 上一页 / → 下一页" : _paths.Count > 1 ? "\n← → 切换文件" : "")
             + (kind == Kind.Image || isPaged ? "\nCtrl + 滚轮 缩放\n放大后按住鼠标左键拖动画面" : "")
+            + (kind == Kind.Model ? "\n左键旋转 · 滚轮缩放 · 右键平移" : "")
             + (kind is Kind.Text or Kind.StructuredText or Kind.OfficeText or Kind.OfficeDocument or Kind.Archive or Kind.Folder or Kind.Pdf or Kind.Html
                 ? "\n↑ ↓ / PageUp / PageDown 滚动" : "")
             + "\n按钮、滑条和输入框保留各自的键盘操作。";
@@ -302,7 +306,7 @@ public sealed partial class FilePreviewWindow
 
     private async Task LoadSvgAsync(string path, int token)
     {
-        var text = await ReadTextAsync(path);
+        var text = await ReadTextAsync(path, _contentCancellation.Token);
         if (token != _loadToken) return;
         var root = System.Xml.Linq.XDocument.Parse(text ?? "").Root;
         var width = 300d; var height = 150d;
@@ -363,7 +367,7 @@ public sealed partial class FilePreviewWindow
 
     private async Task ShowRawTextAsync(string path, int token, string status)
     {
-        var text = await ReadTextAsync(path);
+        var text = await ReadTextAsync(path, _contentCancellation.Token);
         if (token != _loadToken) return;
         if (text == null) { ShowUnsupported(path); return; }
         _rawText = text;

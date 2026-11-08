@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace WinTools.Services;
 
-internal readonly record struct OfficePreviewResult(string? PdfPath, string? Error);
+internal readonly record struct OfficePreviewResult(string? PdfPath, string? Error, string? Renderer = null);
 
 /// <summary>Local Office-to-PDF rendering in a cancellable worker, with a cache keyed by the copied file's contents.</summary>
 internal static class OfficePreviewRenderer
@@ -40,12 +40,15 @@ internal static class OfficePreviewRenderer
             jobDirectory = Path.Combine(CacheRoot, jobId);
             Directory.CreateDirectory(jobDirectory);
             var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+            var backends = OfficePreviewBackend.Find(extension is ".doc" or ".docx");
+            if (backends.Count == 0) return new(null, "未检测到可用的 WPS 或 Microsoft Office 页面预览组件");
             var snapshot = Path.Combine(jobDirectory, "source" + extension);
             var before = new FileInfo(sourcePath);
             var originalLength = before.Length;
             var originalWriteTime = before.LastWriteTimeUtc;
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            hash.AppendData(Encoding.UTF8.GetBytes("office-pdf-v1|" + extension + "|"));
+            hash.AppendData(Encoding.UTF8.GetBytes("office-pdf-v2|" + extension + "|"
+                + string.Join("|", backends.Select(backend => backend.CacheIdentity)) + "|"));
             await using (var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
             await using (var output = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write,
@@ -69,7 +72,7 @@ internal static class OfficePreviewRenderer
             if (IsPdf(cachedPdf))
             {
                 Directory.SetLastWriteTimeUtc(cacheDirectory, DateTime.UtcNow);
-                return new(cachedPdf, null);
+                return new(cachedPdf, null, ReadRenderer(cacheDirectory));
             }
 
             var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法定位预览程序");
@@ -84,22 +87,27 @@ internal static class OfficePreviewRenderer
             start.Environment.Remove("WINTOOLS_PREVIEW_QA_DIR");
             start.Environment.Remove("WINTOOLS_NAV_QA_DIR");
             start.Environment.Remove("WINTOOLS_NAV_QA_PAGE");
-            worker = Process.Start(start) ?? throw new InvalidOperationException("无法启动文档预览进程");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
-            try { await worker.WaitForExitAsync(timeout.Token); }
-            catch (OperationCanceledException)
-            {
-                StopWorker(worker, jobDirectory);
-                cancellation.ThrowIfCancellationRequested();
-                return new(null, "原版式预览超时");
-            }
-
-            cancellation.ThrowIfCancellationRequested();
             var pdf = Path.Combine(jobDirectory, "preview.pdf");
-            if (worker.ExitCode != 0 || !IsPdf(pdf))
+            string? renderer = null;
+            var error = "无法生成原版式预览";
+            foreach (var backend in backends)
             {
-                var error = "无法生成原版式预览";
+                cancellation.ThrowIfCancellationRequested();
+                TryDeleteFile(pdf);
+                TryDeleteFile(Path.Combine(jobDirectory, "owner.json"));
+                TryDeleteFile(Path.Combine(jobDirectory, "result.json"));
+                File.WriteAllText(Path.Combine(jobDirectory, "engine.txt"), backend.Id);
+                worker = Process.Start(start) ?? throw new InvalidOperationException("无法启动文档预览进程");
+                try { await worker.WaitForExitAsync(timeout.Token); }
+                catch (OperationCanceledException)
+                {
+                    await StopWorkerAsync(worker, jobDirectory);
+                    cancellation.ThrowIfCancellationRequested();
+                    return new(null, "原版式预览超时");
+                }
+                cancellation.ThrowIfCancellationRequested();
                 var resultPath = Path.Combine(jobDirectory, "result.json");
                 if (File.Exists(resultPath))
                 {
@@ -107,8 +115,12 @@ internal static class OfficePreviewRenderer
                     if (result.RootElement.TryGetProperty("Error", out var detail) && detail.GetString() is { Length: > 0 } message)
                         error = message;
                 }
-                return new(null, error);
+                var succeeded = worker.ExitCode == 0 && IsPdf(pdf);
+                worker.Dispose();
+                worker = null;
+                if (succeeded) { renderer = backend.Name; break; }
             }
+            if (renderer == null) return new(null, error);
 
             // Publish only a completed PDF. The private Office copy is no longer needed.
             TryDeleteFile(snapshot);
@@ -117,16 +129,16 @@ internal static class OfficePreviewRenderer
             if (Directory.Exists(cacheDirectory))
             {
                 jobDirectory = null; // Preserve this completed job if an old cache directory is still locked.
-                return new(pdf, null);
+                return new(pdf, null, renderer);
             }
             try { Directory.Move(jobDirectory, cacheDirectory); }
             catch (IOException)
             {
                 jobDirectory = null;
-                return new(pdf, null);
+                return new(pdf, null, renderer);
             }
             jobDirectory = null;
-            return new(cachedPdf, null);
+            return new(cachedPdf, null, renderer);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -138,7 +150,7 @@ internal static class OfficePreviewRenderer
         {
             if (worker != null)
             {
-                if (!worker.HasExited && jobDirectory != null) StopWorker(worker, jobDirectory);
+                if (!worker.HasExited && jobDirectory != null) await StopWorkerAsync(worker, jobDirectory);
                 worker.Dispose();
             }
             if (jobDirectory != null) DeleteOwnedDirectory(jobDirectory);
@@ -185,6 +197,16 @@ internal static class OfficePreviewRenderer
 
     private static void TryDeleteFile(string file) { try { File.Delete(file); } catch { } }
 
+    private static string? ReadRenderer(string directory)
+    {
+        try
+        {
+            using var result = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "result.json")));
+            return result.RootElement.TryGetProperty("Renderer", out var renderer) ? renderer.GetString() : null;
+        }
+        catch { return null; }
+    }
+
     private static void CopyZoneInformation(string source, string destination)
     {
         try
@@ -200,8 +222,17 @@ internal static class OfficePreviewRenderer
         catch (NotSupportedException) { }
     }
 
-    private static void StopWorker(Process worker, string jobDirectory)
+    private static async Task StopWorkerAsync(Process worker, string jobDirectory)
     {
+        // Let shared WPS/Office automation close our document and restore its settings before a hard stop.
+        try
+        {
+            File.WriteAllText(Path.Combine(jobDirectory, "cancel.flag"), "");
+            using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await worker.WaitForExitAsync(grace.Token);
+            return;
+        }
+        catch { }
         try { if (!worker.HasExited) worker.Kill(); } catch { }
         // Only reap a proven new renderer with matching identity and no visible user windows.
         try
