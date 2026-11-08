@@ -26,7 +26,7 @@ namespace WinTools;
 /// </list>
 /// 吞掉空格后如果没有选中项，这次按键就什么也不做（资源管理器里空格本来也没有有用的默认行为）。
 /// </remarks>
-internal sealed class ExplorerPreviewService
+internal sealed class ExplorerPreviewService : IDisposable
 {
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
@@ -47,11 +47,14 @@ internal sealed class ExplorerPreviewService
     private Thread? _hookThread;
     private uint _hookThreadId;
     private Thread? _workerThread;
+    private bool _disposed;
+    private volatile bool _running;
+    private int _generation;
 
     /// <summary>空格按下时已经被吞掉：抬起要吞掉对应的 KeyUp，按住不放产生的自动重复也一并吞掉。</summary>
     private bool _swallowingSpace;
 
-    private readonly record struct SelectionRequest(IntPtr ExplorerWindow, IntPtr FocusWindow);
+    private readonly record struct SelectionRequest(IntPtr ExplorerWindow, IntPtr FocusWindow, int Generation);
 
     /// <summary>设置页里的「资源管理器」开关。关闭时钩子原样放行所有按键，不做任何判断。</summary>
     public volatile bool Enabled;
@@ -64,15 +67,21 @@ internal sealed class ExplorerPreviewService
 
     public void Start()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_hookThread != null) return;
-
-        _workerThread = new Thread(WorkerMain)
+        // Stop/Start only restarts the hook; reuse the single parked STA worker.
+        // Creating another consumer each time leaves the previous worker waiting forever.
+        if (_workerThread == null)
         {
-            IsBackground = true,
-            Name = "WinTools Explorer Preview Worker",
-        };
-        _workerThread.SetApartmentState(ApartmentState.STA);
-        _workerThread.Start();
+            _workerThread = new Thread(WorkerMain)
+            {
+                IsBackground = true,
+                Name = "WinTools Explorer Preview Worker",
+            };
+            _workerThread.SetApartmentState(ApartmentState.STA);
+            _workerThread.Start();
+        }
+        _running = true;
 
         _ready.Reset();
         _hookThread = new Thread(HookThreadMain)
@@ -86,12 +95,32 @@ internal sealed class ExplorerPreviewService
 
     public void Stop()
     {
+        _running = false;
+        Interlocked.Increment(ref _generation);
+        while (_selectionQueue.TryTake(out _)) { }
+        _swallowingSpace = false;
         if (_hookThread == null) return;
         if (_hookThreadId != 0)
             PostThreadMessage(_hookThreadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
         _hookThread.Join(2000);
         _hookThread = null;
         _hookThreadId = 0;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Stop();
+        _selectionQueue.CompleteAdding();
+        if (_workerThread?.Join(2000) != false)
+        {
+            _workerThread = null;
+            _selectionQueue.Dispose();
+        }
+        // A blocked out-of-process COM call may finish later. Its generation is already
+        // invalidated, so it cannot resurrect a preview after Stop/Dispose.
+        _ready.Dispose();
     }
 
     private void HookThreadMain()
@@ -112,7 +141,7 @@ internal sealed class ExplorerPreviewService
     /// <summary>只在这里做进程内判断；命中后把跨进程的读取交给工作线程。</summary>
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && Enabled && Marshal.ReadInt32(lParam) == VK_SPACE)
+        if (nCode >= 0 && _running && Enabled && Marshal.ReadInt32(lParam) == VK_SPACE)
         {
             var message = wParam.ToInt32();
             if (message is WM_KEYDOWN or WM_SYSKEYDOWN)
@@ -148,8 +177,14 @@ internal sealed class ExplorerPreviewService
         if (focus == IntPtr.Zero || ClassName(focus) != "DirectUIHWND") return false;
         _swallowingSpace = true;
         // 必须先记录焦点；ShowPending 会激活预览窗口，之后再读取可能丢失活动标签。
-        _dispatcher.TryEnqueue(FilePreviewService.ShowPending);
-        _selectionQueue.Add(new SelectionRequest(foreground, focus));
+        var generation = Volatile.Read(ref _generation);
+        _dispatcher.TryEnqueue(() =>
+        {
+            if (_running && Enabled && generation == Volatile.Read(ref _generation))
+                FilePreviewService.ShowPending();
+        });
+        if (_running && !_selectionQueue.IsAddingCompleted)
+            _selectionQueue.TryAdd(new SelectionRequest(foreground, focus, generation));
         return true;
     }
 
@@ -186,6 +221,8 @@ internal sealed class ExplorerPreviewService
     {
         foreach (var request in _selectionQueue.GetConsumingEnumerable())
         {
+            var generation = request.Generation;
+            if (!_running || !Enabled || generation != Volatile.Read(ref _generation)) continue;
             // 无论读取成功与否，都要回到 UI 线程把结果交给窗口：空结果会收起加载中的窗口。
             IReadOnlyList<string> paths = Array.Empty<string>();
             try
@@ -198,7 +235,12 @@ internal sealed class ExplorerPreviewService
             }
 
             var selection = paths;
-            _dispatcher.TryEnqueue(() => FilePreviewService.ShowSelection(selection));
+            if (!_running || !Enabled || generation != Volatile.Read(ref _generation)) continue;
+            _dispatcher.TryEnqueue(() =>
+            {
+                if (_running && Enabled && generation == Volatile.Read(ref _generation))
+                    FilePreviewService.ShowSelection(selection);
+            });
         }
     }
 

@@ -6,7 +6,6 @@ namespace WinTools;
 public sealed partial class MainWindow
 {
     private Border AssocEditPanel => FeaturePages.GetControl<Border>(nameof(AssocEditPanel));
-    private Button ThreeFingerCalibrateButton => FeaturePages.GetControl<Button>(nameof(ThreeFingerCalibrateButton));
     private ColumnDefinition AssocEditColumn => FeaturePages.GetControl<ColumnDefinition>(nameof(AssocEditColumn));
     private Grid ContentDesktopOrganize => FeaturePages.GetControl<Grid>(nameof(ContentDesktopOrganize));
     private Grid ContentPerAppIme => FeaturePages.GetControl<Grid>(nameof(ContentPerAppIme));
@@ -17,7 +16,6 @@ public sealed partial class MainWindow
     private NumberBox DesktopCardMarginBox => FeaturePages.GetControl<NumberBox>(nameof(DesktopCardMarginBox));
     private NumberBox DesktopCardMaxColumnsBox => FeaturePages.GetControl<NumberBox>(nameof(DesktopCardMaxColumnsBox));
     private ComboBox DesktopCardAlignmentBox => FeaturePages.GetControl<ComboBox>(nameof(DesktopCardAlignmentBox));
-    private ProgressBar ThreeFingerCalibrationProgress => FeaturePages.GetControl<ProgressBar>(nameof(ThreeFingerCalibrationProgress));
     private RadioButton ThemeRadioDark => FeaturePages.GetControl<RadioButton>(nameof(ThemeRadioDark));
     private RadioButton ThemeRadioLight => FeaturePages.GetControl<RadioButton>(nameof(ThemeRadioLight));
     private RadioButton ThemeRadioSystem => FeaturePages.GetControl<RadioButton>(nameof(ThemeRadioSystem));
@@ -41,7 +39,7 @@ public sealed partial class MainWindow
     private TextBlock ImeChineseCountText => FeaturePages.GetControl<TextBlock>(nameof(ImeChineseCountText));
     private TextBlock ImeEnglishCountText => FeaturePages.GetControl<TextBlock>(nameof(ImeEnglishCountText));
     private TextBlock ImeCountText => FeaturePages.GetControl<TextBlock>(nameof(ImeCountText));
-    private TextBlock ThreeFingerCalibrationStatusText => FeaturePages.GetControl<TextBlock>(nameof(ThreeFingerCalibrationStatusText));
+    private TextBlock ThreeFingerStatusText => FeaturePages.GetControl<TextBlock>(nameof(ThreeFingerStatusText));
     private TextBlock ZoneCountText => FeaturePages.GetControl<TextBlock>(nameof(ZoneCountText));
     private TextBox AssocExtBox => FeaturePages.GetControl<TextBox>(nameof(AssocExtBox));
     private TextBox AssocNameBox => FeaturePages.GetControl<TextBox>(nameof(AssocNameBox));

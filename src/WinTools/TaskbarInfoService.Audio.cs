@@ -5,24 +5,6 @@ namespace WinTools;
 internal sealed partial class TaskbarInfoService
 {
     private AudioDevicePickerWindow? _audioPicker;
-    private string _audioName = "";
-    private bool _readingAudio;
-    private DateTime _nextAudioRead = DateTime.MinValue;
-
-    /// <summary>当前默认输出设备名，显示在音频入口上；每 5 秒后台读取一次。</summary>
-    private async System.Threading.Tasks.Task RefreshAudioNameAsync()
-    {
-        _readingAudio = true;
-        _nextAudioRead = DateTime.UtcNow.AddSeconds(5);
-        try
-        {
-            var devices = await System.Threading.Tasks.Task.Run(WinTools.Services.AudioDeviceService.Read);
-            if (!_disposed) _audioName = devices.Find(device => device.Flow == 0 && device.Default)?.Name ?? "";
-        }
-        catch (Exception) { if (!_disposed) _audioName = ""; }
-        finally { _readingAudio = false; }
-    }
-
     private bool _audioWarmQueued;
 
     /// <summary>信息条第一次显示后，在空闲时预先创建音频弹窗，避免第一次点击时现建窗口造成掉帧。</summary>

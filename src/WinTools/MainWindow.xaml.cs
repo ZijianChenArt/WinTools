@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 
 using System.Collections.Generic;
@@ -190,7 +190,6 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         _config = startupConfig;
 
-        _touchpadInputHost.ConfigurePointerCurve(_config.ThreeFingerLowSpeedGain, _config.ThreeFingerHighSpeedGain, _config.ThreeFingerAccelerationStart, _config.ThreeFingerAccelerationEnd);
 
         _isLoadingDragStashSettings = true;
 
@@ -634,7 +633,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         if (ThreeFingerDragToggle != null) ThreeFingerDragToggle.IsOn = _config.EnableThreeFingerDrag;
 
-        if (ThreeFingerCalibrationStatusText != null) ThreeFingerCalibrationStatusText.Text = string.IsNullOrWhiteSpace(_config.ThreeFingerCalibrationUtc) ? "尚未校准，正在使用默认速度" : "已根据此设备完成校准";
+        if (ThreeFingerStatusText != null) ThreeFingerStatusText.Text = _touchpadInputHost.Status;
 
         _isLoadingDragStashSettings = false;
 
@@ -645,146 +644,6 @@ public sealed partial class MainWindow : Window, IUiStyleShell
     {
 
         await Windows.System.Launcher.LaunchUriAsync(new Uri("ms-settings:devices-touchpad"));
-
-
-    }
-
-    internal async void ThreeFingerCalibrate_Click(object sender, RoutedEventArgs e)
-    {
-
-        if (MainNav.XamlRoot == null || ThreeFingerCalibrateButton == null) return;
-
-        var instructions = new ContentDialog
-        {
-
-            Title = "校准三指拖拽速度",
-            Content = "将依次校准慢速、正常和快速三档。每一档请用一根手指从触摸板最左侧滑到最右侧后抬起，完成后会自动进入下一档，无需按下触摸板。",
-            PrimaryButtonText = "开始",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = MainNav.XamlRoot
-        }
-
-;
-
-        if (await instructions.ShowAsync() != ContentDialogResult.Primary) return;
-
-        ThreeFingerCalibrateButton.IsEnabled = false;
-
-        ThreeFingerCalibrationProgress.Visibility = Visibility.Visible;
-
-        ThreeFingerCalibrationProgress.Value = 0;
-
-        ThreeFingerCalibrationStatusText.Text = "正在校准，请依次完成慢速、正常和快速三次滑动…";
-
-        var result = await RunGuidedThreeFingerCalibrationAsync();
-
-        ThreeFingerCalibrationProgress.Visibility = Visibility.Collapsed;
-
-        ThreeFingerCalibrateButton.IsEnabled = true;
-
-        if (result == null)
-        {
-
-            ThreeFingerCalibrationStatusText.Text = "已取消校准，速度设置未更改";
-
-            return;
-
-
-        }
-
-        if (!result.Value.Success || result.Value.FitQuality < 0.25)
-        {
-
-            ThreeFingerCalibrationStatusText.Text = "有效滑动数据不足，速度设置未更改";
-
-            var failed = new ContentDialog
-            {
-
-                Title = "校准未完成",
-                Content = "未采集到足够的慢速和快速滑动数据。请重试，并避免光标碰到屏幕边缘。",
-                CloseButtonText = "确定",
-                XamlRoot = MainNav.XamlRoot
-            };
-
-            await failed.ShowAsync();
-
-            return;
-
-
-        }
-
-        var measured = result.Value;
-
-        var calibrated = new TouchpadCalibrationResult(true, ApplyCalibrationFineTune(ThreeFingerCalibrationDefaults.LowSpeedGain, measured.LowSpeedGain), ApplyCalibrationFineTune(ThreeFingerCalibrationDefaults.HighSpeedGain, measured.HighSpeedGain), ApplyCalibrationFineTune(ThreeFingerCalibrationDefaults.AccelerationStart, measured.AccelerationStart), ApplyCalibrationFineTune(ThreeFingerCalibrationDefaults.AccelerationEnd, measured.AccelerationEnd), measured.SampleCount, measured.FitQuality);
-
-        _config.ThreeFingerLowSpeedGain = calibrated.LowSpeedGain;
-
-        _config.ThreeFingerHighSpeedGain = calibrated.HighSpeedGain;
-
-        _config.ThreeFingerAccelerationStart = calibrated.AccelerationStart;
-
-        _config.ThreeFingerAccelerationEnd = calibrated.AccelerationEnd;
-
-        _config.ThreeFingerCalibrationUtc = DateTime.UtcNow.ToString("O");
-
-        ConfigService.Save(_config);
-
-        _touchpadInputHost.ConfigurePointerCurve(calibrated.LowSpeedGain, calibrated.HighSpeedGain, calibrated.AccelerationStart, calibrated.AccelerationEnd);
-
-        ThreeFingerCalibrationStatusText.Text =
-            "已根据此设备完成校准";
-
-        var completed = new ContentDialog
-        {
-
-            Title = "校准完成",
-            Content = "已根据此设备调整三指拖拽速度，更改已生效。",
-            CloseButtonText = "确定",
-            XamlRoot = MainNav.XamlRoot
-        };
-
-        await completed.ShowAsync();
-
-
-    }
-
-    private static double ApplyCalibrationFineTune(double baseline, double measured)
-    {
-
-        // First limit a single measurement to ±40%, then blend only half of that difference.
-        // The applied result therefore stays within ±20% of the stable factory curve.
-        var boundedMeasurement = Math.Clamp(measured, baseline * 0.60, baseline * 1.40);
-
-        return Math.Round(baseline + (boundedMeasurement - baseline) * 0.50, 3);
-
-
-    }
-
-    private async Task<TouchpadCalibrationResult?> RunGuidedThreeFingerCalibrationAsync()
-    {
-
-        var captureStarted = false;
-
-        var guide = new ThreeFingerCalibrationWindow();
-
-        var completed = await guide.RunAsync(() =>
-        {
-
-            _touchpadInputHost.BeginCalibration(_config.EnableThreeFingerDrag);
-
-            captureStarted = true;
-
-
-        }
-
-, () => _touchpadInputHost.IsCalibrationFingerDown, () => _touchpadInputHost.CalibrationCapturedFrameCount, progress => ThreeFingerCalibrationProgress.Value = progress);
-
-        if (!captureStarted) return null;
-
-        var result = _touchpadInputHost.CompleteCalibration();
-
-        return completed ? result : null;
 
 
     }

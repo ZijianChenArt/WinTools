@@ -13,15 +13,6 @@ using Windows.Storage;
 
 namespace WinTools;
 
-internal static class ThreeFingerCalibrationDefaults
-{
-    public const double LowSpeedGain = 0.25;
-    public const double HighSpeedGain = 0.82;
-    public const double AccelerationStart = 6.0;
-    public const double AccelerationEnd = 50.0;
-    public const double MaximumAdjustmentRatio = 0.20;
-}
-
 /// <summary>单条程序关联配置：扩展名 + 显示名称 + 程序路径。</summary>
 public class ConfigEntry
 {
@@ -198,25 +189,18 @@ public class Config : ObservableObject
     [JsonPropertyName("enableThreeFingerDrag")]
     public bool EnableThreeFingerDrag { get => _enableThreeFingerDrag; set => SetProperty(ref _enableThreeFingerDrag, value); }
 
-    private double _threeFingerLowSpeedGain = ThreeFingerCalibrationDefaults.LowSpeedGain;
+    // Passive compatibility fields: preserve old calibration values for rollback, but native
+    // PTP input never reads, normalizes, notifies changes for, or resets these legacy values.
     [JsonPropertyName("threeFingerLowSpeedGain")]
-    public double ThreeFingerLowSpeedGain { get => _threeFingerLowSpeedGain; set => SetProperty(ref _threeFingerLowSpeedGain, value); }
-
-    private double _threeFingerHighSpeedGain = ThreeFingerCalibrationDefaults.HighSpeedGain;
+    public double ThreeFingerLowSpeedGain { get; set; } = 0.25;
     [JsonPropertyName("threeFingerHighSpeedGain")]
-    public double ThreeFingerHighSpeedGain { get => _threeFingerHighSpeedGain; set => SetProperty(ref _threeFingerHighSpeedGain, value); }
-
-    private double _threeFingerAccelerationStart = ThreeFingerCalibrationDefaults.AccelerationStart;
+    public double ThreeFingerHighSpeedGain { get; set; } = 0.82;
     [JsonPropertyName("threeFingerAccelerationStart")]
-    public double ThreeFingerAccelerationStart { get => _threeFingerAccelerationStart; set => SetProperty(ref _threeFingerAccelerationStart, value); }
-
-    private double _threeFingerAccelerationEnd = ThreeFingerCalibrationDefaults.AccelerationEnd;
+    public double ThreeFingerAccelerationStart { get; set; } = 6.0;
     [JsonPropertyName("threeFingerAccelerationEnd")]
-    public double ThreeFingerAccelerationEnd { get => _threeFingerAccelerationEnd; set => SetProperty(ref _threeFingerAccelerationEnd, value); }
-
-    private string _threeFingerCalibrationUtc = "";
+    public double ThreeFingerAccelerationEnd { get; set; } = 50.0;
     [JsonPropertyName("threeFingerCalibrationUtc")]
-    public string ThreeFingerCalibrationUtc { get => _threeFingerCalibrationUtc; set => SetProperty(ref _threeFingerCalibrationUtc, value); }
+    public string ThreeFingerCalibrationUtc { get; set; } = "";
 
     private int _stashWindowWidth;
     [JsonPropertyName("stashWindowWidth")]
@@ -572,14 +556,6 @@ public static class ConfigService
         ConfigureDesktopCatchAllAndGameOrder(config.DesktopZones);
         config.AppTheme = ThemePreference.Normalize(config.AppTheme);
         config.AppUiStyle = UiStylePreference.Normalize(config.AppUiStyle);
-        config.ThreeFingerLowSpeedGain = ClampCalibrationAdjustment(
-            config.ThreeFingerLowSpeedGain, ThreeFingerCalibrationDefaults.LowSpeedGain);
-        config.ThreeFingerHighSpeedGain = ClampCalibrationAdjustment(
-            config.ThreeFingerHighSpeedGain, ThreeFingerCalibrationDefaults.HighSpeedGain);
-        config.ThreeFingerAccelerationStart = ClampCalibrationAdjustment(
-            config.ThreeFingerAccelerationStart, ThreeFingerCalibrationDefaults.AccelerationStart);
-        config.ThreeFingerAccelerationEnd = ClampCalibrationAdjustment(
-            config.ThreeFingerAccelerationEnd, ThreeFingerCalibrationDefaults.AccelerationEnd);
         return config;
     }
 
@@ -669,12 +645,6 @@ public static class ConfigService
         }
 
         config.DesktopZoneSchemaVersion = currentSchema;
-    }
-
-    private static double ClampCalibrationAdjustment(double value, double baseline)
-    {
-        var ratio = ThreeFingerCalibrationDefaults.MaximumAdjustmentRatio;
-        return Math.Clamp(value, baseline * (1.0 - ratio), baseline * (1.0 + ratio));
     }
 
     /// <summary>将旧版按类型拆分的文件分区合并到第一列"系统文件"。</summary>

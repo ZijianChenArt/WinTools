@@ -34,15 +34,25 @@ internal static class PrecisionTouchpadHelper
         if (GetRawInputDeviceList(devices, ref deviceCount, listSize) != deviceCount)
             return false;
 
+        var found = false;
         for (var i = 0; i < devices.Length; i++)
         {
             if (devices[i].dwType != RimTypeHid)
                 continue;
 
             if (GetOrCreateDeviceContext(devices[i].hDevice)?.IsPrecisionTouchpad == true)
-                return true;
+                found = true;
         }
 
+        return found;
+    }
+
+    internal static bool HasPhysicalGeometry()
+    {
+        HasPrecisionTouchpad();
+        lock (SyncRoot)
+            foreach (var context in DeviceContexts.Values)
+                if (context.IsPrecisionTouchpad && context.Geometry != null) return true;
         return false;
     }
 
@@ -87,10 +97,21 @@ internal static class PrecisionTouchpadHelper
         }
     }
 
-    public static bool TryParseInput(IntPtr lParam, Span<TouchpadContact> contactsBuffer, out int parsedCount, out uint contactCount)
+    internal static void InvalidateDeviceCache(IntPtr device)
+    {
+        lock (SyncRoot)
+            if (DeviceContexts.Remove(device, out var context) && context.PreparsedData != IntPtr.Zero)
+                Marshal.FreeHGlobal(context.PreparsedData);
+    }
+
+    public static bool TryParseInput(IntPtr lParam, Span<TouchpadContact> contactsBuffer, out int parsedCount,
+        out uint contactCount, out IntPtr device, out TouchpadGeometry? geometry)
     {
         parsedCount = 0;
         contactCount = 0;
+        device = IntPtr.Zero;
+        geometry = null;
+        var hasContactCount = false;
 
         uint rawInputSize = 0;
         var headerSize = (uint)Marshal.SizeOf<RAWINPUTHEADER>();
@@ -106,6 +127,9 @@ internal static class PrecisionTouchpadHelper
         if (context == null || !context.IsPrecisionTouchpad || context.ValueCaps.Length == 0 || context.PreparsedData == IntPtr.Zero)
             return false;
 
+        device = rawInput.Header.hDevice;
+        geometry = context.Geometry;
+
         var singleReportSize = rawInput.Hid.dwSizeHid;
         var rawDataLength = checked((int)(singleReportSize * rawInput.Hid.dwCount));
         if (rawDataLength <= 0 || rawDataLength > rawInputSize)
@@ -118,6 +142,9 @@ internal static class PrecisionTouchpadHelper
         Span<TouchpadContactBuilder> builders = reportCount <= 8
             ? stackalloc TouchpadContactBuilder[8]
             : new TouchpadContactBuilder[reportCount];
+        // stackalloc memory is undefined. Stale nullable fields can emit a contact before
+        // all three values have been read, duplicating an ID and mixing X/Y from old reports.
+        builders.Clear();
 
         for (var i = 0; i < context.ValueCaps.Length; i++)
         {
@@ -139,7 +166,10 @@ internal static class PrecisionTouchpadHelper
                 if (valueCap.LinkCollection == 0)
                 {
                     if (valueCap.UsagePage == 0x0D && valueCap.Usage == 0x54)
+                    {
                         contactCount = value;
+                        hasContactCount = true;
+                    }
                     continue;
                 }
 
@@ -157,7 +187,15 @@ internal static class PrecisionTouchpadHelper
                     && parsedCount < contactsBuffer.Length
                     && builders[builderIndex].TryCreate(out var contact))
                 {
-                    contactsBuffer[parsedCount++] = contact;
+                    uint usagesLength = (uint)context.ActiveUsages.Length;
+                    var reportPointer = IntPtr.Add(rawDataPointer, (int)(singleReportSize * builderIndex));
+                    var status = HidP_GetUsages(HIDP_REPORT_TYPE.HidP_Input, 0x0D, valueCap.LinkCollection,
+                        context.ActiveUsages, ref usagesLength, context.PreparsedData, reportPointer, singleReportSize);
+                    // Count includes reported lifted contacts on some devices. Keep their state
+                    // until the whole frame is assembled, then exclude them from movement.
+                    if (status == HidpStatusSuccess)
+                        contactsBuffer[parsedCount++] = new(contact.ContactId, contact.X, contact.Y,
+                            Array.IndexOf(context.ActiveUsages, (ushort)0x42, 0, (int)usagesLength) >= 0);
                     builders[builderIndex].Clear();
                 }
             }
@@ -166,7 +204,7 @@ internal static class PrecisionTouchpadHelper
                 break;
         }
 
-        return parsedCount > 0;
+        return parsedCount > 0 || hasContactCount && contactCount == 0;
     }
 
     private static void EnsureRawInputBuffer(int size)
@@ -247,6 +285,15 @@ internal static class PrecisionTouchpadHelper
 
             context.PreparsedData = preparsedData;
             context.ValueCaps = filtered;
+            TouchpadAxis? x = null, y = null;
+            foreach (var cap in filtered)
+            {
+                if (cap.UsagePage != 1) continue;
+                var axis = TouchpadAxis.FromHid(cap.LogicalMin, cap.LogicalMax, cap.PhysicalMin, cap.PhysicalMax, cap.Units, cap.UnitsExp);
+                if (cap.Usage == 0x30) x ??= axis;
+                if (cap.Usage == 0x31) y ??= axis;
+            }
+            if (x != null && y != null) context.Geometry = new(x.Value, y.Value);
             DeviceContexts[deviceHandle] = context;
             return context;
         }
@@ -276,6 +323,10 @@ internal static class PrecisionTouchpadHelper
 
     [DllImport("hid.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern uint HidP_GetUsageValue(HIDP_REPORT_TYPE reportType, ushort usagePage, ushort linkCollection, ushort usage, out uint usageValue, IntPtr preparsedData, IntPtr report, uint reportLength);
+
+    [DllImport("hid.dll")]
+    private static extern uint HidP_GetUsages(HIDP_REPORT_TYPE reportType, ushort usagePage, ushort linkCollection,
+        [Out] ushort[] usages, ref uint usagesLength, IntPtr preparsedData, IntPtr report, uint reportLength);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RAWINPUTDEVICE
@@ -442,5 +493,7 @@ internal static class PrecisionTouchpadHelper
         public bool IsPrecisionTouchpad { get; init; }
         public IntPtr PreparsedData { get; set; }
         public HIDP_VALUE_CAPS[] ValueCaps { get; set; } = Array.Empty<HIDP_VALUE_CAPS>();
+        public TouchpadGeometry? Geometry { get; set; }
+        public ushort[] ActiveUsages { get; } = new ushort[32];
     }
 }

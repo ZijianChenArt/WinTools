@@ -555,6 +555,7 @@ public partial class App : Application, IWindowRegistry
             IsShuttingDown = true;
             SaveConfigOnExit();
             (Current as App)?.TaskbarInfo?.Dispose();
+            (Current as App)?._explorerPreviewService?.Dispose();
             RestoreDesktopIcons();
             // 托盘图标由 Shell 持有，进程直接结束会在通知区域留下幽灵图标。
             try { (Current as App)?._trayIcon?.Dispose(); }

@@ -89,17 +89,15 @@
                             <Button Content="打开触摸板设置" Click="OpenTouchpadSettings_Click"/>
                         </tk:SettingsCard>
 
-                        <tk:SettingsCard Header="速度校准">
+                        <tk:SettingsCard Header="Windows 原生指针速度">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE9E9;"/>
                             </tk:SettingsCard.HeaderIcon>
                             <tk:SettingsCard.Description>
                                 <StackPanel Style="{StaticResource PageFieldStackStyle}">
-                                    <ProgressBar x:Name="ThreeFingerCalibrationProgress" Minimum="0" Maximum="3" Value="0" Visibility="Collapsed" Width="180" HorizontalAlignment="Left"/>
-                                    <TextBlock x:Name="ThreeFingerCalibrationStatusText" Text="尚未校准，正在使用默认速度" Style="{StaticResource PageDescriptionTextStyle}"/>
+                                    <TextBlock x:Name="ThreeFingerStatusText" Text="跟随 Windows 触摸板速度与加速设置，无需校准。" Style="{StaticResource PageDescriptionTextStyle}"/>
                                 </StackPanel>
                             </tk:SettingsCard.Description>
-                            <Button x:Name="ThreeFingerCalibrateButton" Content="开始校准" Click="ThreeFingerCalibrate_Click"/>
                         </tk:SettingsCard>
                     </StackPanel>
                 </StackPanel>

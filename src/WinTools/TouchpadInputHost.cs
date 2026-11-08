@@ -11,6 +11,7 @@ internal sealed class TouchpadInputHost : IDisposable
 {
     private const int WM_CLOSE = 0x0010;
     private const int WM_DESTROY = 0x0002;
+    private const int WM_SET_ENABLED = 0x8001;
 
     private readonly ThreeFingerDragService _service = new();
     private readonly ManualResetEventSlim _readyEvent = new(false);
@@ -23,30 +24,16 @@ internal sealed class TouchpadInputHost : IDisposable
     private Timer? _diagnosticTimer;
     private string? _lastDiagnosticSnapshot;
     private readonly string _diagnosticPath = Path.Combine(AppContext.BaseDirectory, "three_finger_diagnostics.log");
-    private readonly string _calibrationPath = Path.Combine(AppContext.BaseDirectory, "three_finger_calibration.csv");
 
     public bool HasTouchpad => _service.HasTouchpad;
-
-    public void ConfigurePointerCurve(double lowGain, double highGain, double accelerationStart, double accelerationEnd) =>
-        _service.ConfigurePointerCurve(lowGain, highGain, accelerationStart, accelerationEnd);
-
-    public void BeginCalibration(bool dragEnabled)
-    {
-        if (_thread == null)
-            Start(dragEnabled);
-        _service.BeginCalibration();
-    }
-
-    public TouchpadCalibrationResult CompleteCalibration() => _service.CompleteCalibration();
-
-    public bool IsCalibrationFingerDown => _service.IsCalibrationFingerDown;
-    public int CalibrationCapturedFrameCount => _service.CalibrationCapturedFrameCount;
+    public string Status => _service.Status;
+    internal long DeviceChanges => _service.DeviceChanges;
 
     public void Start(bool enabled)
     {
         if (_thread != null)
         {
-            _service.SetEnabled(enabled);
+            PostMessage(_hwnd, WM_SET_ENABLED, enabled ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
             return;
         }
 
@@ -77,14 +64,13 @@ internal sealed class TouchpadInputHost : IDisposable
             return;
         }
 
-        _service.SetEnabled(enabled);
+        PostMessage(_hwnd, WM_SET_ENABLED, enabled ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
     }
 
     public void Dispose()
     {
         _diagnosticTimer?.Dispose();
         _diagnosticTimer = null;
-        FlushCalibrationRecords();
         if (_hwnd != IntPtr.Zero)
             PostMessage(_hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
@@ -92,7 +78,6 @@ internal sealed class TouchpadInputHost : IDisposable
             _thread.Join(2000);
 
         _readyEvent.Dispose();
-        _service.Dispose();
     }
 
     private void ThreadMain()
@@ -147,6 +132,7 @@ internal sealed class TouchpadInputHost : IDisposable
             DispatchMessage(ref msg);
         }
 
+        _service.Dispose();
         if (_hwnd != IntPtr.Zero)
         {
             DestroyWindow(_hwnd);
@@ -158,17 +144,10 @@ internal sealed class TouchpadInputHost : IDisposable
     private void StartDiagnosticLogging()
     {
         AppendDiagnostic($"sessionStart pid={Environment.ProcessId}");
-        try
-        {
-            File.WriteAllText(_calibrationPath,
-                "sequence,stopwatch_ticks,contacts,raw_center_x,raw_center_y,cursor_x,cursor_y" + Environment.NewLine);
-        }
-        catch { /* Calibration logging must never affect input handling. */ }
         _diagnosticTimer = new Timer(_ =>
         {
             try
             {
-                FlushCalibrationRecords();
                 var snapshot = _service.GetDiagnosticsSnapshot();
                 if (string.Equals(snapshot, _lastDiagnosticSnapshot, StringComparison.Ordinal)) return;
                 _lastDiagnosticSnapshot = snapshot;
@@ -176,18 +155,6 @@ internal sealed class TouchpadInputHost : IDisposable
             }
             catch { /* 诊断不能影响输入线程。 */ }
         }, null, 0, 1000);
-    }
-
-    [Conditional("DEBUG")]
-    private void FlushCalibrationRecords()
-    {
-        try
-        {
-            var records = _service.DrainCalibrationRecords();
-            if (records.Length > 0)
-                File.AppendAllLines(_calibrationPath, records);
-        }
-        catch { /* Calibration logging must never affect input handling. */ }
     }
 
     [Conditional("DEBUG")]
@@ -203,10 +170,17 @@ internal sealed class TouchpadInputHost : IDisposable
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         if (_service.HandleWindowMessage(msg, wParam, lParam))
+            return msg == PrecisionTouchpadHelper.WM_INPUT ? DefWindowProc(hwnd, msg, wParam, lParam) : IntPtr.Zero;
+
+        if (msg == WM_SET_ENABLED)
+        {
+            _service.SetEnabled(wParam != IntPtr.Zero);
             return IntPtr.Zero;
+        }
 
         if (msg == WM_CLOSE)
         {
+            _service.Dispose();
             DestroyWindow(hwnd);
             return IntPtr.Zero;
         }

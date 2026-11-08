@@ -377,20 +377,6 @@ public sealed partial class MainWindow
         UpdateCollectStatus();
     }
 
-    private void SyncMainToggle(ToggleSwitch? toggle, bool enabled)
-    {
-
-        if (toggle == null) return;
-
-        _isLoadingDragStashSettings = true;
-
-        toggle.IsOn = enabled;
-
-        _isLoadingDragStashSettings = false;
-
-
-    }
-
     #endregion
 
     #region 桌面分区

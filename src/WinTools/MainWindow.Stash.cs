@@ -111,17 +111,19 @@ public sealed partial class MainWindow
         _config.EnableThreeFingerDrag = ThreeFingerDragToggle.IsOn;
 
         _touchpadInputHost.SetEnabled(_config.EnableThreeFingerDrag);
+        ThreeFingerStatusText.Text = _touchpadInputHost.Status;
 
         ConfigService.Update(c => c.EnableThreeFingerDrag = _config.EnableThreeFingerDrag);
 
-        if (_config.EnableThreeFingerDrag && !_touchpadInputHost.HasTouchpad && MainNav.XamlRoot != null)
+        if (_config.EnableThreeFingerDrag && (!_touchpadInputHost.HasTouchpad || !NativeTouchpadInput.IsSupported
+            || !PrecisionTouchpadHelper.HasPhysicalGeometry()) && MainNav.XamlRoot != null)
         {
 
             var dialog = new ContentDialog
             {
 
                 Title = "三指拖拽",
-                Content = "未检测到精确式触摸板，无法使用此功能。",
+                Content = _touchpadInputHost.Status,
                 CloseButtonText = "确定",
                 XamlRoot = MainNav.XamlRoot,
             }

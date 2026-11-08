@@ -99,11 +99,6 @@ public sealed class SettingsService
         Current.EnableDragStash = defaults.EnableDragStash;
         Current.EnableProgramAssoc = defaults.EnableProgramAssoc;
         Current.EnableThreeFingerDrag = defaults.EnableThreeFingerDrag;
-        Current.ThreeFingerLowSpeedGain = defaults.ThreeFingerLowSpeedGain;
-        Current.ThreeFingerHighSpeedGain = defaults.ThreeFingerHighSpeedGain;
-        Current.ThreeFingerAccelerationStart = defaults.ThreeFingerAccelerationStart;
-        Current.ThreeFingerAccelerationEnd = defaults.ThreeFingerAccelerationEnd;
-        Current.ThreeFingerCalibrationUtc = defaults.ThreeFingerCalibrationUtc;
         Current.StashWindowWidth = defaults.StashWindowWidth;
         Current.StashWindowHeight = defaults.StashWindowHeight;
         Current.AutoStart = defaults.AutoStart;

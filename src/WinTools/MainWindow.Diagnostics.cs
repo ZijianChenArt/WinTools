@@ -32,6 +32,8 @@ public sealed partial class MainWindow
             await Task.Delay(3500);
             if (Environment.GetEnvironmentVariable("WINTOOLS_NAV_QA_PAGE") == NavTags.TaskbarInfo)
                 MainNav.SelectedItem = NavItemTaskbarInfo;
+            else if (Environment.GetEnvironmentVariable("WINTOOLS_NAV_QA_PAGE") == NavTags.ThreeFingerDrag)
+                MainNav.SelectedItem = NavItemThreeFingerDrag;
             var reports = new List<object>();
             foreach (var (name, width, height, open) in new[]
             {

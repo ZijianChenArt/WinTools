@@ -155,7 +155,6 @@ public sealed partial class FeaturePagesHost : UserControl
     private void VoiceBall_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.VoiceBall_ApplyHotkey_Click(sender, e);
     private void VoiceBall_ResetPosition_Click(object sender, RoutedEventArgs e) => Owner?.VoiceBall_ResetPosition_Click(sender, e);
     private void ThemeRadioButtons_SelectionChanged(object sender, SelectionChangedEventArgs e) => Owner?.ThemeRadioButtons_SelectionChanged(sender, e);
-    private void ThreeFingerCalibrate_Click(object sender, RoutedEventArgs e) => Owner?.ThreeFingerCalibrate_Click(sender, e);
     private void ThreeFingerDragToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.ThreeFingerDragToggle_Toggled(sender, e);
     private void Zone_Delete_Click(object sender, RoutedEventArgs e) => Owner?.Zone_Delete_Click(sender, e);
     private void Zone_New_Click(object sender, RoutedEventArgs e) => Owner?.Zone_New_Click(sender, e);

@@ -38,7 +38,7 @@ internal sealed partial class TaskbarInfoService
         if (icons > 0 || audio > 0)
         {
             width = pad + icons * button;
-            if (audio > 0) width += (icons > 0 ? (int)(4 * scale) : 0) + (audio == 2 ? (int)(150 * scale) : button);
+            if (audio > 0) width += (icons > 0 ? (int)(4 * scale) : 0) + button;
         }
         var codex = showCodex ? MeasureInfoWidth(compact ? CompactQuota(_quotaText) : _quotaText, scale, compact) : 0;
         var claude = showClaude ? MeasureInfoWidth(compact ? CompactQuota(_claudeText) : _claudeText, scale, compact) : 0;
@@ -133,11 +133,11 @@ internal sealed partial class TaskbarInfoService
         if (layout.Menu) end = _buttonStart + _buttonWidth;
         else if (layout.IconCount > 0 || layout.Audio > 0) end = _buttonStart + layout.IconCount * _buttonWidth;
 
-        _deviceWidth = layout.Audio == 2 ? (int)(150 * scale) : layout.Audio == 1 ? _buttonWidth : 0;
+        _deviceWidth = layout.Audio > 0 ? _buttonWidth : 0;
         if (_deviceWidth > 0)
         {
             _deviceStart = (int)(end + (layout.IconCount > 0 ? 4 * scale : 0));
-            _deviceIconCenter = layout.Audio == 2 ? _deviceStart + 20 * scale : _deviceStart + _deviceWidth / 2f;
+            _deviceIconCenter = _deviceStart + _deviceWidth / 2f;
             end = _deviceStart + _deviceWidth;
         }
         _codexDrawWidth = layout.Codex;
@@ -208,13 +208,21 @@ internal sealed partial class TaskbarInfoService
         IUIAutomation? automation = null;
         IUIAutomationElement? root = null;
         IUIAutomationCondition? condition = null;
+        IUIAutomationCacheRequest? cache = null;
         IUIAutomationElementArray? all = null;
         try
         {
             automation = (IUIAutomation)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("ff48dba4-60ef-4201-aa87-54103eef594e"))!)!;
             automation.ElementFromHandle(taskbar, out root);
             automation.CreateTrueCondition(out condition);
-            root.FindAll(4, condition, out all); // TreeScope_Descendants
+            // Fetch the two properties together in one provider traversal, rather than
+            // two cross-process property reads for every taskbar descendant.
+            automation.CreateCacheRequest(out cache);
+            cache.AddProperty(30002); // UIA_ProcessIdPropertyId
+            cache.AddProperty(30001); // UIA_BoundingRectanglePropertyId
+            cache.put_TreeScope(1); // TreeScope_Element for each FindAll result
+            cache.put_AutomationElementMode(1); // cached-only elements; no live provider references
+            root.FindAllBuildCache(4, condition, cache, out all); // TreeScope_Descendants
             all.get_Length(out var count);
             var barWidth = bar.Right - bar.Left;
             var barHeight = bar.Bottom - bar.Top;
@@ -227,9 +235,9 @@ internal sealed partial class TaskbarInfoService
                 {
                     // 本程序自己的信息条（任务栏的被拥有窗口）也会出现在这棵树里，必须排除，
                     // 否则它会把自己当成「图标」，放到左边就让左边变占用、跳到右边，如此来回横跳。
-                    element.GetCurrentPropertyValue(30002, out var pid); // UIA_ProcessIdPropertyId
+                    element.GetCachedPropertyValue(30002, out var pid); // UIA_ProcessIdPropertyId
                     if (pid is int ownerPid && ownerPid == Environment.ProcessId) continue;
-                    element.GetCurrentPropertyValue(30001, out var value); // UIA_BoundingRectanglePropertyId
+                    element.GetCachedPropertyValue(30001, out var value); // UIA_BoundingRectanglePropertyId
                     if (value is not double[] rect || rect.Length != 4) continue;
                     int left = (int)rect[0], top = (int)rect[1], width = (int)rect[2], height = (int)rect[3];
                     var centerY = top + height / 2;
@@ -255,6 +263,7 @@ internal sealed partial class TaskbarInfoService
         finally
         {
             if (all != null) Marshal.ReleaseComObject(all);
+            if (cache != null) Marshal.ReleaseComObject(cache);
             if (condition != null) Marshal.ReleaseComObject(condition);
             if (root != null) Marshal.ReleaseComObject(root);
             if (automation != null) Marshal.ReleaseComObject(automation);
@@ -282,7 +291,7 @@ internal sealed partial class TaskbarInfoService
         void get_RawViewCondition(); // 17
         void get_ControlViewCondition();       // 18
         void get_ContentViewCondition();       // 19
-        void CreateCacheRequest();   // 20
+        void CreateCacheRequest(out IUIAutomationCacheRequest request); // 20
         void CreateTrueCondition(out IUIAutomationCondition condition); // 21
     }
 
@@ -294,9 +303,25 @@ internal sealed partial class TaskbarInfoService
         void FindFirst();            // 5
         void FindAll(int scope, IUIAutomationCondition condition, out IUIAutomationElementArray elements); // 6
         void FindFirstBuildCache();  // 7
-        void FindAllBuildCache();    // 8
+        void FindAllBuildCache(int scope, IUIAutomationCondition condition, IUIAutomationCacheRequest request, out IUIAutomationElementArray elements); // 8
         void BuildUpdatedCache();    // 9
         void GetCurrentPropertyValue(int propertyId, [MarshalAs(UnmanagedType.Struct)] out object value); // 10
+        void GetCurrentPropertyValueEx(); // 11
+        void GetCachedPropertyValue(int propertyId, [MarshalAs(UnmanagedType.Struct)] out object value); // 12
+    }
+
+    [ComImport, Guid("b32a92b5-bc25-4078-9c08-d7ee95c48e03"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IUIAutomationCacheRequest
+    {
+        void AddProperty(int propertyId);
+        void AddPattern();
+        void Clone();
+        void get_TreeScope();
+        void put_TreeScope(int scope);
+        void get_TreeFilter();
+        void put_TreeFilter();
+        void get_AutomationElementMode();
+        void put_AutomationElementMode(int mode);
     }
 
     [ComImport, Guid("352ffba8-0973-437c-a61f-f64cafd81df9"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

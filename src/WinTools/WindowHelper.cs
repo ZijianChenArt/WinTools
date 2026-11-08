@@ -295,22 +295,6 @@ public static class WindowHelper
             : Color.FromArgb(255, 218, 218, 218));
 
 
-    private static uint ResolveBaseBackgroundColorRef(Window window)
-    {
-        if (window.Content is FrameworkElement root)
-        {
-            var theme = root.RequestedTheme != ElementTheme.Default
-                ? root.RequestedTheme
-                : ThemeService.EffectiveTheme;
-            root.RequestedTheme = theme;
-
-            if (Application.Current.Resources["SolidBackgroundFillColorBaseBrush"] is SolidColorBrush appBrush)
-                return ToColorRef(appBrush.Color);
-        }
-
-        return ThemeService.EffectiveTheme == ElementTheme.Dark ? 0x00202020u : 0x00F3F3F3u;
-    }
-
     private static uint ToColorRef(Color color) =>
         (uint)(color.R | (color.G << 8) | (color.B << 16));
 

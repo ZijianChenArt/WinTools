@@ -132,9 +132,8 @@ public sealed class GlobalDragWatcher : IDisposable
                 _downPoint = info.pt;
                 _downSourceHwnd = WindowFromPoint(_downPoint);
 
-                // SetCursorPos-based three-finger motion is intentionally synchronous and may not
-                // generate a low-level WM_MOUSEMOVE for every update. Poll only while our tagged
-                // synthetic button is down so floating drag targets still detect the gesture.
+                // Native touchpad mouse moves can be coalesced. Keep a bounded fallback only
+                // while our tagged drag button is down so floating targets detect the gesture.
                 if (info.dwExtraInfo.ToInt64() == ThreeFingerDragService.SyntheticInputTag)
                 {
                     _threeFingerMovePollTimer ??= new Timer(_ => PollThreeFingerMove(), null,
@@ -176,6 +175,9 @@ public sealed class GlobalDragWatcher : IDisposable
         if (Interlocked.CompareExchange(ref _dragDetectionClaimed, 1, 0) != 0) return;
 
         _isDragging = true;
+        // Detection is complete. Keep the fallback only before the drag threshold;
+        // otherwise it wakes every 8ms throughout a drag just to return immediately.
+        _threeFingerMovePollTimer?.Change(Timeout.Infinite, Timeout.Infinite);
         if (ShouldIgnoreDragAt?.Invoke(_downPoint.X, _downPoint.Y) == true) return;
 
         _dragNotified = true;

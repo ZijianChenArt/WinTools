@@ -160,6 +160,8 @@ dotnet run --project tests/Reliability.Tests
 dotnet run --project tests/Preview.Tests                 # 预览解析、尺寸策略、取消与 Office 页序
 dotnet run --project tests/TaskbarInfo.Tests            # 加 -- --live 才会读取本机真实额度
 dotnet run --project tests/AudioDevice.Tests            # 只读枚举设备，不修改系统设置
+dotnet run --project tests/ThreeFinger.Tests            # 三指帧拼接、物理单位、释放与失败处理
+dotnet run --project tests/PreviewLifecycle.Tests       # 空格预览钩子启停、单一 worker 复用与销毁
 ```
 
 | 改了什么 | 至少跑哪个 |
@@ -169,6 +171,7 @@ dotnet run --project tests/AudioDevice.Tests            # 只读枚举设备，�
 | 文件预览解析 / 内容尺寸 / Office 提取 | `Preview.Tests` 和 `Reliability.Tests`；界面仍需 Debug 渲染与真机确认 |
 | Codex / Claude 额度、代理、授权解析 | `TaskbarInfo.Tests` |
 | 音频设备枚举与切换接口 | `AudioDevice.Tests` |
+| 三指拖拽与原生触控板输入 | `ThreeFinger.Tests`；实际触控板手感仍需用户确认 |
 | 其它 | 没有对应测试：用 2.4 的实机验证，并**不要**声称「测试通过」 |
 
 2026-10-13 四个测试全部通过（发布 v1.3.9 前后）。**这些测试不覆盖任何窗口交互**：
@@ -1062,6 +1065,67 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 
 ## 8. 其它功能要点
 
+### 三指拖拽（v1.3.41，原生输入）
+
+三指只控制左键按住与释放；位移通过 `CreateSyntheticPointerDevice2(PT_TOUCHPAD)` 和
+`InjectSyntheticPointerInput` 注入一个虚拟单指触点，交给 Windows 原生 PTP 鼠标处理。
+创建时仅指定 `SDCO_PHYSICAL_SIZE`，不可指定 `SDCO_TOUCHPAD_GESTURE_ONLY`（后者不会产生鼠标移动）。
+参考：[微软注入选项](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ne-winuser-synthetic_device_creation_options)。
+
+- 从 HID X/Y 的 Logical / Physical 范围、长度单位与十进制指数换算真实物理尺寸（himetric）；
+  三个稳定 Contact ID 的位移均值转换为单触点移动，不读屏幕宽度猜倍率，不再使用自定义加速曲线。
+  短暂漏报的手指恢复时只重新建立位置基线，不补发积攒位移。拖动锁定真实源设备，
+  其它设备报告不能抢走源；仅在空闲且出现新的三指候选时选择新设备。
+- 移除快 / 中 / 慢校准及校准窗口；旧配置字段仅保留以便配置兼容，不再影响速度。
+  原生接口或设备物理尺寸不可用时显示原因，不静默回退旧曲线，也不修改系统触控板设置。
+  接口需运行时检测，不能仅凭“Windows 11”判断可用；系统三指手势仍需设为不执行操作以避免冲突。
+- 松开时先清除虚拟触点的 Confidence，再结束触点并销毁设备，最后释放左键。
+  **不可只发 `POINTER_FLAG_CANCELED | CONFIDENCE`**：本机隔离实测仍会触发额外轻触点击。
+  2 指瞬时漏报最多容忍 40ms；无报告 250ms、关闭功能、真实源设备移除、注入失败及退出均结束输入。
+  开关与销毁操作在 Raw Input 所在线程执行，避免跨线程使用注入设备。
+- `dotnet run --project tests/ThreeFinger.Tests` 检查物理单位、拼帧、ID 变化、超时与失败释放；
+  `-- --device` 额外只读检查本机支持并启停 Raw Input 线程；
+  `-- --native-motion` 在隔离空白测试窗产生少量真实移动及一组左键事件，验证无额外点击、按键配对与释放，
+  结束关闭测试窗并恢复光标。**只有用户同意输入集成验证时才加此参数**；不自动操作 WinTools 界面。
+
+2026-11-09：Windows 10.0.26340 上原生接口与 HID 物理尺寸检测通过；状态机检查、Raw Input 线程
+启停、原生移动、静止取消无点击、左键一组按下 / 抬起及释放状态检查通过。Debug 设置页五种尺寸
+静态渲染完成，截图在 `artifacts/three-finger-native-qa/ui/`。真实手指手感、文件拖放、跨屏与系统
+手势冲突仍待用户真机确认，不能把输入事件检查称为这些交互已通过。
+最终 Debug 构建 0 警告 / 0 错误，Release 安装包构建成功；覆盖安装退出码 0，已从
+`%LOCALAPPDATA%/Programs/WinTools/WinTools.exe` 启动本地 1.3.38.0，三指功能开启，
+EXE / DLL / PRI / 原生扩展与发布目录哈希一致，记录为
+`artifacts/three-finger-native-qa/installed-verification.json`。本地试用阶段，真实手感确认后再决定公开发布。
+
+v1.3.38 真机反馈：三指变成双击，未形成拖动，不能视为可用。定位发现虚拟触控板创建 / 销毁本身
+会发送 `WM_INPUT_DEVICE_CHANGE`；无条件结束拖动导致循环按下 / 释放。v1.3.39 只在
+`GIDC_REMOVAL` 且 `lParam` 与当前真实源设备相同时结束拖动，仅失效通知对应设备的 HID 缓存。
+到达或其它设备移除均不打断手势。新增真实消息集成验证，将虚拟设备通知送回完整三指状态机：
+收到 3 条通知期间，连续移动 67 像素，左键持续按住，结束时只有一组按下 / 抬起；
+另有回归检查确保真实源设备拔除仍及时释放。此检查不代替真实手指操作确认。
+v1.3.39 Debug 构建 0 警告 / 0 错误，Release 安装包构建成功，覆盖安装退出码 0，
+已启动安装目录中的 1.3.39.0；EXE / DLL / PRI / 原生扩展哈希与发布目录一致，等待用户复验拖动。
+
+v1.3.39 再次真机反馈仍为点击 / 窗口放大，不能视为可用。只读现场采样
+`artifacts/three-finger-native-qa/hardware-live.json` 捕获 996 份报告（407 份真实三指报告）、
+36 个 WinTools 标记的按键事件，即 18 组点击。**虚拟 PTP 不只发送设备通知，还会回送可被
+Raw Input 解析的单指 HID 报告**；旧逻辑被这些报告切换源、释放按键，并重新准备下一次三指按下。
+因此只过滤 `WM_INPUT_DEVICE_CHANGE` 不足以修复，集成检查也必须处理真正的 `WM_INPUT` 回送。
+另修正 `stackalloc TouchpadContactBuilder` 未清零导致的陈旧 nullable 字段与重复 ID；异常帧只丢弃，
+不将其解释为抬手，长时间没有有效帧仍走 watchdog。现场队列有 142ms 间断，因此无报告兜底
+由 120ms 调为 250ms，明确的真实抬手仍即时或按 40ms 漏报容错释放。
+
+v1.3.40 验证：
+`dotnet run --project tests/ThreeFinger.Tests -- --replay artifacts/three-finger-native-qa/hardware-live.json --expected-gestures 2 --native-motion`
+通过。采样在 216701ms 和 217467ms 明确降到单指，故独立预期为两段真实手势；回放产生
+2 组按下 / 抬起、388 次移动，最长持续按住 1416ms。隔离实机检查在回送 23 份虚拟 HID 报告和
+3 条设备通知期间仍保持一段连续拖动，只有一组按下 / 抬起。实际用户手感仍需在新安装版确认。
+v1.3.40 Debug 构建 0 警告 / 0 错误，Release 安装包构建成功，覆盖安装退出码 0，
+已从安装目录启动 1.3.40.0，EXE / DLL / PRI / 原生扩展与发布目录哈希一致；
+新版本只读复验采样目标为 `artifacts/three-finger-native-qa/hardware-1.3.40.json`。
+随后用户确认：**能持续拖动，抬手正常**。该采样记录 1815 份报告和 4 组 WinTools 按下 / 抬起，
+对应按住约 963、419、433、423ms，没有其它左键按下 / 抬起事件；本机这项真机验收通过。
+
 ### 悬浮搜索
 
 - 默认用 `Alt+Space` 呼出；关闭功能后立即注销快捷键，把组合键让回系统窗口菜单。
@@ -1351,6 +1415,53 @@ Debug 下可设置 `WINTOOLS_PREVIEW_QA_DIR` 显式运行 `FilePreviewWindow.Dia
 
 ## 10. 历史决策与基线
 
+### 当前性能与冗余核对（2026-11-09，本地 v1.3.40）
+
+优化前只读审计安装版。三指拖拽开启，卡片靠左，预览、暂存与任务栏开启，
+搜索 / 语音 / 按程序输入法关闭。91 样本、91.958 秒：平均 CPU 为整机 **0.1232%**
+（20 逻辑处理器，单核 2.4638%），私有提交 **183.06–184.29 MiB**；短段未见明显持续增长。
+独立快照有 15 个 WinUI 顶层窗口（10 可见、5 隐藏），无 WebView2 或其它后代进程。
+与下方旧基线配置不同，不能直接计算版本涨跌；没有重测冷启动、首开或长期泄漏。
+
+当前源码组件测量：完整音频枚举 30 次中位 **16.82ms**；核对源码一致的任务栏 UIA 探针
+10 次中位 **73.12ms**，客户端 CPU 合计 187.5ms；搜索查询均值 0.034–0.293ms，
+多数英文 / 拼音查询临时分配约 113–145KiB。均为独立进程测量，不等于界面端到端延迟。
+
+确认的优先项：去掉任务栏每 5 秒无显示收益的音频名称枚举（布局只产生 Audio=0/1，名称分支
+Audio==2 不可达）；再优化每 3 秒全树 UIA 扫描；补齐预览 worker 的取消 / 回收；
+三指拖动一旦确认后停止备用的 8ms 空轮询。三个无调用私有方法为
+`ResolveBaseBackgroundColorRef`、`SyncMainToggle`、`LoadJournal`；旧校准字段仍为兼容保留，
+可按迁移方案清理。详细证据、边界及后续 A/B 口径见
+`artifacts/performance-audit-20261109/report.md` 与同目录原始数据（本机产物，不随 Git 提交）。
+
+### v1.3.41 性能与冗余清理（2026-11-09）
+
+- 删除任务栏每 5 秒无显示收益的音频名称枚举及不可达的名称布局 / 绘制分支；音频选择器自己的刷新与默认设备维护保留。
+- 任务栏 UIA 扫描改为一次缓存读取进程 ID 与矩形，减少逐节点跨进程属性调用；保留 3 秒扫描周期及原有避让规则。
+- 三指拖动跨过检测阈值后立即停止 8ms 备用检测定时器；按下到识别拖动前仍保留兜底。
+- 空格预览 Stop/Start 复用唯一 STA worker，Stop 清理待处理请求并使旧结果失效，退出时销毁服务；不再反复遗留等待线程。
+- 删除三个无调用私有方法，以及旧校准窗口、曲线和配置归一化 / 重置逻辑。旧 JSON 数值被动保留以兼容回退，不参与原生输入。
+
+独立 UIA 组件三轮交替测量（每轮 10 次），旧版 / 缓存版中位耗时分别为
+58.00 / 49.27ms、59.22 / 55.56ms、60.72 / 55.21ms；同为 37 个节点、2 组占用区。
+中位下降约 6%–15%，但两轮缓存版 P95 更高，因此不据此承诺尾部延迟或整机 CPU 同比例下降。
+原始数据：`artifacts/performance-optimization-20261109/scan-comparison.json`。
+
+Debug 构建 0 警告 / 0 错误，桌面布局、可靠性、预览、任务栏、只读音频检查通过。
+新增预览生命周期检查连续启停 12 次复用同一 worker，Dispose 后线程退出且不可重启；
+三指隔离集成检查确认一组按下 / 抬起、无额外轻触、拖动识别后定时器停止，
+真实 HID 失败样本回放仍为 2 段手势、388 次移动。用户已在 v1.3.40 确认持续拖动与抬手正常。
+
+同配置、同窗口数交替各测 3 轮，每次启动后稳定 40 秒再采样约 92 秒（91 样本），全程响应正常。
+整机平均 CPU 旧版分别为 0.0977%、0.0713%、0.0917%，新版为 0.0654%、0.0501%、0.0586%；
+三轮均值 **0.0869% → 0.0580%**，本机短时测量约下降 33%，绝对差约 0.029 个百分点。
+私有提交范围旧版 178.24–181.37 MiB、新版 176.63–181.69 MiB，未见明确内存改善；
+不能据此推断长期泄漏、启动速度或每个单项的独立贡献。数据与配置 / 程序集哈希见
+`artifacts/performance-optimization-20261109/app-comparison.json` 及同目录报告。
+已覆盖安装并从 `%LOCALAPPDATA%/Programs/WinTools/WinTools.exe` 启动 1.3.41.0，进程响应正常，
+EXE / DLL / PRI / 原生扩展与发布目录哈希一致；安装校验记录为同目录 `installed-verification.json`。
+静态截图确认按钮居中、额度位于任务栏内；运行期间未见新增应用错误，既有系统图标备用加载日志保留。
+
 ### 安装版性能基线（2026-10-26，v1.3.28）
 
 对象为安装版 **v1.3.28**，源码提交 `9a617b0`；安装目录与本地发布目录的主程序集版本和
@@ -1541,8 +1652,8 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 | `VoiceBallService` / `Services/FocusedTextProbe.cs` / `Services/MicaColorSampler.cs` | 语音小球：光标跟踪、Mica 小球绘制与快捷键模拟 |
 | `DesktopClickService` | 桌面空白双击切换「显示桌面 / 恢复窗口」 |
 | `DesktopContextMenuService` | 清理历史「整理桌面」注册表菜单 |
-| `ThreeFingerDragService` | 精确触控板三指接触合成原生拖动 |
-| `ThreeFingerCalibrationWindow` | 全屏三档速度校准，仅在基础曲线 ±20% 内微调 |
+| `ThreeFingerDragService` | 三指帧拼接、稳定 Contact ID 位移追踪、超时与失联释放 |
+| `NativeTouchpadInput` / `TouchpadGeometry` | HID 物理尺寸换算，单触点交给 Windows 原生触控板管线 |
 | `WindowHelper.cs` | 窗口外观、标题栏、Mica 分层颜色、尺寸适配 |
 | `UiStyleService.cs` / `ThemeService.cs` | Mica 风格 / 浅色深色跟随系统 |
 | `AutostartService.cs` | 开机自启（HKCU Run） |

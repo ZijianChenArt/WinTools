@@ -222,7 +222,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             && cursor.X >= x && cursor.X < x + width && cursor.Y >= y && cursor.Y < y + windowHeight
             ? HitAt(cursor.X - x) : -1;
         var dark = (int?)Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) != 1;
-        var drawing = $"{_quotaText}|{_claudeText}|{width}|{height}|{dark}|{scale}|{layout}|{string.Join(',', _shownIcons)}|{_hoveredButton}|{_reading}|{_readingClaude}|{_stashCount}|{_voiceActive}|{_audioName}|{floating}";
+        var drawing = $"{_quotaText}|{_claudeText}|{width}|{height}|{dark}|{scale}|{layout}|{string.Join(',', _shownIcons)}|{_hoveredButton}|{_reading}|{_readingClaude}|{_stashCount}|{_voiceActive}|{floating}";
         if (drawing != _lastDrawing)
         {
             Draw(width, height, padY, scale, dark);
@@ -251,7 +251,6 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         try { _stashCount = StashCountProvider?.Invoke() ?? 0; } catch (Exception) { _stashCount = 0; }
         try { _voiceActive = VoiceActiveProvider?.Invoke() ?? false; } catch (Exception) { _voiceActive = false; }
-        if (_showAudio && !_readingAudio && DateTime.UtcNow >= _nextAudioRead) _ = RefreshAudioNameAsync();
     }
 
     private void Hide(bool includeQuota = true)
@@ -464,12 +463,6 @@ internal sealed partial class TaskbarInfoService : IDisposable
             if (_deviceWidth > 0)
             {
                 DrawChip(graphics, new RectangleF(_deviceStart, 2 * scale, _deviceWidth, height - 4 * scale), scale, dark, _hoveredButton == 3);
-                if (layout.Audio == 2)
-                {
-                    var label = string.IsNullOrWhiteSpace(_audioName) ? "音频设备" : _audioName;
-                    var left = _deviceStart + 34 * scale;
-                    graphics.DrawString(label, font, foreground, new RectangleF(left, 0, Math.Max(1, _deviceStart + _deviceWidth - 10 * scale - left), height), format);
-                }
             }
             for (var slot = 0; slot < _shownIcons.Length; slot++)
             {

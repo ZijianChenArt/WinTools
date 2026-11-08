@@ -540,17 +540,6 @@ public static class DesktopCollectService
         }
     }
 
-    private static List<CollectedEntry> LoadJournal()
-    {
-        try
-        {
-            if (!File.Exists(JournalPath)) return new List<CollectedEntry>();
-            return JsonSerializer.Deserialize<List<CollectedEntry>>(File.ReadAllText(JournalPath))
-                ?? new List<CollectedEntry>();
-        }
-        catch { return new List<CollectedEntry>(); }
-    }
-
     /// <summary>迁移完成后把旧日志改名留档，而不是删除——万一迁移有问题还能人工对账。</summary>
     private static void ArchiveJournal()
     {
