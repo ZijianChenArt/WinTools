@@ -33,6 +33,7 @@ public sealed partial class FilePreviewWindow
         {
             _capturingPreviewLayouts = true;
             await Task.Delay(2500);
+            await CaptureRasterChecksAsync(root);
             foreach (var name in new[] { "sample.md", "sample.txt", "empty.txt", "sample.zip", "small.zip", "empty.zip", "sample-folder",
                 "data.csv", "book.xlsx", "data.json", "broken.json", "large.json", "sample.docx", "slides.pptx", "sample.doc", "slides.ppt", "sample.html", "sample.obj", "textured.obj", "sample.fbx", "ascii.fbx", "complex.fbx", "broken.fbx", "sample.pdf", "sample.svg", "tiny.png", "sample.blend", "sample.wav", "sample.mp4", "portrait.mp4" })
             {
@@ -141,6 +142,39 @@ public sealed partial class FilePreviewWindow
         }
         catch (Exception ex) { File.WriteAllText(Path.Combine(root, "capture-error.txt"), ex.ToString()); }
         finally { _capturingPreviewLayouts = false; HideWindow(immediate: true); }
+    }
+
+    private async Task CaptureRasterChecksAsync(string root)
+    {
+        var path = Path.Combine(root, "large-raster.jpg");
+        if (!File.Exists(path)) return;
+        _paths = new[] { path };
+        _index = 0;
+        Present();
+        var clock = Stopwatch.StartNew();
+        await LoadCurrentAsync();
+        var readyMs = clock.Elapsed.TotalMilliseconds;
+        await Task.Delay(350);
+        var raster = _rasterPreview ?? throw new InvalidOperationException("The bounded raster path did not load.");
+        var first = ImageView.Source;
+        var firstEdge = raster.LoadedEdge;
+        if (firstEdge >= raster.LongEdge || _contentSize != (raster.Width, raster.Height))
+            throw new InvalidOperationException("The raster preview lost its size limit or original dimensions.");
+
+        await CapturePreviewFrameAsync(root, "large-raster-fit.png");
+        ImageSurface.ChangeView(null, null, 3f, disableAnimation: true);
+        while (clock.Elapsed.TotalSeconds < 12 && ReferenceEquals(first, ImageView.Source)) await Task.Delay(25);
+        var zoomedEdge = raster.LoadedEdge;
+        if (zoomedEdge <= firstEdge || zoomedEdge > 4096)
+            throw new InvalidOperationException("Zoom did not load a sharper, bounded bitmap.");
+
+        HideWindow(immediate: true);
+        if (ImageView.Source != null || _rasterPreview != null)
+            throw new InvalidOperationException("The closed preview retained its raster source.");
+        File.WriteAllText(Path.Combine(root, "raster-report.json"), JsonSerializer.Serialize(new
+        {
+            raster.Width, raster.Height, firstEdge, zoomedEdge, readyMs,
+        }));
     }
 
     private async Task CapturePreviewSwitchChecksAsync(string root)

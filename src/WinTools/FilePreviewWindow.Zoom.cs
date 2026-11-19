@@ -22,6 +22,10 @@ public sealed partial class FilePreviewWindow
     private void InitializeZoomInteractions()
     {
         InitializeZoomSurface(ImageSurface, ImageView);
+        ImageSurface.ViewChanged += (_, args) =>
+        {
+            if (!args.IsIntermediate) QueueRasterUpgrade();
+        };
         InitializeZoomSurface(PdfView, PdfPages);
         Activated += (_, args) =>
         {

@@ -293,6 +293,7 @@ public sealed partial class FilePreviewWindow
     private void ContentHost_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         FitImageSurface();
+        QueueRasterUpgrade();
         if (TitleText != null && HintText != null) UpdateShortcutHints();
     }
 
