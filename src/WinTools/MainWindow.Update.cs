@@ -98,7 +98,7 @@ public sealed partial class MainWindow
     {
         if (_isLoadingDragStashSettings) return;
         _config.EnableAutoUpdateCheck = AutoUpdateToggle.IsOn;
-        ConfigService.Update(c => c.EnableAutoUpdateCheck = AutoUpdateToggle.IsOn);
+        SettingsService.Instance.FlushNow();
         if (AutoUpdateToggle.IsOn) ScheduleAutoUpdateCheck();
     }
 }

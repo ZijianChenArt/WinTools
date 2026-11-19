@@ -15,7 +15,7 @@ internal sealed partial class TaskbarInfoService
         _pointerInside = true;
         _leaveAfter = 0;
         if (_draggingFloat) return;
-        if (!_floating) { SafeTick(); return; }
+        if (!_floating) { RedrawOverlay(); return; }
         AnimateHover(1);
     }
 
@@ -26,7 +26,7 @@ internal sealed partial class TaskbarInfoService
         _hoverTarget = target;
         _hoverStarted = Environment.TickCount64;
         _hoverTimer.Start();
-        SafeTick();
+        RedrawOverlay();
     }
 
     private void HoverFrame()
@@ -44,7 +44,7 @@ internal sealed partial class TaskbarInfoService
         {
             _hoverTimer.Stop();
         }
-        SafeTick();
+        RedrawOverlay();
     }
 
     private void ResetHover()

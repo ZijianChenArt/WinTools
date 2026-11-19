@@ -37,8 +37,8 @@ try
 {
     var csv = Path.Combine(temp, "data.csv");
     File.WriteAllText(csv, "name,score\nalpha,10\nbeta,20\n");
-    var csvText = StructuredPreviewExtractor.Extract(csv);
-    Require(csvText?.Contains("name\tscore") == true && csvText.Contains("beta\t20"), "CSV preview failed");
+    var csvTable = PreviewDataReader.ReadDelimited(csv);
+    Require(csvTable.Rows.Count == 3 && csvTable.Rows[0][1] == "score" && csvTable.Rows[2][0] == "beta", "CSV preview failed");
 
     var json = Path.Combine(temp, "data.json");
     File.WriteAllText(json, "{\"name\":\"alpha\",\"items\":[1,2]}");
@@ -51,8 +51,8 @@ try
         using var entry = new StreamWriter(archive.CreateEntry("docs/readme.txt").Open());
         entry.Write("preview");
     }
-    var zipText = StructuredPreviewExtractor.Extract(zip);
-    Require(zipText?.Contains("docs/readme.txt") == true, "ZIP listing failed");
+    var zipEntries = PreviewDataReader.ReadZip(zip, default);
+    Require(System.Linq.Enumerable.Any(zipEntries, item => item.Path == "docs/readme.txt"), "ZIP listing failed");
 
     var pptx = Path.Combine(temp, "slides.pptx");
     using (var archive = ZipFile.Open(pptx, ZipArchiveMode.Create))

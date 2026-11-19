@@ -247,9 +247,9 @@ public sealed partial class SpotlightWindow : Window, IUiStyleShell
     {
         try
         {
-            var before = AppSearchIndex.Snapshot.Count;
+            var before = AppSearchIndex.Snapshot;
             var entries = await AppSearchIndex.GetAsync();
-            if (!_isVisible || entries.Count == before) return;
+            if (!_isVisible || ReferenceEquals(entries, before)) return;
             ApplyQuery(QueryBox.Text);
         }
         catch (Exception ex)

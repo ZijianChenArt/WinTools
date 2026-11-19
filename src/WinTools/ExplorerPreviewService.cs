@@ -167,7 +167,6 @@ internal sealed class ExplorerPreviewService : IDisposable
 
         var foreground = GetForegroundWindow();
         if (foreground == IntPtr.Zero || !IsExplorerWindow(foreground)) return false;
-        if (!IsFileListFocused(foreground)) return false;
 
         // 标签式资源管理器的多个 ShellBrowser 共享同一个顶层 HWND；同时记录
         // 当前 DirectUIHWND，后台读取时才能精确定位活动标签。
@@ -177,7 +176,7 @@ internal sealed class ExplorerPreviewService : IDisposable
         if (focus == IntPtr.Zero || ClassName(focus) != "DirectUIHWND") return false;
         _swallowingSpace = true;
         // 必须先记录焦点；ShowPending 会激活预览窗口，之后再读取可能丢失活动标签。
-        var generation = Volatile.Read(ref _generation);
+        var generation = Interlocked.Increment(ref _generation);
         _dispatcher.TryEnqueue(() =>
         {
             if (_running && Enabled && generation == Volatile.Read(ref _generation))
@@ -198,17 +197,6 @@ internal sealed class ExplorerPreviewService : IDisposable
     {
         var name = ClassName(hwnd);
         return name == "CabinetWClass" || name == "ExploreWClass";
-    }
-
-    /// <summary>
-    /// 焦点在文件列表（DirectUIHWND）时才接管。重命名框（Edit）、地址栏、搜索框都不是这个类，自然不会被抢走空格。
-    /// </summary>
-    private static bool IsFileListFocused(IntPtr foreground)
-    {
-        var threadId = GetWindowThreadProcessId(foreground, out _);
-        var info = new GUITHREADINFO { cbSize = (uint)Marshal.SizeOf<GUITHREADINFO>() };
-        if (!GetGUIThreadInfo(threadId, ref info) || info.hwndFocus == IntPtr.Zero) return false;
-        return ClassName(info.hwndFocus) == "DirectUIHWND";
     }
 
     private static string ClassName(IntPtr hwnd)

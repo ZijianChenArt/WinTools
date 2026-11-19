@@ -30,7 +30,6 @@ internal static class OfficeTextExtractor
     private const int MaxChars = 200_000;
 
     /// <summary>xlsx 每个工作表最多读取的行数。</summary>
-    private const int MaxRowsPerSheet = 5_000;
 
     private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private static readonly XNamespace S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -46,7 +45,6 @@ internal static class OfficeTextExtractor
         {
             using var zip = ZipFile.OpenRead(path);
             if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase)) return ExtractDocx(zip);
-            if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase)) return ExtractXlsx(zip);
             if (string.Equals(extension, ".pptx", StringComparison.OrdinalIgnoreCase)) return ExtractPptx(zip);
             return null;
         }
@@ -148,113 +146,77 @@ internal static class OfficeTextExtractor
 
     #region xlsx
 
-    internal static IReadOnlyList<PreviewTable> ReadWorkbook(string path, System.Threading.CancellationToken cancellation)
+    internal sealed record WorkbookSheet(string Name, string EntryPath);
+    internal sealed record WorkbookPreview(string Path, IReadOnlyList<WorkbookSheet> Sheets, long Length, DateTime Updated)
     {
+        internal PreviewTable ReadSheet(int index, System.Threading.CancellationToken cancellation)
+        {
+            var file = new FileInfo(Path);
+            if (file.Length != Length || file.LastWriteTimeUtc != Updated)
+                throw new IOException("工作簿已更新，请重新打开预览。");
+            using var zip = ZipFile.OpenRead(Path);
+            var sheet = Sheets[index];
+            var entry = zip.GetEntry(sheet.EntryPath) ?? throw new FormatException("找不到工作表。");
+            cancellation.ThrowIfCancellationRequested();
+            var sharedStrings = ReadSharedStrings(zip);
+            using var stream = entry.Open();
+            using var reader = System.Xml.XmlReader.Create(stream, new System.Xml.XmlReaderSettings
+            {
+                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = 8 * 1024 * 1024,
+            });
+            var rows = new List<string[]>();
+            var totalChars = 0;
+            var truncated = false;
+            while (reader.Read())
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (reader.NodeType != System.Xml.XmlNodeType.Element || reader.LocalName != "row"
+                    || reader.NamespaceURI != S.NamespaceName) continue;
+                if (rows.Count >= PreviewDataReader.MaxRows || totalChars >= MaxChars) { truncated = true; break; }
+                using var rowReader = reader.ReadSubtree();
+                var row = XElement.Load(rowReader);
+                var cells = new List<string>();
+                foreach (var cell in row.Elements(S + "c"))
+                {
+                    var column = cell.Attribute("r") == null ? cells.Count : ColumnIndex((string?)cell.Attribute("r"));
+                    if (column < 0 || column >= PreviewDataReader.MaxColumns) { truncated = true; continue; }
+                    var text = CellText(cell, sharedStrings);
+                    while (cells.Count <= column) cells.Add("");
+                    var limit = Math.Min(4096, MaxChars - totalChars);
+                    cells[column] = text[..Math.Min(text.Length, limit)];
+                    totalChars += cells[column].Length;
+                    truncated |= text.Length > limit;
+                    if (totalChars >= MaxChars) { truncated = true; break; }
+                }
+                rows.Add(cells.ToArray());
+            }
+            return new PreviewTable(sheet.Name, rows, truncated);
+        }
+    }
+
+    internal static WorkbookPreview OpenWorkbook(string path, System.Threading.CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        var file = new FileInfo(path);
+        var length = file.Length;
+        var updated = file.LastWriteTimeUtc;
         using var zip = ZipFile.OpenRead(path);
         var workbookEntry = zip.GetEntry("xl/workbook.xml") ?? throw new FormatException("缺少工作簿目录。");
-        var sharedStrings = ReadSharedStrings(zip);
         var relationships = ReadRelationships(zip, "xl/_rels/workbook.xml.rels");
         using var input = workbookEntry.Open();
         var workbook = LoadXml(input);
-        var tables = new List<PreviewTable>();
-        var totalChars = 0;
+        var sheets = new List<WorkbookSheet>();
         foreach (var sheet in workbook.Descendants(S + "sheet").Take(32))
         {
             cancellation.ThrowIfCancellationRequested();
             var id = (string?)sheet.Attribute(OfficeRel + "id");
             if (id == null || !relationships.TryGetValue(id, out var target)) continue;
             var entry = zip.GetEntry(ResolvePartPath("xl/", target));
-            if (entry == null) continue;
-            using var stream = entry.Open();
-            var document = LoadXml(stream);
-            var rows = new List<string[]>();
-            var truncated = false;
-            foreach (var row in document.Descendants(S + "row"))
-            {
-                cancellation.ThrowIfCancellationRequested();
-                if (rows.Count >= PreviewDataReader.MaxRows || totalChars >= MaxChars) { truncated = true; break; }
-                var cells = new List<string>();
-                foreach (var cell in row.Elements(S + "c"))
-                {
-                    var column = cell.Attribute("r") == null ? cells.Count : ColumnIndex((string?)cell.Attribute("r"));
-                    if (column < 0 || column >= PreviewDataReader.MaxColumns) { truncated = true; continue; }
-                    while (cells.Count <= column) cells.Add("");
-                    var text = CellText(cell, sharedStrings);
-                    cells[column] = text[..Math.Min(text.Length, 4096)];
-                    totalChars += cells[column].Length;
-                    truncated |= text.Length > 4096;
-                }
-                rows.Add(cells.ToArray());
-            }
-            tables.Add(new PreviewTable((string?)sheet.Attribute("name") ?? "工作表", rows, truncated));
-            if (totalChars >= MaxChars) break;
+            if (entry != null) sheets.Add(new WorkbookSheet((string?)sheet.Attribute("name") ?? "工作表", entry.FullName));
         }
-        if (tables.Count > 0 && (workbook.Descendants(S + "sheet").Count() > tables.Count || totalChars >= MaxChars))
-            tables[^1] = tables[^1] with { Truncated = true };
-        return tables;
-    }
-
-    private static string? ExtractXlsx(ZipArchive zip)
-    {
-        var workbookEntry = zip.GetEntry("xl/workbook.xml");
-        if (workbookEntry == null) return null;
-
-        var sharedStrings = ReadSharedStrings(zip);
-        var relationships = ReadRelationships(zip, "xl/_rels/workbook.xml.rels");
-
-        using var workbookStream = workbookEntry.Open();
-        var workbook = LoadXml(workbookStream);
-
-        var builder = new StringBuilder();
-        foreach (var sheet in workbook.Descendants(S + "sheet"))
-        {
-            var name = (string?)sheet.Attribute("name") ?? "工作表";
-            var relationId = (string?)sheet.Attribute(OfficeRel + "id");
-            if (relationId == null || !relationships.TryGetValue(relationId, out var target)) continue;
-
-            var sheetEntry = zip.GetEntry(ResolvePartPath("xl/", target));
-            if (sheetEntry == null) continue;
-
-            builder.Append('【').Append(name).Append("】\n");
-            AppendSheet(sheetEntry, sharedStrings, builder);
-            builder.Append('\n');
-
-            if (builder.Length > MaxChars)
-            {
-                builder.Append("… 内容过长，仅显示前一部分");
-                break;
-            }
-        }
-
-        return builder.ToString().TrimEnd('\n');
-    }
-
-    /// <summary>把一个工作表的单元格按行写出，列之间用制表符分隔，列号以 A、B… 的引用定位，空缺的列补空。</summary>
-    private static void AppendSheet(ZipArchiveEntry entry, IReadOnlyList<string> sharedStrings, StringBuilder builder)
-    {
-        using var stream = entry.Open();
-        var sheet = LoadXml(stream);
-
-        var rowCount = 0;
-        foreach (var row in sheet.Descendants(S + "row"))
-        {
-            if (++rowCount > MaxRowsPerSheet)
-            {
-                builder.Append("… 行数过多，仅显示前一部分\n");
-                return;
-            }
-
-            var cells = new List<string>();
-            foreach (var cell in row.Elements(S + "c"))
-            {
-                var column = ColumnIndex((string?)cell.Attribute("r"));
-                while (cells.Count < column) cells.Add("");
-                cells.Add(CellText(cell, sharedStrings));
-            }
-
-            builder.Append(string.Join('\t', cells)).Append('\n');
-            if (builder.Length > MaxChars) return;
-        }
+        return new WorkbookPreview(path, sheets, length, updated);
     }
 
     private static string CellText(XElement cell, IReadOnlyList<string> sharedStrings)

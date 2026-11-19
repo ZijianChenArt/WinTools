@@ -53,8 +53,6 @@ public sealed class GlobalDragWatcher : IDisposable
     private IntPtr _downSourceHwnd;
     private Timer? _threeFingerMovePollTimer;
 
-    /// <summary>返回 true 时忽略此次拖拽（不触发 DragStarted/DragEnded）。</summary>
-    public Func<int, int, bool>? ShouldIgnoreDragAt { get; set; }
     private int _dragThresholdX;
     private int _dragThresholdY;
     private Thread? _hookThread;
@@ -121,7 +119,6 @@ public sealed class GlobalDragWatcher : IDisposable
         {
             var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             // 三指拖拽通过 SendInput 注入的按键也须参与检测，否则无法触发悬浮暂存。
-            // WinTools 自身窗口上的拖动由 ShouldIgnoreDragAt 过滤。
             var msg = wParam.ToInt32();
             if (msg == WM_LBUTTONDOWN)
             {
@@ -178,8 +175,6 @@ public sealed class GlobalDragWatcher : IDisposable
         // Detection is complete. Keep the fallback only before the drag threshold;
         // otherwise it wakes every 8ms throughout a drag just to return immediately.
         _threeFingerMovePollTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-        if (ShouldIgnoreDragAt?.Invoke(_downPoint.X, _downPoint.Y) == true) return;
-
         _dragNotified = true;
         DragStarted?.Invoke(this, new DragStartedArgs(
             _downPoint.X, _downPoint.Y,

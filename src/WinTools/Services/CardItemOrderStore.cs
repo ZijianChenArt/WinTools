@@ -35,7 +35,9 @@ internal static class CardItemOrderStore
         }
     }
 
-    public static IReadOnlyList<string> Apply(string zone, IReadOnlyList<string> paths)
+    internal readonly record struct SortEntry(string Path, int Kind, string Name);
+
+    public static List<string> Apply(string zone, IReadOnlyList<SortEntry> entries)
     {
         Orders.TryGetValue(zone, out var order);
         order ??= new List<string>();
@@ -45,30 +47,20 @@ internal static class CardItemOrderStore
 
         // 一级：系统虚拟图标始终最前；二级：文件夹集中为一组；普通文件再按扩展名分组。
         // 同一格式内部才沿用用户拖动顺序，最后以名称兜底，确保每次刷新结果稳定。
-        return paths
-            .OrderBy(ItemKindRank)
-            .ThenBy(FileFormatKey, StringComparer.CurrentCultureIgnoreCase)
-            .ThenBy(path => ranks.GetValueOrDefault(Path.GetFileName(path), int.MaxValue))
-            .ThenBy(DisplayName, StringComparer.CurrentCultureIgnoreCase)
+        return entries
+            .OrderBy(item => item.Kind)
+            .ThenBy(item => item.Kind == 2 ? FileFormatKey(item.Path) : string.Empty, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => ranks.GetValueOrDefault(Path.GetFileName(item.Path), int.MaxValue))
+            .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(item => item.Path)
             .ToList();
-    }
-
-    private static int ItemKindRank(string path)
-    {
-        if (DesktopShellItems.IsShellItem(path)) return 0;
-        return Directory.Exists(path) ? 1 : 2;
     }
 
     private static string FileFormatKey(string path)
     {
-        if (DesktopShellItems.IsShellItem(path) || Directory.Exists(path)) return string.Empty;
         var extension = Path.GetExtension(path);
         return string.IsNullOrEmpty(extension) ? "\uffff" : extension;
     }
-
-    private static string DisplayName(string path) => DesktopShellItems.IsShellItem(path)
-        ? DesktopShellItems.GetDisplayName(path) ?? path
-        : Path.GetFileNameWithoutExtension(path);
 
     /// <summary>项目被重命名后，把顺序表里的旧文件名换成新的。</summary>
     /// <remarks>顺序表按**文件名**记录（不是完整路径）。不换的话重命名等于换了个 key，

@@ -524,7 +524,7 @@ public static class ConfigService
 
         // 直接 WriteAllText 不是原子操作：写到一半断电 / 被杀进程就会留下半截 JSON，
         // 下次 Load 解析失败直接退回默认配置，用户的分区和规则全没了。
-        // 先写临时文件再替换，和 card-layout-cache 的做法保持一致。
+        // 先写临时文件再替换。
         var temp = path + ".tmp";
         File.WriteAllText(temp, json);
         if (File.Exists(path))

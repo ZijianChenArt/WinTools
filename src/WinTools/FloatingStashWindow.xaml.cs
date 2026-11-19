@@ -348,7 +348,7 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
         {
             if (string.IsNullOrWhiteSpace(path)) continue;
             if (!File.Exists(path) && !Directory.Exists(path)) continue;
-            if (existing.Contains(path)) continue;
+            if (!existing.Add(path)) continue;
             var item = new StashedItem(path);
             Items.Add(item);
             _ = item.LoadVisualAsync();
@@ -487,7 +487,8 @@ public sealed partial class FloatingStashWindow : Window, IUiStyleShell
 public sealed class StashedItem : INotifyPropertyChanged
 {
     private BitmapImage? _icon;
-    private BitmapImage? _preview;
+    private Microsoft.UI.Xaml.Media.ImageSource? _preview;
+    private static readonly System.Threading.SemaphoreSlim VisualLoads = new(4);
 
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -522,62 +523,80 @@ public sealed class StashedItem : INotifyPropertyChanged
     }
 
     /// <summary>文件内容预览图（图片文件显示实际内容，其余显示图标）。</summary>
-    public BitmapImage? Preview
+    public Microsoft.UI.Xaml.Media.ImageSource? Thumbnail
     {
         get => _preview;
         private set
         {
             if (_preview == value) return;
             _preview = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Preview)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Thumbnail)));
         }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
-    /// 顺序加载图标与预览，同时缓存 StorageItem。
-    /// 图片文件直接从文件内容生成预览；其他文件仅加载系统图标。
+    /// 先缓存可拖出的 StorageItem，再限并发加载一份可用的缩略图或图标。
     /// </summary>
     public async System.Threading.Tasks.Task LoadVisualAsync()
     {
         try
         {
-            if (Directory.Exists(Path))
+            StorageItem = Directory.Exists(Path)
+                ? await StorageFolder.GetFolderFromPathAsync(Path)
+                : await StorageFile.GetFileFromPathAsync(Path);
+            await VisualLoads.WaitAsync();
+            try
             {
-                var folder = await StorageFolder.GetFolderFromPathAsync(Path);
-                StorageItem = folder;
-                var thumb = await folder.GetThumbnailAsync(ThumbnailMode.SingleItem, 48);
-                if (thumb != null)
+                var file = StorageItem as StorageFile;
+                using var thumbnail = StorageItem is StorageFolder folder
+                    ? await folder.GetThumbnailAsync(ThumbnailMode.SingleItem, 64, ThumbnailOptions.UseCurrentScale)
+                    : await file!.GetThumbnailAsync(ThumbnailMode.SingleItem, 64, ThumbnailOptions.UseCurrentScale);
+                if (file != null && ImageExtensions.Contains(file.FileType))
                 {
-                    var bmp = new BitmapImage();
-                    await bmp.SetSourceAsync(thumb);
-                    Icon = bmp;
+                    if (thumbnail is { Size: > 0, Type: ThumbnailType.Image })
+                    {
+                        var bitmap = new BitmapImage();
+                        await bitmap.SetSourceAsync(thumbnail);
+                        Thumbnail = bitmap;
+                        return;
+                    }
+                    try
+                    {
+                        Thumbnail = await LoadSmallImageAsync(file);
+                        return;
+                    }
+                    catch (Exception) { /* Unsupported image codec; use its Shell icon below. */ }
+                }
+                if (thumbnail is { Size: > 0 })
+                {
+                    var bitmap = new BitmapImage();
+                    await bitmap.SetSourceAsync(thumbnail);
+                    Icon = bitmap;
                 }
             }
-            else if (File.Exists(Path))
-            {
-                var file = await StorageFile.GetFileFromPathAsync(Path);
-                StorageItem = file;
-
-                var thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, 48);
-                if (thumb != null)
-                {
-                    var bmp = new BitmapImage();
-                    await bmp.SetSourceAsync(thumb);
-                    Icon = bmp;
-                }
-
-                var ext = System.IO.Path.GetExtension(Path);
-                if (ImageExtensions.Contains(ext))
-                {
-                    using var stream = await file.OpenReadAsync();
-                    var previewBmp = new BitmapImage { DecodePixelWidth = 256 };
-                    await previewBmp.SetSourceAsync(stream);
-                    Preview = previewBmp;
-                }
-            }
+            finally { VisualLoads.Release(); }
         }
         catch { /* ignore */ }
+    }
+
+    private static async System.Threading.Tasks.Task<SoftwareBitmapSource> LoadSmallImageAsync(StorageFile file)
+    {
+        using var stream = await file.OpenReadAsync();
+        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+        var scale = Math.Min(1, 128d / Math.Max(decoder.PixelWidth, decoder.PixelHeight));
+        var transform = new Windows.Graphics.Imaging.BitmapTransform
+        {
+            ScaledWidth = (uint)Math.Max(1, Math.Round(decoder.PixelWidth * scale)),
+            ScaledHeight = (uint)Math.Max(1, Math.Round(decoder.PixelHeight * scale)),
+        };
+        using var bitmap = await decoder.GetSoftwareBitmapAsync(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8,
+            Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied, transform,
+            Windows.Graphics.Imaging.ExifOrientationMode.RespectExifOrientation,
+            Windows.Graphics.Imaging.ColorManagementMode.ColorManageToSRgb);
+        var source = new SoftwareBitmapSource();
+        await source.SetBitmapAsync(bitmap);
+        return source;
     }
 }

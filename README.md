@@ -976,15 +976,10 @@ Completed(None)），自己处理也收不到。合成鼠标输入能驱动这�
 - 回归：`dotnet run --project tests/DesktopCardLayout.Tests`（含 `Fit` 各级与不重叠 / 不出屏断言）。
   2026-10-03 用 900×600 DIP 的模拟工作区实测：限高卡片可滚轮滚动，正常分辨率排版与旧版一致。
 
-### 7.7 多屏拓扑记忆（`Services/CardLayoutCache.cs`）
+### 7.7 桌面扫描与布局
 
-每种屏幕组合（主屏标记 + OuterBounds）存一份「分区名 → 位置 / 尺寸」快照到
-`%LOCALAPPDATA%\WinTools\card-layout-cache.json`；命中就直接 `PlaceAt`，未命中走默认算法。
-
-- `TopologyKey.Get()` 从 Windows 主显示器的 `DisplayArea` 拼 key（避免
-  `DisplayArea.FindAll()` 的 `InvalidCastException`）。分区卡片固定在系统设置标记的主显示器，
-  不得按新建窗口偶然落到的显示器选择布局目标。
-- 写入用**无 BOM** UTF-8（`System.Text.Json` 不接受 BOM），先写 `*.tmp` 再 `File.Replace`。
+卡片位置按当前屏幕工作区和设置实时计算。自动同步由防抖计时器调度，使用后台 STA 读取桌面与 Shell 项目，
+在 UI 线程按当前图标顺序排好后应用。一次刷新只排序一次，旧扫描结果由版本号丢弃。
 
 ### 7.8 分辨率 / 缩放变化后的重排
 
@@ -1465,6 +1460,16 @@ Debug 构建 0 警告 / 0 错误，桌面布局、可靠性、预览、任务栏
 EXE / DLL / PRI / 原生扩展与发布目录哈希一致；安装校验记录为同目录 `installed-verification.json`。
 静态截图确认按钮居中、额度位于任务栏内；运行期间未见新增应用错误，既有系统图标备用加载日志保留。
 
+### v1.3.43 交互和预览优化（2026-11-20）
+
+- 低级拖拽钩子只捕捉拖动。暂存管理器在后台按捕捉到的 HWND 判定来源，给窗口命中测试加超时，并复用一次可取消的隐藏计时器。暂存图片复用系统缩略图，缺失时做限尺寸、限并发的回退。
+- 悬停与同屏拖动直接绘制任务栏缓存状态，图标轮廓只生成一次，按当前 DPI 和动画比例绘制。设备守护定向查询已保存的端点。
+- 桌面卡片的自动扫描移到后台 STA，分组排序只做一次，删除已无读取入口的旧布局缓存。
+- PDF 优先启动首页渲染，只创建视口附近的页面控件，随后分批读取页尺寸。单页位图设面积上限。XLSX 按所选工作表读取，SVG 从同一文件流读取尺寸并渲染，Office 热缓存命中省掉源文件快照写入。
+- 空格预览关闭时不安装 Explorer 钩子，关闭窗口后丢弃迟到的选区结果；删除旧预览分支并让测试直接覆盖当前 CSV 和 ZIP 读取器。
+
+验证：Debug 构建无警告或错误，7 组回归通过。240 页混合尺寸 PDF 诊断在首页和跳到末页时分别保留 1 个和 2 个页面控件，关闭后释放。安装版通过 Explorer 空格打开该 PDF、大 SVG 和 XLSX，并在桌面测试文件创建及删除时自动更新卡片。桌面拖拽和任务栏悬停手感仍需实际操作确认。
+
 ### 安装版性能基线（2026-10-26，v1.3.28）
 
 对象为安装版 **v1.3.28**，源码提交 `9a617b0`；安装目录与本地发布目录的主程序集版本和
@@ -1643,7 +1648,6 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 | `DesktopCollectService.cs` / `DesktopZoneMatcher.cs` | 桌面枚举与实时分组 / 分区匹配规则（**不再移动文件**） |
 | `Services/DesktopIconVisibilityService.cs` | 桌面图标显隐（等价于「显示桌面图标」开关） |
 | `Services/DesktopShellItems.cs` | 系统虚拟图标（此电脑 / 回收站 / 网络…）接入卡片 |
-| `Services/CardLayoutCache.cs` | 多屏拓扑 → 卡片位置尺寸快照 |
 | `Services/CardItemOrderStore.cs` | 分区内图标顺序、刷新恢复与独立持久化 |
 | `Services/AppSearchIndex.cs` / `Pinyin.cs` / `PinyinData.cs` | 应用索引与中文拼音检索 |
 | `Services/SettingsService.cs` / `Config.cs` | 设置中心（防抖写盘）/ 配置结构与读写 |

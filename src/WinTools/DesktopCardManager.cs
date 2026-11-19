@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -28,6 +29,8 @@ public sealed class DesktopCardManager : IDisposable
     private bool _disposed;
     private bool _enabled;
     private bool _syncing;
+    private bool _scanningDesktop;
+    private int _scanVersion;
     private readonly DispatcherQueue _dispatcherQueue;
     private readonly DispatcherQueueTimer _desktopChangeTimer;
     private readonly DispatcherQueueTimer _cardChangeTimer;
@@ -89,15 +92,13 @@ public sealed class DesktopCardManager : IDisposable
         _desktopChangeTimer = _dispatcherQueue.CreateTimer();
         _desktopChangeTimer.Interval = TimeSpan.FromMilliseconds(650);
         _desktopChangeTimer.IsRepeating = false;
-        // 桌面出现新文件必须走**完整同步**（物理搬入托管分区），只刷卡片内容是搬不动文件的。
-        // 收纳有磁盘 I/O，放后台线程，别卡 UI。
-        _desktopChangeTimer.Tick += (_, _) => _ = SyncAsync();
+        _desktopChangeTimer.Tick += (_, _) => _ = RefreshDesktopSnapshotAsync();
         // 托管目录自身的增删只需要刷新卡片内容；而且一次拖放会连着触发
         // Created / Renamed / Deleted 多个事件，必须防抖，否则每个事件都跑一遍全量同步。
         _cardChangeTimer = _dispatcherQueue.CreateTimer();
         _cardChangeTimer.Interval = TimeSpan.FromMilliseconds(250);
         _cardChangeTimer.IsRepeating = false;
-        _cardChangeTimer.Tick += (_, _) => SyncContent();
+        _cardChangeTimer.Tick += (_, _) => _ = RefreshDesktopSnapshotAsync();
         // 卡片高度自适应：9 张卡片会连着报好几次高度变化，防抖后只排一次。
         _layoutTimer = _dispatcherQueue.CreateTimer();
         _layoutTimer.Interval = TimeSpan.FromMilliseconds(150);
@@ -129,6 +130,7 @@ public sealed class DesktopCardManager : IDisposable
     /// </remarks>
     public void SetEnabled(bool enabled)
     {
+        _scanVersion++;
         var transitionVersion = ++_enabledTransitionVersion;
         _enabled = enabled;
         if (_sourceManager == null) DesktopIconVisibilityService.SetHidden(enabled);
@@ -198,6 +200,7 @@ public sealed class DesktopCardManager : IDisposable
     public void Sync()
     {
         if (_disposed || _syncing) return;
+        _scanVersion++;
         if (!_enabled) { _libraryManager?.Sync(); return; }
 
         _syncing = true;
@@ -212,21 +215,11 @@ public sealed class DesktopCardManager : IDisposable
         }
     }
 
-    /// <summary>和 <see cref="Sync"/> 相同。桌面监视器触发的自动同步走这个版本。</summary>
-    /// <remarks>
-    /// 以前这里要把 CollectAll 的磁盘 I/O 甩到后台线程，现在只剩目录枚举，
-    /// 直接在 UI 线程做即可；<see cref="SyncCards"/> 本来也必须在 UI 线程。
-    /// </remarks>
-    public Task SyncAsync()
-    {
-        Sync();
-        return Task.CompletedTask;
-    }
-
     /// <summary>只同步卡片集合与分区列表。桌面内容变化时由防抖定时器调用。</summary>
     public void SyncContent()
     {
         if (_disposed || _syncing) return;
+        _scanVersion++;
         if (!_enabled) { _libraryManager?.SyncContent(); return; }
 
         _syncing = true;
@@ -238,6 +231,51 @@ public sealed class DesktopCardManager : IDisposable
         {
             _syncing = false;
         }
+    }
+
+    private async Task RefreshDesktopSnapshotAsync()
+    {
+        if (_disposed || !HasVisibleCards) return;
+        if (_scanningDesktop || _syncing)
+        {
+            _desktopChangeTimer.Start();
+            return;
+        }
+
+        _desktopChangeTimer.Stop();
+        _cardChangeTimer.Stop();
+        var revision = _scanVersion;
+        var zones = SettingsService.Instance.Current.DesktopZones?.Select(zone => new DesktopZone
+        {
+            Name = zone.Name,
+            Keywords = zone.Keywords?.ToList() ?? new(),
+            Items = zone.Items?.ToList() ?? new(),
+        }).ToList();
+        var result = new TaskCompletionSource<Dictionary<string, List<CardItemOrderStore.SortEntry>>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _scanningDesktop = true;
+        try
+        {
+            var worker = new Thread(() =>
+            {
+                try { result.SetResult(DesktopCollectService.CollectGroups(zones)); }
+                catch (Exception ex) { result.SetException(ex); }
+            }) { IsBackground = true, Name = "WinTools Desktop Scan" };
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+            var groups = await result.Task;
+            if (_disposed || revision != _scanVersion || !HasVisibleCards) return;
+            var sorted = DesktopCollectService.SortGroups(groups);
+            if (_enabled)
+            {
+                DesktopIconVisibilityService.SetHidden(true);
+                SyncCards(sorted);
+            }
+            else if (_libraryManager?._enabled == true)
+                _libraryManager.SyncCards(sorted);
+        }
+        catch (Exception ex) { ErrorReporter.Log("DesktopCardManager.RefreshDesktopSnapshot", ex); }
+        finally { _scanningDesktop = false; }
     }
 
     private void SyncCards(Dictionary<string, List<string>>? sharedItems = null, int newWindowBudget = int.MaxValue)
@@ -419,6 +457,7 @@ public sealed class DesktopCardManager : IDisposable
         _dispatcherQueue.TryEnqueue(() =>
         {
             if (_disposed) return;
+            _scanVersion++;
             _desktopChangeTimer.Stop();
             _desktopChangeTimer.Start();
         });
@@ -428,6 +467,7 @@ public sealed class DesktopCardManager : IDisposable
     {
         if (_disposed) return;
         if (_sourceManager != null) { _sourceManager.Card_ContentChanged(sender, e); return; }
+        _scanVersion++;
         _cardChangeTimer.Stop();
         _cardChangeTimer.Start();
     }
@@ -550,7 +590,6 @@ public sealed class DesktopCardManager : IDisposable
                     await Task.Yield();
                 }
 
-                SaveCurrentLayout();
 
                 var settled = !_relayoutPendingAgain && DisplaySignature() == signature;
                 settledPasses = settled ? settledPasses + 1 : 0;
@@ -592,7 +631,6 @@ public sealed class DesktopCardManager : IDisposable
         foreach (var (card, x, y) in BuildLayoutPlan(zones))
             card.PlaceAt(x, y);
 
-        SaveCurrentLayout();
     }
 
     /// <summary>算出每张卡片该去哪儿，但**不动窗口**。
@@ -613,10 +651,6 @@ public sealed class DesktopCardManager : IDisposable
             .Where(z => _cards.ContainsKey(z.Name))
             .GroupBy(z => GetMonitorKey(z.Name), StringComparer.Ordinal)
             .ToList();
-
-        // 多屏拓扑记忆：cache 只用作"此 topology 是否曾见过"的检测 + SaveCurrentLayout
-        // 写入。X/Y 不再信任 cache 里的旧值——margin / maxCols 等
-        // 设置用户随时会改，按当前 workDip 和 margin 重新计算坐标。
 
         // 桌面卡片按设置靠左或靠右；独立的分区库始终在左侧。
         var fromLeft = _sourceManager != null || config.DesktopCardAlignment == "left";
@@ -643,35 +677,6 @@ public sealed class DesktopCardManager : IDisposable
             // 限高只在 PlaceAt 时随位置一起落到窗口上；空间够了 Height 等于自然高度，限高自动撤掉。
             cards[index].SetHeightCap(placement.Height < cards[index].NaturalDipHeight ? placement.Height : int.MaxValue);
             plan.Add((cards[index], placement.X, placement.Y));
-        }
-    }
-
-    /// <summary>把当前所有活动卡片的位置 / 尺寸写到当前 topology 的缓存条目。
-    /// 失败时静默——缓存只是优化，丢失下次重排即可。</summary>
-    private void SaveCurrentLayout()
-    {
-        // A transient library must never overwrite the persistent desktop layout cache.
-        if (_sourceManager != null) return;
-        try
-        {
-            var snapshot = new Dictionary<string, CardPlacement>(StringComparer.Ordinal);
-            foreach (var (zoneName, card) in _cards)
-            {
-                // 实际窗口位置 = XAML 给的 DIP * 缩放；这里我们存 DIP，让 cache 与
-                // DisplayArea.FindAll() 共享同一坐标系；PlaceAt 也是 DIP 入口。
-                snapshot[zoneName] = new CardPlacement
-                {
-                    X = card.DipLeft,
-                    Y = card.DipTop,
-                    Width = card.DipWidth,
-                    Height = card.DipHeight,
-                };
-            }
-            CardLayoutCache.SaveForCurrentTopology(snapshot);
-        }
-        catch (Exception ex)
-        {
-            ErrorReporter.Log("DesktopCardManager.SaveCurrentLayout", ex);
         }
     }
 

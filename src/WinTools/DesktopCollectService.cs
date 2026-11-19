@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -123,13 +123,16 @@ public static class DesktopCollectService
     /// 桌面图标整体隐藏后，**任何一项都必须落进某张卡片**，否则它在桌面上就彻底没有入口了。
     /// 所以规则没命中时兜底到最后一个分区，而不是丢弃。
     /// </remarks>
-    public static Dictionary<string, List<string>> GroupByZone(List<DesktopZone>? zones)
+    public static Dictionary<string, List<string>> GroupByZone(List<DesktopZone>? zones) =>
+        SortGroups(CollectGroups(zones));
+
+    internal static Dictionary<string, List<CardItemOrderStore.SortEntry>> CollectGroups(List<DesktopZone>? zones)
     {
-        var grouped = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var grouped = new Dictionary<string, List<CardItemOrderStore.SortEntry>>(StringComparer.Ordinal);
         if (zones is not { Count: > 0 }) return grouped;
 
         foreach (var zone in zones)
-            grouped[zone.Name] = new List<string>();
+            grouped[zone.Name] = new();
 
         foreach (var entry in EnumerateDesktopEntries())
         {
@@ -138,7 +141,7 @@ public static class DesktopCollectService
                 var isDirectory = (entry.Attributes & FileAttributes.Directory) == FileAttributes.Directory;
                 var index = DesktopZoneMatcher.Match(entry.Name, entry.FullName, isDirectory, zones);
                 if (index < 0 || index >= zones.Count) index = zones.Count - 1;   // 兜底，见上面的注释
-                grouped[zones[index].Name].Add(entry.FullName);
+                grouped[zones[index].Name].Add(new(entry.FullName, isDirectory ? 1 : 2, Path.GetFileNameWithoutExtension(entry.Name)));
             }
             catch { /* 单项失败不影响整体 */ }
         }
@@ -152,20 +155,16 @@ public static class DesktopCollectService
             {
                 var index = DesktopZoneMatcher.Match(displayName, parsingName, isDirectory: true, zones);
                 if (index < 0 || index >= zones.Count) index = zones.Count - 1;
-                grouped[zones[index].Name].Add(parsingName);
+                grouped[zones[index].Name].Add(new(parsingName, 0, displayName));
             }
             catch { /* 单项失败不影响整体 */ }
         }
 
-        foreach (var (zone, list) in grouped)
-        {
-            var sorted = CardItemOrderStore.Apply(zone, list);
-            list.Clear();
-            list.AddRange(sorted);
-        }
-
         return grouped;
     }
+
+    internal static Dictionary<string, List<string>> SortGroups(Dictionary<string, List<CardItemOrderStore.SortEntry>> grouped) =>
+        grouped.ToDictionary(pair => pair.Key, pair => CardItemOrderStore.Apply(pair.Key, pair.Value), StringComparer.Ordinal);
 
     /// <summary>读取单个分区当前应显示的桌面项目。</summary>
     public static List<string> ListCardItems(string zoneName)
@@ -312,8 +311,8 @@ public static class DesktopCollectService
         var sameItem = string.Equals(target, path, StringComparison.OrdinalIgnoreCase);
         if (!sameItem && (File.Exists(target) || Directory.Exists(target))) return RenameResult.NameExists;
 
-        var pFrom = Marshal.StringToHGlobalUni(path + "  ");
-        var pTo = Marshal.StringToHGlobalUni(target + "  ");
+        var pFrom = Marshal.StringToHGlobalUni(path + "\0\0");
+        var pTo = Marshal.StringToHGlobalUni(target + "\0\0");
         try
         {
             var op = new SHFILEOPSTRUCT

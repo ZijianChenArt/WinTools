@@ -17,7 +17,7 @@ public sealed partial class FilePreviewWindow
         var extension = Path.GetExtension(path).ToLowerInvariant();
         var textTask = extension is ".docx" or ".pptx"
             ? Task.Run(() => OfficeTextExtractor.Extract(path), cancellation) : Task.FromResult<string?>(null);
-        var renderTask = OfficePreviewRenderer.RenderAsync(path, cancellation);
+        var renderTask = Task.Run(() => OfficePreviewRenderer.RenderAsync(path, cancellation), cancellation);
         await Task.WhenAny(textTask, renderTask);
         if (token != _loadToken) return;
         string? text = null;

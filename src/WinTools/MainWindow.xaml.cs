@@ -709,7 +709,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         ThemeService.SetPreference(theme);
 
-        ConfigService.Update(c => c.AppTheme = theme);
+        SettingsService.Instance.FlushNow();
 
         ApplyShellStyle();
 

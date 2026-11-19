@@ -130,9 +130,11 @@ try
         Add("xl/worksheets/sheet1.xml", "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData><row><c r='A1' t='inlineStr'><is><t>left</t></is></c><c r='C1'><v>42</v></c><c r='XFD1'><v>ignored</v></c></row></sheetData></worksheet>");
         Add("xl/worksheets/sheet2.xml", "<worksheet xmlns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'><sheetData/></worksheet>");
     }
-    var workbook = OfficeTextExtractor.ReadWorkbook(xlsx, CancellationToken.None);
-    Require(workbook.Count == 2 && workbook[0].Rows[0].SequenceEqual(new[] { "left", "", "42" }) && workbook[0].Truncated
-        && workbook[1].Rows.Count == 0, "Workbook sheets, sparse cells, or column budget failed");
+    var workbook = OfficeTextExtractor.OpenWorkbook(xlsx, CancellationToken.None);
+    var firstSheet = workbook.ReadSheet(0, CancellationToken.None);
+    Require(workbook.Sheets.Count == 2 && workbook.Sheets[1].Name == "Empty"
+        && firstSheet.Rows[0].SequenceEqual(new[] { "left", "", "42" }) && firstSheet.Truncated
+        && workbook.ReadSheet(1, CancellationToken.None).Rows.Count == 0, "Workbook sheets, sparse cells, or column budget failed");
     var pptx = Path.Combine(root, "slides.pptx");
     var docx = Path.Combine(root, "sample.docx");
     using (var zip = ZipFile.Open(docx, ZipArchiveMode.Create))

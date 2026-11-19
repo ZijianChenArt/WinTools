@@ -7,9 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using WinRT.Interop;
 using WinTools.Services;
-using Window = Microsoft.UI.Xaml.Window;
 
 namespace WinTools;
 
@@ -23,12 +21,12 @@ public sealed class FloatingStashManager : IDisposable
     private readonly GlobalDragWatcher _watcher;
     private FloatingStashWindow? _window;
     private ProgramDropWindow? _programWindow;
-    private bool _enabled;
+    private volatile bool _enabled;
     private bool _programAssociationEnabled;
-    private int _lastDragX, _lastDragY;
     private bool _programWindowShownForThisDrag;
+    private bool _hideAfterDrag;
     private int _dragDecisionToken;
-    private readonly HashSet<IntPtr> _winToolsHwnds = new();
+    private readonly DispatcherQueueTimer _hideTimer;
 
     /// <summary>
     /// 任务栏“悬浮暂存”快捷图标的屏幕位置（图标中心 X，任务栏上沿 Y）；快捷图标不可见时返回 null。
@@ -36,15 +34,21 @@ public sealed class FloatingStashManager : IDisposable
     /// </summary>
     internal Func<(int CenterX, int Top)?>? StashAnchorProvider { get; set; }
 
-    public FloatingStashManager(DispatcherQueue dispatcher, Window mainWindow)
+    public FloatingStashManager(DispatcherQueue dispatcher)
     {
         _dispatcher = dispatcher;
         _watcher = new GlobalDragWatcher();
-        _watcher.ShouldIgnoreDragAt = ShouldIgnoreDragAt;
         _watcher.DragStarted += (_, args) => _dispatcher.TryEnqueue(() =>
-            ShowForDrag(args.X, args.Y, args.CurrentX, args.CurrentY, args.SourceHwnd));
+            ShowForDrag(args.X, args.Y, args.SourceHwnd));
         _watcher.DragEnded += (_, _) => _dispatcher.TryEnqueue(OnDragEnded);
-        RegisterWinToolsWindow(mainWindow);
+        _hideTimer = dispatcher.CreateTimer();
+        _hideTimer.Interval = TimeSpan.FromMilliseconds(500);
+        _hideTimer.IsRepeating = false;
+        _hideTimer.Tick += (_, _) =>
+        {
+            _programWindow?.HideWindow();
+            if (_window is { HasItems: false }) _window.HideWindow();
+        };
     }
 
     public void SetEnabled(bool enabled)
@@ -59,6 +63,8 @@ public sealed class FloatingStashManager : IDisposable
         }
         else
         {
+            _hideTimer.Stop();
+            _hideAfterDrag = false;
             Interlocked.Increment(ref _dragDecisionToken);
             _watcher.Stop();
             _window?.HideWindow();
@@ -75,6 +81,8 @@ public sealed class FloatingStashManager : IDisposable
 
     public void ShowWindow()
     {
+        _hideTimer.Stop();
+        _hideAfterDrag = false;
         EnsureWindow();
         // 点击任务栏图标时弹在图标正上方；图标不可见（如从托盘菜单打开且覆盖层被隐藏）时才放右上角。
         if (StashAnchorProvider?.Invoke() is { } anchor)
@@ -96,9 +104,6 @@ public sealed class FloatingStashManager : IDisposable
             ShowWindow();
     }
 
-    /// <summary>注册 WinTools 窗口句柄，避免拖拽自身窗口时触发悬浮暂存。</summary>
-    public void RegisterWindow(Window window) => RegisterWinToolsWindow(window);
-
     /// <summary>预初始化悬浮窗句柄，避免首次拖拽时同步创建导致卡顿。</summary>
     private void WarmUpWindows()
     {
@@ -110,26 +115,24 @@ public sealed class FloatingStashManager : IDisposable
     /// 全局拖拽开始：仅在“来自资源管理器的文件拖拽”场景显示悬浮窗。
     /// 拖拽窗口/普通鼠标拖动不触发悬浮暂存。
     /// </summary>
-    private void ShowForDrag(int downX, int downY, int currentX, int currentY, IntPtr sourceHwnd)
+    private void ShowForDrag(int downX, int downY, IntPtr sourceHwnd)
     {
-        if (ShouldIgnoreDragAt(downX, downY))
-            return;
-
-        _lastDragX = currentX;
-        _lastDragY = currentY;
+        _hideAfterDrag |= _hideTimer.IsRunning;
+        _hideTimer.Stop();
         _programWindowShownForThisDrag = false;
         var token = Interlocked.Increment(ref _dragDecisionToken);
 
         // 资源管理器来源判断放到后台，完成后立即显示，不增加人为延迟。
         _ = Task.Run(() =>
         {
-            if (!_enabled || token != _dragDecisionToken) return;
+            if (!_enabled || token != Volatile.Read(ref _dragDecisionToken)) return;
 
             // 使用拖拽开始时捕捉的来源窗口句柄判断，避免后续窗口移动影响来源识别。
             // 桌面空白处拉框选择同样会产生“按下并移动”，但它不是文件拖放。
             // 只有按下点真正命中桌面图标时，才允许桌面来源触发悬浮暂存。
             // 文件夹窗口同理：在没有文件的空白处按下再拖是拉框选择（2026-10-03 用户反馈）。
             bool fromFileManager = IsFromFileManager(sourceHwnd)
+                && IsClientDrag(sourceHwnd, downX, downY)
                 && !IsDesktopBlankArea(sourceHwnd, downX, downY)
                 && !IsExplorerNonFileDragArea(sourceHwnd, downX, downY);
             _dispatcher.TryEnqueue(() =>
@@ -138,6 +141,7 @@ public sealed class FloatingStashManager : IDisposable
 
                 if (fromFileManager)
                 {
+                    _hideAfterDrag = true;
                     // 悬浮窗刻意避开光标，避免动态窗口切换导致系统拖动预览闪动。
                     EnsureWindow();
                     PositionStashWindow();
@@ -154,6 +158,7 @@ public sealed class FloatingStashManager : IDisposable
     private void OnExtensionsDetected(HashSet<string> extensions)
     {
         if (extensions.Count == 0) return;
+        _hideAfterDrag = true;
 
         EnsureWindow();
         if (_window == null) return;
@@ -186,18 +191,9 @@ public sealed class FloatingStashManager : IDisposable
     private void OnDragEnded()
     {
         Interlocked.Increment(ref _dragDecisionToken);
-        if (_window == null) return;
-        var timer = _dispatcher.CreateTimer();
-        timer.Interval = TimeSpan.FromMilliseconds(500);
-        timer.IsRepeating = false;
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            _programWindow?.HideWindow();
-            if (_window != null && !_window.HasItems)
-                _window.HideWindow();
-        };
-        timer.Start();
+        _hideTimer.Stop();
+        if (_enabled && _hideAfterDrag && _window != null) _hideTimer.Start();
+        _hideAfterDrag = false;
     }
 
     /// <summary>
@@ -223,7 +219,6 @@ public sealed class FloatingStashManager : IDisposable
         _window.DragExtensionsDetected += OnDragExtensionsDetected;
         ThemeService.Register(_window);
         UiStyleService.Register(_window);
-        RegisterWinToolsWindow(_window);
     }
 
     /// <summary>暂存窗口检测到拖入文件的扩展名 → 作为备用触发。</summary>
@@ -238,11 +233,13 @@ public sealed class FloatingStashManager : IDisposable
         _programWindow = new ProgramDropWindow();
         ThemeService.Register(_programWindow);
         UiStyleService.Register(_programWindow);
-        RegisterWinToolsWindow(_programWindow);
     }
 
     public void Dispose()
     {
+        _enabled = false;
+        Interlocked.Increment(ref _dragDecisionToken);
+        _hideTimer.Stop();
         _watcher.Dispose();
         if (_window != null)
         {
@@ -254,60 +251,17 @@ public sealed class FloatingStashManager : IDisposable
 
     #region 判断拖拽是否来自文件管理器
 
-    private void RegisterWinToolsWindow(Window window)
-    {
-        try
-        {
-            var hwnd = WindowNative.GetWindowHandle(window);
-            if (hwnd != IntPtr.Zero)
-                _winToolsHwnds.Add(hwnd);
-        }
-        catch { /* ignore */ }
-    }
-
-    /// <summary>全局拖拽是否应忽略（WinTools 自身窗口、标题栏/边框移动窗口等）。</summary>
-    private bool ShouldIgnoreDragAt(int x, int y) =>
-        IsFromWinToolsWindow(x, y) || IsWindowMoveDrag(x, y);
-
-    /// <summary>拖拽是否起始于 WinTools 自身窗口（移动窗口标题栏等场景应忽略）。</summary>
-    private bool IsFromWinToolsWindow(int x, int y)
-    {
-        if (_winToolsHwnds.Count == 0) return false;
-        try
-        {
-            var hwnd = WindowFromPoint(new POINT { X = x, Y = y });
-            if (hwnd == IntPtr.Zero) return false;
-            var root = GetAncestor(hwnd, GA_ROOT);
-            if (root == IntPtr.Zero) root = hwnd;
-            return _winToolsHwnds.Contains(root);
-        }
-        catch { return false; }
-    }
-
     /// <summary>
     /// 按下点是否位于窗口非客户区（标题栏、系统按钮、边框）。
     /// 此类拖动由系统处理窗口移动，不会产生 Shell 文件拖放。
     /// </summary>
-    private static bool IsWindowMoveDrag(int x, int y)
+    private static bool IsClientDrag(IntPtr hwnd, int x, int y)
     {
-        try
-        {
-            var ht = HitTestAt(x, y);
-            return ht is HTCAPTION or HTSYSMENU or HTMINBUTTON or HTMAXBUTTON or HTCLOSE
-                or HTTOP or HTBOTTOM or HTLEFT or HTRIGHT
-                or HTTOPLEFT or HTTOPRIGHT or HTBOTTOMLEFT or HTBOTTOMRIGHT;
-        }
-        catch { return false; }
-    }
-
-    private static int HitTestAt(int x, int y)
-    {
-        var hwnd = WindowFromPoint(new POINT { X = x, Y = y });
-        if (hwnd == IntPtr.Zero) return HTNOWHERE;
         var root = GetAncestor(hwnd, GA_ROOT);
-        if (root == IntPtr.Zero) root = hwnd;
-        var lParam = (IntPtr)(((long)y << 16) | ((long)x & 0xFFFF));
-        return (int)SendMessage(root, WM_NCHITTEST, IntPtr.Zero, lParam);
+        var point = (IntPtr)unchecked((int)(((uint)y << 16) | ((uint)x & 0xFFFF)));
+        return root != IntPtr.Zero
+            && SendMessageTimeout(root, WM_NCHITTEST, IntPtr.Zero, point, SMTO_ABORTIFHUNG, 75, out var hit) != IntPtr.Zero
+            && hit == (IntPtr)HTCLIENT;
     }
 
     /// <summary>
@@ -458,20 +412,8 @@ public sealed class FloatingStashManager : IDisposable
 
     private const uint GA_ROOT = 2;
     private const int WM_NCHITTEST = 0x0084;
-    private const int HTNOWHERE = 0;
-    private const int HTCAPTION = 2;
-    private const int HTSYSMENU = 3;
-    private const int HTMINBUTTON = 8;
-    private const int HTMAXBUTTON = 9;
-    private const int HTCLOSE = 20;
-    private const int HTLEFT = 10;
-    private const int HTRIGHT = 11;
-    private const int HTTOP = 12;
-    private const int HTTOPLEFT = 13;
-    private const int HTTOPRIGHT = 14;
-    private const int HTBOTTOM = 15;
-    private const int HTBOTTOMLEFT = 16;
-    private const int HTBOTTOMRIGHT = 17;
+    private const int HTCLIENT = 1;
+    private const uint SMTO_ABORTIFHUNG = 2;
     private const uint LVM_FIRST = 0x1000;
     private const uint LVM_HITTEST = LVM_FIRST + 18;
     private const uint PROCESS_VM_OPERATION = 0x0008;
@@ -495,11 +437,12 @@ public sealed class FloatingStashManager : IDisposable
         public int iGroup;
     }
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr WindowFromPoint(POINT point);
-
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam,
+        uint flags, uint timeout, out IntPtr result);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);

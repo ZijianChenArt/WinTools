@@ -16,6 +16,7 @@ public sealed class PerAppImeService : IDisposable
     private const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     private const int WM_CLOSE = 0x0010;
     private const int WM_DESTROY = 0x0002;
+    private const uint WM_APPLYRULE = 0x8001;
 
     private readonly object _sync = new();
     private readonly object _lifecycleSync = new();
@@ -49,7 +50,7 @@ public sealed class PerAppImeService : IDisposable
         if (!enabled)
             _lastProcessName = null;
         else
-            ApplyToForegroundWindow();
+            QueueForegroundRule();
     }
 
     public void UpdateRules(IEnumerable<ImeRuleEntry> rules)
@@ -68,7 +69,7 @@ public sealed class PerAppImeService : IDisposable
         }
         _lastProcessName = null;
         if (_enabled)
-            ApplyToForegroundWindow();
+            QueueForegroundRule();
     }
 
     public void RegisterExcludedWindow(IntPtr hwnd)
@@ -184,6 +185,9 @@ public sealed class PerAppImeService : IDisposable
     {
         switch (msg)
         {
+            case WM_APPLYRULE:
+                if (_enabled) ApplyToForegroundWindow();
+                return IntPtr.Zero;
             case WM_CLOSE:
                 DestroyWindow(hwnd);
                 return IntPtr.Zero;
@@ -194,6 +198,12 @@ public sealed class PerAppImeService : IDisposable
         }
 
         return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+
+    private void QueueForegroundRule()
+    {
+        var window = _hwnd;
+        if (window != IntPtr.Zero) PostMessage(window, WM_APPLYRULE, IntPtr.Zero, IntPtr.Zero);
     }
 
     private void OnWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsTimeStamp)

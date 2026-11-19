@@ -10,7 +10,7 @@ internal static class AudioDeviceService
 
     internal static List<Device> Read()
     {
-        var enumerator = (IEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))!)!;
+        var enumerator = CreateEnumerator();
         try
         {
             var result = new List<Device>();
@@ -28,19 +28,7 @@ internal static class AudioDeviceService
                         try
                         {
                             Marshal.ThrowExceptionForHR(device.GetId(out var id));
-                            Marshal.ThrowExceptionForHR(device.OpenPropertyStore(0, out var properties));
-                            try
-                            {
-                                var key = new PropertyKey { Format = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), Id = 14 };
-                                Marshal.ThrowExceptionForHR(properties.GetValue(ref key, out var value));
-                                try
-                                {
-                                    var name = value.Type == 31 ? Marshal.PtrToStringUni(value.Pointer) : null;
-                                    result.Add(new Device(id, name ?? "未命名音频设备", flow, id == main, id == communications));
-                                }
-                                finally { PropVariantClear(ref value); }
-                            }
-                            finally { Marshal.ReleaseComObject(properties); }
+                            result.Add(new Device(id, ReadName(device), flow, id == main, id == communications));
                         }
                         finally { Marshal.ReleaseComObject(device); }
                     }
@@ -50,6 +38,43 @@ internal static class AudioDeviceService
             return result;
         }
         finally { Marshal.ReleaseComObject(enumerator); }
+    }
+
+    internal static Device? FindPreferredDeviceToRestore(int flow, string id)
+    {
+        if (string.IsNullOrEmpty(id)) return null;
+        var enumerator = CreateEnumerator();
+        try
+        {
+            if (enumerator.GetDevice(id, out var device) < 0) return null;
+            try
+            {
+                if (device.GetState(out var state) < 0 || (state & 1) == 0
+                    || device is not IEndpoint endpoint || endpoint.GetDataFlow(out var endpointFlow) < 0
+                    || endpointFlow != flow) return null;
+                var main = id == DefaultId(enumerator, flow, 1);
+                var communications = id == DefaultId(enumerator, flow, 2);
+                return main && communications ? null : new Device(id, ReadName(device), flow, main, communications);
+            }
+            finally { Marshal.ReleaseComObject(device); }
+        }
+        finally { Marshal.ReleaseComObject(enumerator); }
+    }
+
+    private static IEnumerator CreateEnumerator() =>
+        (IEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))!)!;
+
+    private static string ReadName(IDevice device)
+    {
+        Marshal.ThrowExceptionForHR(device.OpenPropertyStore(0, out var properties));
+        try
+        {
+            var key = new PropertyKey { Format = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), Id = 14 };
+            Marshal.ThrowExceptionForHR(properties.GetValue(ref key, out var value));
+            try { return (value.Type == 31 ? Marshal.PtrToStringUni(value.Pointer) : null) ?? "未命名音频设备"; }
+            finally { PropVariantClear(ref value); }
+        }
+        finally { Marshal.ReleaseComObject(properties); }
     }
 
     private static string? DefaultId(IEnumerator enumerator, int flow, int role)
@@ -84,6 +109,7 @@ internal static class AudioDeviceService
     {
         [PreserveSig] int EnumAudioEndpoints(int flow, uint mask, out ICollection devices);
         [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IDevice device);
+        [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IDevice device);
     }
     [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface ICollection
@@ -98,6 +124,11 @@ internal static class AudioDeviceService
         [PreserveSig] int OpenPropertyStore(uint access, out IPropertyStore store);
         [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
         [PreserveSig] int GetState(out uint state);
+    }
+    [ComImport, Guid("1BE09788-6894-4089-8586-9A2A6C265AC5"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IEndpoint
+    {
+        [PreserveSig] int GetDataFlow(out int flow);
     }
     [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IPropertyStore

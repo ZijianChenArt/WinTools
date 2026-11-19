@@ -193,20 +193,26 @@ public sealed class CardItem : INotifyPropertyChanged
                 thumb = await file.GetThumbnailAsync(
                     preferShellIcon ? ThumbnailMode.ListView : ThumbnailMode.SingleItem, 64);
                 if (thumb == null || thumb.Size == 0)
+                {
+                    thumb?.Dispose();
                     thumb = await file.GetThumbnailAsync(
                         preferShellIcon ? ThumbnailMode.SingleItem : ThumbnailMode.ListView, 64);
+                }
                 if (thumb == null || thumb.Size == 0)
+                {
+                    thumb?.Dispose();
                     thumb = await file.GetThumbnailAsync(ThumbnailMode.DocumentsView, 64);
+                }
             }
 
-            if (thumb != null && thumb.Size > 0)
+            using (thumb)
             {
-                var bmp = new BitmapImage();
-                await bmp.SetSourceAsync(thumb);
-                Icon = bmp;
-            }
-            else
-            {
+                if (thumb is { Size: > 0 })
+                {
+                    var bmp = new BitmapImage();
+                    await bmp.SetSourceAsync(thumb);
+                    Icon = bmp;
+                }
             }
         }
         catch (Exception ex)
@@ -1308,7 +1314,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
             var sourcePaths = ItemSource?.SnapshotPaths();
             var paths = sourcePaths != null && sourcePaths.Count == incoming.Count
                 && new HashSet<string>(sourcePaths, StringComparer.OrdinalIgnoreCase).SetEquals(incoming)
-                ? sourcePaths : CardItemOrderStore.Apply(_zoneName, incoming);
+                ? sourcePaths : incoming;
             // Opening an unchanged library must not recreate GridView containers or rerun layout.
             if (_items.Select(item => item.Path).SequenceEqual(paths, StringComparer.OrdinalIgnoreCase))
             {

@@ -128,16 +128,4 @@ internal static class PreviewDataReader
         return entries.Values.OrderByDescending(e => e.IsDirectory).ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    internal static IReadOnlyList<PreviewEntry> ReadFolder(string path, CancellationToken cancellation)
-    {
-        var entries = new List<PreviewEntry>();
-        foreach (var info in new DirectoryInfo(path).EnumerateFileSystemInfos())
-        {
-            cancellation.ThrowIfCancellationRequested();
-            var directory = (info.Attributes & FileAttributes.Directory) != 0;
-            entries.Add(new PreviewEntry(info.Name, info.FullName, directory, info is FileInfo file ? file.Length : null));
-            if (entries.Count >= MaxEntries) break;
-        }
-        return entries.OrderByDescending(e => e.IsDirectory).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-    }
 }

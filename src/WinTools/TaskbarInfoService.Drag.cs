@@ -53,7 +53,7 @@ internal sealed partial class TaskbarInfoService
             {
                 _floatCenterX = _floatDragCenterX + point.X - _floatDragStart.X;
                 _floatBottomY = _floatDragBottomY + point.Y - _floatDragStart.Y;
-                SafeTick();
+                RedrawOverlay();
             }
             return true;
         }

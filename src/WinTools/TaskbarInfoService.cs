@@ -36,6 +36,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private DateTime _nextClaudeRefresh;
     private bool _readingClaude;
     private int _claudeRevision;
+    private int _codexRevision;
     private int _codexDrawWidth, _claudeDrawWidth;
 
     // 入口：每项 = 该入口自己的开关 && 对应功能已开启（Apply 里合成）。
@@ -123,17 +124,40 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     internal void Refresh() { _nextRefresh = DateTime.MinValue; if (_enabled) _ = RefreshAsync(); }
 
+    private (RECT Bar, MONITORINFO Monitor, float Scale, bool Dark)? _overlayEnvironment;
+
     private void SafeTick()
     {
         try { Tick(); _quotaOverlay?.SafeTick(); }
-        catch (Exception ex)
+        catch (Exception ex) { OnDisplayFailure(ex); }
+    }
+
+    private void RedrawOverlay()
+    {
+        if (_disposed || !_enabled || !_visible || _overlayEnvironment is not { } environment) return;
+        try
         {
-            _timer.Stop();
-            Hide();
-            Status = "任务栏信息显示失败，请关闭后重新开启";
-            ErrorReporter.Log("TaskbarInfo.Display", ex);
-            StatusChanged?.Invoke();
+            if (_draggingFloat && _floatCenterX is int x && _floatBottomY is int y)
+            {
+                var monitor = environment.Monitor.Monitor;
+                if (x < monitor.Left || x >= monitor.Right || y <= monitor.Top || y > monitor.Bottom)
+                {
+                    SafeTick();
+                    return;
+                }
+            }
+            DrawOverlay(environment.Bar, environment.Monitor.Work, environment.Scale, environment.Dark);
         }
+        catch (Exception ex) { OnDisplayFailure(ex); }
+    }
+
+    private void OnDisplayFailure(Exception ex)
+    {
+        _timer.Stop();
+        Hide();
+        Status = "任务栏信息显示失败，请关闭后重新开启";
+        ErrorReporter.Log("TaskbarInfo.Display", ex);
+        StatusChanged?.Invoke();
     }
 
     private void Tick()
@@ -180,14 +204,21 @@ internal sealed partial class TaskbarInfoService : IDisposable
             if (name.ToString() is not "Progman" and not "WorkerW") { Hide(); return; }
         }
         var scale = Math.Max(1, GetDpiForWindow(taskbar) / 96f);
-        var height = Math.Max(1, bar.Bottom - bar.Top - (int)(8 * scale));
         if (_quotaSource == null)
         {
             ScheduleScan(taskbar, bar, scale);
             PollStatus();
             _quotaOverlay?.CopyQuotaState();
         }
-        if (!TryPlace(bar, monitor.Work, scale, out var layout, out var x, out var floating)) { Hide(false); return; }
+        var dark = (int?)Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) != 1;
+        _overlayEnvironment = (bar, monitor, scale, dark);
+        DrawOverlay(bar, monitor.Work, scale, dark);
+    }
+
+    private void DrawOverlay(RECT bar, RECT work, float scale, bool dark)
+    {
+        var height = Math.Max(1, bar.Bottom - bar.Top - (int)(8 * scale));
+        if (!TryPlace(bar, work, scale, out var layout, out var x, out var floating)) { Hide(false); return; }
         // 只收小悬浮模式。间距仍使用屏幕 DPI，不能随内容缩放；底边固定，展开向上生长。
         var screenScale = scale;
         if (floating)
@@ -197,7 +228,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
             var anchor = TaskbarFloatPlacement.ClampAnchor(
                 _floatCenterX ?? bar.Left + (bar.Right - bar.Left) / 2,
                 _floatBottomY ?? bar.Top - (int)(_floatGap * screenScale), expandedWidth, expandedHeight,
-                monitor.Work.Left, monitor.Work.Top, monitor.Work.Right, monitor.Work.Bottom);
+                work.Left, work.Top, work.Right, work.Bottom);
             _resolvedFloatCenterX = anchor.CenterX;
             _resolvedFloatBottomY = anchor.BottomY;
             scale *= _floatingScale;
@@ -221,7 +252,6 @@ internal sealed partial class TaskbarInfoService : IDisposable
         _hoveredButton = !_draggingFloat && _pointerInside && GetCursorPos(out var cursor)
             && cursor.X >= x && cursor.X < x + width && cursor.Y >= y && cursor.Y < y + windowHeight
             ? HitAt(cursor.X - x) : -1;
-        var dark = (int?)Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) != 1;
         var drawing = $"{_quotaText}|{_claudeText}|{width}|{height}|{dark}|{scale}|{layout}|{string.Join(',', _shownIcons)}|{_hoveredButton}|{_reading}|{_readingClaude}|{_stashCount}|{_voiceActive}|{floating}";
         if (drawing != _lastDrawing)
         {
@@ -255,6 +285,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
 
     private void Hide(bool includeQuota = true)
     {
+        _overlayEnvironment = null;
         StopFloatingDrag();
         if (includeQuota) _quotaOverlay?.Hide();
         ResetHover();
@@ -298,7 +329,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         if (_hoveredButton == button) return;
         _hoveredButton = button;
-        SafeTick();
+        RedrawOverlay();
     }
 
     private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, nuint id, nuint data)
@@ -389,29 +420,44 @@ internal sealed partial class TaskbarInfoService : IDisposable
         SafeTick();
     }
 
+    internal void SetCodexSnapshot(QuotaSnapshot snapshot)
+    {
+        if (_disposed) return;
+        _codexRevision++;
+        _nextRefresh = DateTime.UtcNow.AddMinutes(5);
+        UpdateCodexSnapshot(snapshot);
+        StatusChanged?.Invoke();
+        SafeTick();
+    }
+
+    private void UpdateCodexSnapshot(QuotaSnapshot snapshot)
+    {
+        _quotaText = snapshot.Text;
+        Status = $"{snapshot.Detail}\n更新于 {DateTime.Now:HH:mm:ss} · 每 5 分钟自动刷新";
+    }
+
     private async Task RefreshAsync()
     {
         if (_reading || _disposed) return;
         _reading = true;
+        var revision = _codexRevision;
         // 每次读取都要启动一个 codex app-server 子进程；额度变化不快，与 Claude 统一为 5 分钟，
         // 需要最新值时点气泡手动刷新。
         _nextRefresh = DateTime.UtcNow.AddMinutes(5);
         try
         {
             var snapshot = await Task.Run(() => CodexQuotaReader.ReadAsync(_lifetime.Token));
-            if (_disposed) return;
-            _quotaText = snapshot.Text;
-            Status = $"{snapshot.Detail}\n更新于 {DateTime.Now:HH:mm:ss} · 每 5 分钟自动刷新";
+            if (!_disposed && revision == _codexRevision) UpdateCodexSnapshot(snapshot);
         }
         catch (OperationCanceledException)
         {
-            if (_disposed) return;
+            if (_disposed || revision != _codexRevision) return;
             _quotaText = "Codex 额度暂不可用";
             Status = "读取超时，请检查网络后刷新";
         }
         catch (Exception ex)
         {
-            if (_disposed) return;
+            if (_disposed || revision != _codexRevision) return;
             _quotaText = "Codex 额度暂不可用";
             Status = ex is InvalidOperationException ? ex.Message : "额度读取失败，请检查 Codex 安装、登录状态和网络";
         }

@@ -35,11 +35,10 @@ public sealed partial class FilePreviewWindow
     private string _rawText = "";
     private IReadOnlyList<MarkdownPreviewBlock>? _markdownBlocks;
     private IReadOnlyList<PreviewTable> _workbook = Array.Empty<PreviewTable>();
+    private OfficeTextExtractor.WorkbookPreview? _spreadsheet;
+    private CancellationTokenSource? _sheetLoad;
     private IReadOnlyList<PreviewEntry> _archiveEntries = Array.Empty<PreviewEntry>();
     private string _archivePrefix = "";
-    private string _listingFolder = "";
-    private bool _isArchive;
-    private int _directoryVersion;
     private bool _sourceMode;
     private double ToolbarHeight => 0;
     private string _baseMetaText = "", _modifiedText = "";
@@ -56,14 +55,14 @@ public sealed partial class FilePreviewWindow
         _preparingPdf = false;
         PdfView.Opacity = 1;
         PdfView.IsHitTestVisible = true;
-        _directoryVersion++;
         _pendingBounds = null;
         _rawText = "";
         _markdownBlocks = null;
         _workbook = Array.Empty<PreviewTable>();
+        _spreadsheet = null;
+        _sheetLoad?.Cancel();
         _archiveEntries = Array.Empty<PreviewEntry>();
         _archivePrefix = "";
-        _listingFolder = "";
         _sourceMode = false;
         _folderStats = null;
         _baseMetaText = _modifiedText = "";
@@ -307,23 +306,32 @@ public sealed partial class FilePreviewWindow
 
     private async Task LoadSvgAsync(string path, int token)
     {
-        var text = await ReadTextAsync(path, _contentCancellation.Token);
+        var cancellation = _contentCancellation.Token;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var attributes = await Task.Run(() =>
+        {
+            using var reader = System.Xml.XmlReader.Create(stream, new System.Xml.XmlReaderSettings
+            {
+                DtdProcessing = System.Xml.DtdProcessing.Ignore,
+            });
+            reader.MoveToContent();
+            return (ViewBox: reader.GetAttribute("viewBox"), Width: reader.GetAttribute("width"), Height: reader.GetAttribute("height"));
+        }, cancellation);
         if (token != _loadToken) return;
-        var root = System.Xml.Linq.XDocument.Parse(text ?? "").Root;
         var width = 300d; var height = 150d;
-        var viewBox = ((string?)root?.Attribute("viewBox"))?.Split(new[] { ' ', ',', '\t', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var viewBox = attributes.ViewBox?.Split(new[] { ' ', ',', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
         if (viewBox is { Length: 4 }
             && double.TryParse(viewBox[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var w)
             && double.TryParse(viewBox[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var h)
             && double.IsFinite(w) && double.IsFinite(h) && w > 0 && h > 0) { width = Math.Clamp(w, 1, 100000); height = Math.Clamp(h, 1, 100000); }
-        double? Length(string name)
+        static double? Length(string? value)
         {
-            var value = ((string?)root?.Attribute(name))?.Trim();
+            value = value?.Trim();
             if (value?.EndsWith("px", StringComparison.OrdinalIgnoreCase) == true) value = value[..^2];
             return double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number)
                 && double.IsFinite(number) && number > 0 ? Math.Clamp(number, 1, 100000) : null;
         }
-        if (Length("width") is { } nativeWidth && Length("height") is { } nativeHeight) { width = nativeWidth; height = nativeHeight; }
+        if (Length(attributes.Width) is { } nativeWidth && Length(attributes.Height) is { } nativeHeight) { width = nativeWidth; height = nativeHeight; }
         var image = new Microsoft.UI.Xaml.Media.Imaging.SvgImageSource();
         var rasterFit = Math.Min(1, 2048 / Math.Max(width * CurrentScale(), height * CurrentScale()));
         image.RasterizePixelWidth = width * CurrentScale() * rasterFit;
@@ -333,11 +341,9 @@ public sealed partial class FilePreviewWindow
         ImageView.Source = image;
         ShowOnly(ImageSurface);
         // 使用本次打开的文件流，避免同名 SVG 更新后仍命中 URI 缓存。
-        var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path);
-        if (token != _loadToken) return;
-        using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.Read);
-        if (token != _loadToken) return;
-        await image.SetSourceAsync(stream);
+        stream.Position = 0;
+        using var randomAccess = stream.AsRandomAccessStream();
+        await image.SetSourceAsync(randomAccess).AsTask(cancellation);
     }
 
     private void WrapButton_Click(object sender, RoutedEventArgs e)
@@ -474,9 +480,52 @@ public sealed partial class FilePreviewWindow
         if (TableRows.ItemsSource == null) ShowTable(tables[0]);
     }
 
-    private void SheetSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ShowSpreadsheet(OfficeTextExtractor.WorkbookPreview workbook, PreviewTable? first)
     {
-        if (SheetSelector.SelectedIndex >= 0 && SheetSelector.SelectedIndex < _workbook.Count) ShowTable(_workbook[SheetSelector.SelectedIndex]);
+        if (first == null)
+        {
+            ShowFallback(CurrentPath, "没有可显示的工作表", "用默认程序打开以查看完整文档。");
+            return;
+        }
+        PreviewToolbar.Visibility = Visibility.Visible;
+        SheetSelector.Visibility = workbook.Sheets.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        SheetSelector.ItemsSource = workbook.Sheets.Select(sheet => sheet.Name).ToArray();
+        SheetSelector.SelectedIndex = 0;
+        _spreadsheet = workbook;
+        ShowTable(first);
+    }
+
+    private async void SheetSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var sheetIndex = SheetSelector.SelectedIndex;
+        if (sheetIndex < 0) return;
+        if (_spreadsheet is not { } workbook)
+        {
+            if (sheetIndex < _workbook.Count) ShowTable(_workbook[sheetIndex]);
+            return;
+        }
+        if (sheetIndex >= workbook.Sheets.Count) return;
+
+        _sheetLoad?.Cancel();
+        using var load = CancellationTokenSource.CreateLinkedTokenSource(_contentCancellation.Token);
+        _sheetLoad = load;
+        try
+        {
+            var table = await Task.Run(() => workbook.ReadSheet(sheetIndex, load.Token), load.Token);
+            if (!load.IsCancellationRequested) ShowTable(table);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (load.IsCancellationRequested) return;
+            ErrorReporter.Log("FilePreviewWindow.ReadSheet", ex);
+            ShowTable(new PreviewTable(workbook.Sheets[sheetIndex].Name, Array.Empty<string[]>()));
+            ViewStatus.Text = "无法读取此工作表";
+        }
+        finally
+        {
+            if (_sheetLoad == load) _sheetLoad = null;
+        }
     }
 
     public sealed record TableRow(string[] Cells, string[] Details);
@@ -520,17 +569,14 @@ public sealed partial class FilePreviewWindow
         return name;
     }
 
-    private async Task LoadEntriesAsync(string path, int token, bool archive)
+    private async Task LoadArchiveAsync(string path, int token)
     {
-        _isArchive = archive;
         var cancellation = _contentCancellation.Token;
-        if (archive)
-        {
-            var entries = await Task.Run(() => PreviewDataReader.ReadZip(path, cancellation));
-            if (token != _loadToken) return;
-            _archiveEntries = entries; _archivePrefix = ""; ShowArchiveLevel();
-        }
-        else await LoadFolderLevelAsync(path, token);
+        var entries = await Task.Run(() => PreviewDataReader.ReadZip(path, cancellation), cancellation);
+        if (token != _loadToken) return;
+        _archiveEntries = entries;
+        _archivePrefix = "";
+        ShowArchiveLevel();
     }
 
     private void ShowArchiveLevel()
@@ -540,18 +586,6 @@ public sealed partial class FilePreviewWindow
         ShowEntryRows(rows, _archivePrefix.Length == 0 ? "压缩包" : _archivePrefix, _archiveEntries.Count >= PreviewDataReader.MaxEntries);
         ListUpButton.Visibility = _archivePrefix.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         ListUpButton.IsEnabled = _archivePrefix.Length > 0;
-    }
-
-    private async Task LoadFolderLevelAsync(string path, int token)
-    {
-        var navigation = ++_directoryVersion;
-        var cancellation = _contentCancellation.Token;
-        var entries = await Task.Run(() => PreviewDataReader.ReadFolder(path, cancellation));
-        if (token != _loadToken || navigation != _directoryVersion) return;
-        _listingFolder = path;
-        ShowEntryRows(entries, Path.GetFileName(path.TrimEnd('\\', '/')), entries.Count >= PreviewDataReader.MaxEntries);
-        ListUpButton.IsEnabled = !string.Equals(_listingFolder, CurrentPath, StringComparison.OrdinalIgnoreCase);
-        ListUpButton.Visibility = ListUpButton.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ShowEntryRows(IReadOnlyList<PreviewEntry> entries, string name, bool limited)
@@ -564,34 +598,18 @@ public sealed partial class FilePreviewWindow
         SetPreviewBounds(620, PreviewLayoutPolicy.ListHeight(entries.Count, ChromeHeightDip + ToolbarHeight + _frameHeightDip));
     }
 
-    private async void EntryList_ItemClick(object sender, ItemClickEventArgs e)
+    private void EntryList_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not PreviewEntry { IsDirectory: true } entry) return;
-        var token = _loadToken;
-        try
-        {
-            if (_isArchive) { _archivePrefix = entry.Path; ShowArchiveLevel(); }
-            else await LoadFolderLevelAsync(entry.Path, token);
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { if (token == _loadToken) { ViewStatus.Text = "无法读取此目录"; ToolTipService.SetToolTip(ViewStatus, ex.Message); } }
+        _archivePrefix = entry.Path;
+        ShowArchiveLevel();
     }
 
-    private async void ListUpButton_Click(object sender, RoutedEventArgs e)
+    private void ListUpButton_Click(object sender, RoutedEventArgs e)
     {
-        var token = _loadToken;
-        try
-        {
-            if (_isArchive)
-            {
-                var parent = _archivePrefix.TrimEnd('/');
-                var slash = parent.LastIndexOf('/'); _archivePrefix = slash < 0 ? "" : parent[..(slash + 1)];
-                ShowArchiveLevel();
-            }
-            else if (!string.Equals(_listingFolder, CurrentPath, StringComparison.OrdinalIgnoreCase) && Path.GetDirectoryName(_listingFolder) is { } parent)
-                await LoadFolderLevelAsync(parent, token);
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { if (token == _loadToken) { ViewStatus.Text = "无法读取此目录"; ToolTipService.SetToolTip(ViewStatus, ex.Message); } }
+        var parent = _archivePrefix.TrimEnd('/');
+        var slash = parent.LastIndexOf('/');
+        _archivePrefix = slash < 0 ? "" : parent[..(slash + 1)];
+        ShowArchiveLevel();
     }
 }

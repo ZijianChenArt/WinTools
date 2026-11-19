@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -109,14 +110,14 @@ public sealed partial class AudioDevicePickerWindow : Window, IUiStyleShell
     }
     private bool _warmed;
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(List<AudioDeviceService.Device>? snapshot = null)
     {
         var version = ++_refreshVersion;
         // 不再先把下拉框置灰再恢复：那会在弹出时看到「灰色 → 突然可选」的跳变。
         // 控件始终可用；设备列表没变就一个字都不动，变了才原地更新。
         try
         {
-            var devices = await Task.Run(AudioDeviceService.Read);
+            var devices = snapshot ?? await Task.Run(AudioDeviceService.Read);
             var signature = string.Join('|', devices.Select(d => $"{d.Id}/{d.Flow}/{d.Default}/{d.Name}"));
             if (_closed || version != _refreshVersion) return;
             if (signature == _shownSignature) { Status.Text = ""; Status.Visibility = Visibility.Collapsed; return; }
@@ -135,7 +136,7 @@ public sealed partial class AudioDevicePickerWindow : Window, IUiStyleShell
             Input.PlaceholderText = inputs.Count == 0 ? "没有可用麦克风" : "选择麦克风";
             Status.Text = ""; Status.Visibility = Visibility.Collapsed;
         }
-        catch (Exception ex) { ErrorReporter.Log("AudioPicker.Read", ex); if (!_closed) { Status.Text = "无法读取设备，请重新打开或进入声音设置。"; Status.Visibility = Visibility.Visible; } }
+        catch (Exception ex) { ErrorReporter.Log("AudioPicker.Read", ex); if (!_closed && version == _refreshVersion) { Status.Text = "无法读取设备，请重新打开或进入声音设置。"; Status.Visibility = Visibility.Visible; } }
         finally
         {
             if (!_closed && version == _refreshVersion)
@@ -154,21 +155,22 @@ public sealed partial class AudioDevicePickerWindow : Window, IUiStyleShell
         // 先记下选择再切换，避免后台守护在切换完成前把它改回旧设备。
         var cfg = SettingsService.Instance.Current;
         if (device.Flow == 0) cfg.AudioPreferredOutputId = device.Id; else cfg.AudioPreferredInputId = device.Id;
-        ConfigService.Update(c => { if (device.Flow == 0) c.AudioPreferredOutputId = device.Id; else c.AudioPreferredInputId = device.Id; });
+        SettingsService.Instance.FlushNow();
         Output.IsEnabled = Input.IsEnabled = false;
         Status.Text = "正在切换…"; Status.Visibility = Visibility.Visible;
         string? error = null;
+        List<AudioDeviceService.Device>? updated = null;
         try
         {
             await Task.Run(() => AudioDeviceService.Select(device));
-            var updated = await Task.Run(AudioDeviceService.Read);
+            updated = await Task.Run(AudioDeviceService.Read);
             if (!updated.Any(item => item.Id == device.Id && item.Default && item.Communications))
                 throw new InvalidOperationException("设备可能已断开。");
         }
         catch (Exception ex) { ErrorReporter.Log("AudioPicker.Select", ex); error = "切换未完成，请重试或进入声音设置。"; }
         finally { _busy = false; }
         if (_closed) return;
-        await RefreshAsync();
+        await RefreshAsync(updated);
         if (error != null && !_closed) { Status.Text = error; Status.Visibility = Visibility.Visible; }
     }
     private void Root_KeyDown(object sender, KeyRoutedEventArgs args)

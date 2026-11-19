@@ -36,43 +36,57 @@ internal static class OfficePreviewRenderer
         {
             Directory.CreateDirectory(CacheRoot);
             PruneCache();
-            var jobId = Guid.NewGuid().ToString("N");
-            jobDirectory = Path.Combine(CacheRoot, jobId);
-            Directory.CreateDirectory(jobDirectory);
             var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
             var backends = OfficePreviewBackend.Find(extension is ".doc" or ".docx");
             if (backends.Count == 0) return new(null, "未检测到可用的 WPS 或 Microsoft Office 页面预览组件");
-            var snapshot = Path.Combine(jobDirectory, "source" + extension);
             var before = new FileInfo(sourcePath);
             var originalLength = before.Length;
             var originalWriteTime = before.LastWriteTimeUtc;
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            hash.AppendData(Encoding.UTF8.GetBytes("office-pdf-v2|" + extension + "|"
-                + string.Join("|", backends.Select(backend => backend.CacheIdentity)) + "|"));
+            var prefix = Encoding.UTF8.GetBytes("office-pdf-v2|" + extension + "|"
+                + string.Join("|", backends.Select(backend => backend.CacheIdentity)) + "|");
+            var jobId = Guid.NewGuid().ToString("N");
+            var snapshot = Path.Combine(CacheRoot, jobId, "source" + extension);
+            string cacheDirectory, cachedPdf;
             await using (var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-            await using (var output = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write,
-                FileShare.None, 128 * 1024, FileOptions.Asynchronous))
             {
                 var buffer = new byte[128 * 1024];
+                hash.AppendData(prefix);
                 int count;
+                while ((count = await input.ReadAsync(buffer, cancellation)) != 0)
+                    hash.AppendData(buffer.AsSpan(0, count));
+
+                if (SourceChanged()) return new(null, "文档正在更新，请稍后重新预览");
+                var sourceHash = hash.GetHashAndReset();
+                cacheDirectory = Path.Combine(CacheRoot, Convert.ToHexString(sourceHash).ToLowerInvariant());
+                cachedPdf = Path.Combine(cacheDirectory, "preview.pdf");
+                if (IsPdf(cachedPdf))
+                {
+                    Directory.SetLastWriteTimeUtc(cacheDirectory, DateTime.UtcNow);
+                    return new(cachedPdf, null, ReadRenderer(cacheDirectory));
+                }
+
+                jobDirectory = Path.GetDirectoryName(snapshot)!;
+                Directory.CreateDirectory(jobDirectory);
+                await using var output = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write,
+                    FileShare.None, 128 * 1024, FileOptions.Asynchronous);
+                input.Position = 0;
+                hash.AppendData(prefix);
                 while ((count = await input.ReadAsync(buffer, cancellation)) != 0)
                 {
                     hash.AppendData(buffer.AsSpan(0, count));
                     await output.WriteAsync(buffer.AsMemory(0, count), cancellation);
                 }
+                if (SourceChanged() || !hash.GetHashAndReset().AsSpan().SequenceEqual(sourceHash))
+                    return new(null, "文档正在更新，请稍后重新预览");
             }
             CopyZoneInformation(sourcePath, snapshot);
-            var after = new FileInfo(sourcePath);
-            if (after.Length != originalLength || after.LastWriteTimeUtc != originalWriteTime)
-                return new(null, "文档正在更新，请稍后重新预览");
 
-            var cacheDirectory = Path.Combine(CacheRoot, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant());
-            var cachedPdf = Path.Combine(cacheDirectory, "preview.pdf");
-            if (IsPdf(cachedPdf))
+            bool SourceChanged()
             {
-                Directory.SetLastWriteTimeUtc(cacheDirectory, DateTime.UtcNow);
-                return new(cachedPdf, null, ReadRenderer(cacheDirectory));
+                before.Refresh();
+                return !before.Exists || before.Length != originalLength || before.LastWriteTimeUtc != originalWriteTime;
             }
 
             var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法定位预览程序");

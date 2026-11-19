@@ -84,7 +84,8 @@ internal static class RunningProcessHelper
         {
             GetWindowThreadProcessId(hwnd, out var pid);
             if (pid == 0) return null;
-            return Process.GetProcessById((int)pid).ProcessName;
+            using var process = Process.GetProcessById((int)pid);
+            return process.ProcessName;
         }
         catch
         {

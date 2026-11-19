@@ -380,51 +380,6 @@ public sealed partial class ProgramDropWindow : Window, IUiStyleShell
     #region 定位与尺寸
 
     /// <summary>
-    /// 将此窗口定位到鼠标光标右上方。
-    /// 若上方空间不足则放到右下方。
-    /// </summary>
-    /// <param name="cursorX">光标屏幕 X 坐标（物理像素）。</param>
-    /// <param name="cursorY">光标屏幕 Y 坐标（物理像素）。</param>
-    /// <param name="width">窗口宽度（物理像素，与暂存窗口一致）。</param>
-    /// <param name="scale">DPI 缩放比例。</param>
-    public void PositionAboveCursor(int cursorX, int cursorY, int width, double scale)
-    {
-        try
-        {
-            var (gapX, gapY, windowGap) = GetOffsets();
-            if (scale < 0.5) scale = 1.0;
-            _lastScale = scale;
-
-            // 根据可见程序数量计算高度（内容 + 内边距 + 标题栏 + 窗口边框）
-            var visibleCount = GetVisibleProgramCount();
-            if (visibleCount <= 0) visibleCount = 1;
-            var heightDip = Math.Max(88, Math.Min(visibleCount * 52 + 60, 420));
-            var heightPx = (int)(heightDip * scale);
-
-            AppWindow.Resize(new SizeInt32(width, heightPx));
-
-            var x = cursorX + gapX;               // 光标右侧
-            var y = cursorY - heightPx - gapY - windowGap;     // 光标上方
-
-            var display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
-            var work = display.WorkArea;
-
-            // 超出右边界则翻到左侧
-            if (x + width > work.X + work.Width)
-                x = cursorX - width - gapX;
-            // 超出顶部则翻到下方
-            if (y < work.Y)
-                y = cursorY + gapY + windowGap;
-
-            x = Math.Max(work.X, x);
-            y = Math.Max(work.Y, y);
-
-            AppWindow.Move(new PointInt32(x, y));
-        }
-        catch { /* ignore */ }
-    }
-
-    /// <summary>
     /// 将此窗口叠放在暂存窗口正上方（同宽同左边），空间不足时贴住工作区顶部。
     /// 用于暂存窗口贴靠任务栏快捷图标的场景。
     /// </summary>
@@ -449,16 +404,6 @@ public sealed partial class ProgramDropWindow : Window, IUiStyleShell
             AppWindow.Move(new PointInt32(stashPosition.X, y));
         }
         catch { /* ignore */ }
-    }
-
-    /// <summary>读取配置中的偏移与间距，值无效时回退默认。</summary>
-    private static (int GapX, int GapY, int WindowGap) GetOffsets()
-    {
-        var cfg = Services.SettingsService.Instance.Current; // 拖拽热路径上不读盘
-        var gapX = cfg.ProgramOffsetX > 0 ? cfg.ProgramOffsetX : 80;
-        var gapY = cfg.ProgramOffsetY > 0 ? cfg.ProgramOffsetY : 40;
-        var windowGap = cfg.WindowGap >= 0 ? cfg.WindowGap : 0;
-        return (gapX, gapY, windowGap);
     }
 
     /// <summary>获取当前可见的程序项数量。</summary>

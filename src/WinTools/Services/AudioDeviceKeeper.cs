@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading;
 
 namespace WinTools.Services;
@@ -27,15 +26,11 @@ internal static class AudioDeviceKeeper
         {
             var config = SettingsService.Instance.Current;
             // 「记住所选设备」恒开启，没有开关。
-            var wanted = new[] { (Flow: 0, Id: config.AudioPreferredOutputId), (Flow: 1, Id: config.AudioPreferredInputId) }
-                .Where(item => !string.IsNullOrEmpty(item.Id)).ToList();
-            if (wanted.Count == 0) return;
-
-            var devices = AudioDeviceService.Read();
-            foreach (var (flow, id) in wanted)
+            for (var flow = 0; flow < 2; flow++)
             {
-                var target = devices.FirstOrDefault(device => device.Flow == flow && device.Id == id);
-                if (target == null || (target.Default && target.Communications)) continue;
+                var id = flow == 0 ? config.AudioPreferredOutputId : config.AudioPreferredInputId;
+                var target = AudioDeviceService.FindPreferredDeviceToRestore(flow, id);
+                if (target == null || id != (flow == 0 ? config.AudioPreferredOutputId : config.AudioPreferredInputId)) continue;
                 AudioDeviceService.Select(target);
                 var message = $"{(flow == 0 ? "扬声器" : "麦克风")}被系统改动，已切回「{target.Name}」";
                 if (message != _lastLogged) { _lastLogged = message; ErrorReporter.Log("AudioKeeper", message); }

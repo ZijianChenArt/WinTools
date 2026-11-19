@@ -280,12 +280,18 @@ internal static class AppIconLoader
             var file = await StorageFile.GetFileFromPathAsync(exePath);
             var thumb = await file.GetThumbnailAsync(ThumbnailMode.SingleItem, 64);
             if (thumb == null || thumb.Size == 0)
-                thumb = await file.GetThumbnailAsync(ThumbnailMode.ListView, 64);
-            if (thumb != null && thumb.Size > 0)
             {
-                var bmp = new BitmapImage();
-                await bmp.SetSourceAsync(thumb);
-                bitmap = bmp;
+                thumb?.Dispose();
+                thumb = await file.GetThumbnailAsync(ThumbnailMode.ListView, 64);
+            }
+            using (thumb)
+            {
+                if (thumb is { Size: > 0 })
+                {
+                    var bmp = new BitmapImage();
+                    await bmp.SetSourceAsync(thumb);
+                    bitmap = bmp;
+                }
             }
         }
         catch (Exception ex)

@@ -225,16 +225,12 @@ public partial class App : Application, IWindowRegistry
         //   通过 _dispatcherQueue.TryEnqueue 切回 UI 线程，等 WinUI 布局空出 UI 线程即可
         // 用户体验：主窗口先显示，托盘和悬浮暂存 1-2 秒后出现，但 4 个 service
         // 全部 ready 的总时间从 ~2.55s 降到 ~1.4s（受 WinUI 首帧布局制约）。
-        // 资源管理器空格预览需要 UI 线程的 DispatcherQueue，必须在后台任务开始前从这里取。
-        var uiDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         _ = System.Threading.Tasks.Task.Run(() =>
         {
             try { InitPerAppIme(startupConfig, mainWindowHandle); }
             catch (Exception ex) { ErrorReporter.Log("App.InitPerAppIme", ex); }
             try { InitDesktopClick(startupConfig); }
             catch (Exception ex) { ErrorReporter.Log("App.InitDesktopClick", ex); }
-            try { InitExplorerPreview(uiDispatcher, startupConfig); }
-            catch (Exception ex) { ErrorReporter.Log("App.InitExplorerPreview", ex); }
             try { InitVoiceBall(startupConfig); }
             catch (Exception ex) { ErrorReporter.Log("App.InitVoiceBall", ex); }
             // 旧“桌面整理”已并入桌面分区卡片，清理此前可能注册的右键菜单。
@@ -250,6 +246,8 @@ public partial class App : Application, IWindowRegistry
         {
             TraceStartup("OnLaunchedCore: before EnsureTrayIcon");
             EnsureTrayIcon();
+            try { SetSpacePreviewEnabled(startupConfig.EnableExplorerPreview, startupConfig.EnableCardPreview); }
+            catch (Exception ex) { ErrorReporter.Log("App.InitExplorerPreview", ex); }
             try { ApplyTaskbarInfo(startupConfig); }
             catch (Exception ex) { ErrorReporter.Log("App.TaskbarInfo", ex); }
             TraceStartup("OnLaunchedCore: before InitFloatingStash");
@@ -338,7 +336,6 @@ public partial class App : Application, IWindowRegistry
 
     internal void RegisterWinToolsWindow(Window window)
     {
-        _stashManager?.RegisterWindow(window);
         try
         {
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
@@ -354,7 +351,7 @@ public partial class App : Application, IWindowRegistry
     private void InitFloatingStash(Config config)
     {
         if (_window == null) return;
-        _stashManager ??= new FloatingStashManager(_window.DispatcherQueue, _window);
+        _stashManager ??= new FloatingStashManager(_window.DispatcherQueue);
         _stashManager.StashAnchorProvider = () => TaskbarInfo?.GetStashAnchor();
         _stashManager.SetProgramAssociationEnabled(config.EnableProgramAssoc);
         _stashManager.SetEnabled(config.EnableDragStash);
@@ -399,9 +396,6 @@ public partial class App : Application, IWindowRegistry
 
     #endregion
 
-    internal System.Collections.Generic.List<string> GetDesktopItemNames() =>
-        DesktopCollectService.ListAvailableItemNames();
-
     #region 点击桌面返回桌面
 
     internal void SetDesktopClickEnabled(bool enabled)
@@ -417,24 +411,23 @@ public partial class App : Application, IWindowRegistry
         _desktopClickService.SetEnabled(true);
     }
 
-    /// <summary>
-    /// 空格预览（仿 QuickLook）的启动入口。钩子始终安装，开关只控制它是否接管按键，
-    /// 所以在设置页里切换不需要重新安装钩子。窗口在 UI 线程上预热，第一次按空格时不必等它创建。
-    /// </summary>
-    private void InitExplorerPreview(Microsoft.UI.Dispatching.DispatcherQueue dispatcher, Config config)
-    {
-        FilePreviewService.CardPreviewEnabled = config.EnableCardPreview;
-        dispatcher.TryEnqueue(FilePreviewService.Warmup);
-
-        _explorerPreviewService = new ExplorerPreviewService(dispatcher) { Enabled = config.EnableExplorerPreview };
-        _explorerPreviewService.Start();
-    }
-
     /// <summary>设置页切换空格预览时调用，立即对运行中的服务生效。</summary>
     internal void SetSpacePreviewEnabled(bool explorer, bool card)
     {
         FilePreviewService.CardPreviewEnabled = card;
-        if (_explorerPreviewService is { } service) service.Enabled = explorer;
+        if (explorer || card) FilePreviewService.Warmup();
+        if (explorer && _uiQueue is { } queue)
+        {
+            _explorerPreviewService ??= new ExplorerPreviewService(queue);
+            _explorerPreviewService.Enabled = true;
+            _explorerPreviewService.Start();
+        }
+        else if (_explorerPreviewService is { } service)
+        {
+            service.Enabled = false;
+            service.Stop();
+            FilePreviewService.CancelPendingSelection();
+        }
     }
 
     #endregion
@@ -582,11 +575,4 @@ public partial class App : Application, IWindowRegistry
         }
     }
 
-    /// <summary>获取主窗口实例。</summary>
-    internal static Window GetMainWindow() => (Current as App)!._window!;
-
-    /// <summary>主窗口的 AppWindow，供 TopologyKey 等同程序集内部使用。
-    /// 主窗口尚未创建时返回 null（OnLaunched 之前）。</summary>
-    internal static Microsoft.UI.Windowing.AppWindow? MainAppWindow
-        => (Current as App)?._window?.AppWindow;
 }

@@ -94,7 +94,7 @@ public sealed partial class MainWindow
             if (_quotaWindowLifetime.IsCancellationRequested) return;
             ConnectionStatus(codex, snapshot.Text.Replace(codex ? "Codex" : "Claude", "").Trim());
             ToolTipService.SetToolTip(TaskbarControl<SettingsCard>(codex ? "CodexConnectionCard" : "ClaudeConnectionCard"), snapshot.Detail);
-            if (codex) (App.Current as App)?.TaskbarInfo?.Refresh();
+            if (codex) (App.Current as App)?.TaskbarInfo?.SetCodexSnapshot(snapshot);
             else (App.Current as App)?.TaskbarInfo?.SetClaudeSnapshot(snapshot);
         }
         catch (Exception ex) { if (!_quotaWindowLifetime.IsCancellationRequested) ConnectionStatus(codex, ConnectionError(ex)); }

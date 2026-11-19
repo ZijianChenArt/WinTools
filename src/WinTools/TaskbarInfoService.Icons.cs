@@ -7,7 +7,6 @@ namespace WinTools;
 internal sealed partial class TaskbarInfoService
 {
     private GraphicsPath[]? _featureIconPaths;
-    private float _featureIconScale;
     private readonly System.Collections.Generic.Dictionary<(string, float, bool), int> _measuredWidths = new();
 
     private int MeasureInfoWidth(string text, float scale, bool compact = false)
@@ -24,9 +23,9 @@ internal sealed partial class TaskbarInfoService
 
     private void DrawFeatureIcons(Graphics graphics, Brush brush, float scale, int height)
     {
-        if (_featureIconPaths == null || _featureIconScale != scale)
+        if (_shownIcons.Length == 0 && _deviceWidth <= 0) return;
+        if (_featureIconPaths == null)
         {
-            DisposeFeatureIcons();
             var glyphs = new[] { FeatureIcons.DesktopCards, FeatureIcons.DragStash, FeatureIcons.Voice, FeatureIcons.AudioDevices, FeatureIcons.More };
             _featureIconPaths = new GraphicsPath[glyphs.Length];
             using var font = new FontFamily(FeatureIcons.FontName);
@@ -34,19 +33,19 @@ internal sealed partial class TaskbarInfoService
             {
                 var path = new GraphicsPath();
                 _featureIconPaths[index] = path;
-                path.AddString(glyphs[index], font, (int)FontStyle.Regular, 18 * scale, PointF.Empty, StringFormat.GenericTypographic);
+                path.AddString(glyphs[index], font, (int)FontStyle.Regular, 18, PointF.Empty, StringFormat.GenericTypographic);
                 var bounds = path.GetBounds();
                 using var matrix = new Matrix();
                 matrix.Translate(-bounds.X - bounds.Width / 2, -bounds.Y - bounds.Height / 2);
                 path.Transform(matrix);
             }
-            _featureIconScale = scale;
         }
         for (var slot = 0; slot < _shownIcons.Length; slot++)
         {
             var id = _shownIcons[slot];
             var state = graphics.Save();
             graphics.TranslateTransform(_buttonStart + (slot + .5f) * _buttonWidth, height / 2f);
+            graphics.ScaleTransform(scale, scale);
             graphics.FillPath(brush, _featureIconPaths[id == MenuId ? 4 : id]);
             graphics.Restore(state);
         }
@@ -54,6 +53,7 @@ internal sealed partial class TaskbarInfoService
         {
             var state = graphics.Save();
             graphics.TranslateTransform(_deviceIconCenter, height / 2f);
+            graphics.ScaleTransform(scale, scale);
             graphics.FillPath(brush, _featureIconPaths[3]);
             graphics.Restore(state);
         }

@@ -117,8 +117,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     private readonly UIElement[] _views;
 
-    // PDF 连续滚动：每页一个 Image（先占位、按视口懒渲染）。_pdfTops / _pdfHeights 是各页在 PdfPages 里的纵向位置（DIP）。
-    private readonly List<Image> _pdfImages = new();
+    // Canvas 保留滚动范围，只实例化视口附近的页面。
+    private const double PdfPageSpacing = 12;
+    private readonly Dictionary<int, Image> _pdfImages = new();
     private readonly List<double> _pdfTops = new();
     private readonly List<double> _pdfHeights = new();
     private readonly List<double> _pdfAspects = new();
@@ -269,8 +270,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// <summary>读取选中项失败或没有可预览的项目时，收起还停留在加载状态的窗口；已经换成真实内容的窗口不受影响。</summary>
     internal void HideIfPending()
     {
-        if (_isOpen && _paths.Count == 0) HideWindow();
+        if (IsPending) HideWindow();
     }
+
+    internal bool IsPending => _isOpen && _paths.Count == 0;
 
     /// <summary>
     /// 把窗口放到屏幕上并获得焦点，只做窗口层面的事，不碰内容。
@@ -707,9 +710,13 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                 case Kind.OfficeText:
                     {
                         var cancellation = _contentCancellation.Token;
-                        var workbook = await Task.Run(() => OfficeTextExtractor.ReadWorkbook(path, cancellation));
+                        var (workbook, first) = await Task.Run(() =>
+                        {
+                            var index = OfficeTextExtractor.OpenWorkbook(path, cancellation);
+                            return (index, index.Sheets.Count > 0 ? index.ReadSheet(0, cancellation) : null);
+                        }, cancellation);
                         if (token != _loadToken) return;
-                        ShowWorkbook(workbook);
+                        ShowSpreadsheet(workbook, first);
                         break;
                     }
 
@@ -746,7 +753,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                     break;
 
                 case Kind.Archive:
-                    await LoadEntriesAsync(path, token, archive: true);
+                    await LoadArchiveAsync(path, token);
                     break;
 
                 case Kind.Media:
@@ -887,18 +894,18 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _pdfRenderedPages.Clear();
         _pdfLayoutWidth = 0;
 
-        for (uint i = 0; i < document.PageCount; i++)
+        if (document.PageCount == 0) throw new InvalidDataException("PDF 没有页面。");
+        using (var page = document.GetPage(0))
         {
-            using var page = document.GetPage(i);
             var size = page.Size;
-            _pdfAspects.Add(size.Width > 0 ? size.Height / size.Width : 1.414);
-            _pdfImages.Add(new Image { Stretch = Stretch.Uniform, Tag = (int)i });
-            PdfPages.Children.Add(_pdfImages[^1]);
-            _pdfTops.Add(0);
-            _pdfHeights.Add(0);
-
-            // 保留页面比例，同时允许把小尺寸 PDF 放大；后续滚动和缩放不再改外窗。
-            if (i == 0) ApplyWindowSize(size.Width, size.Height, large: true);
+            var aspect = PdfAspect(size);
+            for (uint i = 0; i < document.PageCount; i++)
+            {
+                _pdfAspects.Add(aspect);
+                _pdfTops.Add(0);
+                _pdfHeights.Add(0);
+            }
+            ApplyWindowSize(size.Width, size.Height, large: true);
         }
 
         if (_preparingPdf)
@@ -939,36 +946,79 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         UpdateFooter(_pdfPath);
         RelayoutPdf();
         UpdatePdfViewport();
+        if (document.PageCount > 1) _ = IndexPdfPageSizesAsync(document, token, cancellation);
+    }
+
+    private static double PdfAspect(Windows.Foundation.Size size) =>
+        size.Width > 0 && size.Height > 0 && double.IsFinite(size.Width) && double.IsFinite(size.Height)
+            ? size.Height / size.Width : 1.414;
+
+    private async Task IndexPdfPageSizesAsync(PdfDocument document, int token, CancellationToken cancellation)
+    {
+        try
+        {
+            // 先显示并渲染首屏，后续分批读取真实页高，给滚动和切图留出消息泵。
+            await Task.Delay(16, cancellation);
+            var aspectsChanged = false;
+            for (var index = 1; index < _pdfAspects.Count && token == _loadToken; index++)
+            {
+                using var page = document.GetPage((uint)index);
+                var aspect = PdfAspect(page.Size);
+                if (aspect != _pdfAspects[index])
+                {
+                    _pdfAspects[index] = aspect;
+                    aspectsChanged = true;
+                }
+                if (index % 24 == 0) await Task.Delay(1, cancellation);
+            }
+            if (!aspectsChanged || token != _loadToken) return;
+            var pageIndex = _pdfPage;
+            var zoom = PdfView.ZoomFactor;
+            var progress = Math.Clamp((PdfView.VerticalOffset / zoom - _pdfTops[pageIndex]) / _pdfHeights[pageIndex], 0, 1);
+            RelayoutPdf(force: true);
+            PdfView.UpdateLayout();
+            PdfView.ChangeView(null, Math.Min((_pdfTops[pageIndex] + _pdfHeights[pageIndex] * progress) * zoom,
+                PdfView.ScrollableHeight), null, disableAnimation: true);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { ErrorReporter.Log("FilePreviewWindow.PdfPageSizes", ex); }
     }
 
     /// <summary>
     /// 页面宽度 = 滚动视图的实际宽度（去掉滚动条余量）。宽度变了就重新算每页的位置和高度，
-    /// 已渲染的页作废（清空位图），由视口逻辑按新尺寸重新渲染。
+    /// 已显示的位图保留，视口逻辑按新尺寸重新渲染。
     /// </summary>
-    private void RelayoutPdf()
+    private void RelayoutPdf(bool force = false)
     {
-        if (_pdf == null || _pdfImages.Count == 0) return;
+        if (_pdf == null || _pdfAspects.Count == 0) return;
 
         var available = PdfView.ActualWidth > 0 ? PdfView.ActualWidth : ContentHost.ActualWidth;
         var width = Math.Max(200, available - 16);
-        if (Math.Abs(width - _pdfLayoutWidth) < 0.5) return;
+        var widthChanged = Math.Abs(width - _pdfLayoutWidth) >= 0.5;
+        if (!widthChanged && !force) return;
         _pdfLayoutWidth = width;
-        _pdfRenderedPages.Clear();
+        if (widthChanged) _pdfRenderedPages.Clear();
 
         double top = 0;
-        for (var i = 0; i < _pdfImages.Count; i++)
+        for (var i = 0; i < _pdfAspects.Count; i++)
         {
             var height = width * _pdfAspects[i];
-            var image = _pdfImages[i];
-            image.Width = width;
-            image.Height = height;
-            image.Source = null;
             _pdfTops[i] = top;
             _pdfHeights[i] = height;
-            top += height + PdfPages.Spacing;
+            top += height + PdfPageSpacing;
         }
+        PdfPages.Width = width;
+        PdfPages.Height = Math.Max(0, top - PdfPageSpacing);
+        foreach (var (index, image) in _pdfImages) PositionPdfPage(index, image);
 
         UpdatePdfViewport();
+    }
+
+    private void PositionPdfPage(int index, Image image)
+    {
+        image.Width = _pdfLayoutWidth;
+        image.Height = _pdfHeights[index];
+        Canvas.SetTop(image, _pdfTops[index]);
     }
 
     private void PdfView_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e) => UpdatePdfViewport();
@@ -979,7 +1029,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     /// </summary>
     private void UpdatePdfViewport()
     {
-        if (_preparingPdf || _pdf == null || _pdfImages.Count == 0 || !PdfView.IsLoaded) return;
+        if (_preparingPdf || _pdf == null || _pdfLayoutWidth <= 0 || !PdfView.IsLoaded) return;
 
         var viewTop = PdfView.VerticalOffset / PdfView.ZoomFactor;
         var viewBottom = viewTop + PdfView.ViewportHeight / PdfView.ZoomFactor;
@@ -989,11 +1039,12 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         var keep = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop - margin * 2, viewBottom + margin * 2);
         var visible = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop, double.PositiveInfinity);
         var firstVisible = visible.IsEmpty ? -1 : visible.First;
-        foreach (var i in _pdfRenderedPages.ToArray())
+        foreach (var (i, image) in _pdfImages)
         {
             if (i < keep.First || i >= keep.EndExclusive)
             {
-                _pdfImages[i].Source = null;
+                PdfPages.Children.Remove(image);
+                _pdfImages.Remove(i);
                 _pdfRenderedPages.Remove(i);
             }
         }
@@ -1046,14 +1097,20 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         var cancellation = _contentCancellation.Token;
         try
         {
-            if (document == null || index >= _pdfImages.Count) return false;
+            if (document == null || index >= _pdfAspects.Count) return false;
 
             var scale = ContentHost.XamlRoot?.RasterizationScale ?? 1.0;
-            var targetWidth = (uint)Math.Clamp(_pdfLayoutWidth * scale, 480, 3072);
-
             using var page = document.GetPage((uint)index);
+            var aspect = PdfAspect(page.Size);
+            var maxWidth = Math.Min(3072, Math.Min(4096 / aspect, Math.Sqrt(8_000_000 / aspect)));
+            var targetWidth = (uint)Math.Max(1, Math.Min(maxWidth, Math.Max(480, layoutWidth * scale)));
+            var targetHeight = (uint)Math.Clamp(Math.Round(targetWidth * aspect), 1, 4096);
             using var stream = new InMemoryRandomAccessStream();
-            await page.RenderToStreamAsync(stream, new PdfPageRenderOptions { DestinationWidth = targetWidth }).AsTask(cancellation);
+            await page.RenderToStreamAsync(stream, new PdfPageRenderOptions
+            {
+                DestinationWidth = targetWidth,
+                DestinationHeight = targetHeight,
+            }).AsTask(cancellation);
             stream.Seek(0);
 
             var bitmap = new BitmapImage();
@@ -1061,7 +1118,14 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             if (token != _loadToken || document != _pdf) return false;
             if (Math.Abs(layoutWidth - _pdfLayoutWidth) >= .5) return true; // A resize invalidated this bitmap; render the current width next.
 
-            _pdfImages[index].Source = bitmap;
+            if (!_pdfImages.TryGetValue(index, out var image))
+            {
+                image = new Image { Stretch = Stretch.Uniform, Tag = index };
+                PositionPdfPage(index, image);
+                _pdfImages.Add(index, image);
+                PdfPages.Children.Add(image);
+            }
+            image.Source = bitmap;
             _pdfRenderedPages.Add(index);
             return true;
         }
@@ -1081,12 +1145,12 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         var range = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop, viewBottom);
         for (var i = range.First; i < range.EndExclusive; i++)
         {
-            if (_pdfImages[i].Source == null) return i;
+            if (!_pdfRenderedPages.Contains(i)) return i;
         }
         var margin = PdfView.ViewportHeight / PdfView.ZoomFactor;
         range = PdfPageRange.Find(_pdfTops, _pdfHeights, viewTop - margin, viewBottom + margin);
         for (var i = range.First; i < range.EndExclusive; i++)
-            if (_pdfImages[i].Source == null) return i;
+            if (!_pdfRenderedPages.Contains(i)) return i;
         return -1;
     }
 
@@ -1281,7 +1345,9 @@ internal static class FilePreviewService
     /// <summary>启动时在屏幕外创建并渲染一次窗口，第一次按空格就不用现场创建。</summary>
     internal static void Warmup()
     {
-        (_window ??= Create()).Warmup();
+        if (_window != null) return;
+        _window = Create();
+        _window.Warmup();
 #if DEBUG
         _window.StartPreviewLayoutCapture();
 #endif
@@ -1296,12 +1362,14 @@ internal static class FilePreviewService
     /// <summary>选中项读取完成后调用：有项目就切到第一个并加载内容；没有就收起还停在加载状态的窗口。</summary>
     internal static void ShowSelection(IReadOnlyList<string> paths)
     {
-        if (_window is not { } window) return;
+        if (_window is not { IsPending: true } window) return;
         if (paths.Count == 0)
             window.HideIfPending();
         else
             window.ShowAt(paths, 0);
     }
+
+    internal static void CancelPendingSelection() => _window?.HideIfPending();
 
     /// <summary>
     /// 空格的语义：没开就呼出；已经在看这个文件就收起；看的是别的文件就切过去。

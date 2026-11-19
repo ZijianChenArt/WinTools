@@ -34,6 +34,7 @@ public sealed partial class FilePreviewWindow
             _capturingPreviewLayouts = true;
             await Task.Delay(2500);
             await CaptureRasterChecksAsync(root);
+            await CaptureVirtualPdfChecksAsync(root);
             foreach (var name in new[] { "sample.md", "sample.txt", "empty.txt", "sample.zip", "small.zip", "empty.zip", "sample-folder",
                 "data.csv", "book.xlsx", "data.json", "broken.json", "large.json", "sample.docx", "slides.pptx", "sample.doc", "slides.ppt", "sample.html", "sample.obj", "textured.obj", "sample.fbx", "ascii.fbx", "complex.fbx", "broken.fbx", "sample.pdf", "sample.svg", "tiny.png", "sample.blend", "sample.wav", "sample.mp4", "portrait.mp4" })
             {
@@ -61,7 +62,7 @@ public sealed partial class FilePreviewWindow
                 var loadMs = loadingClock.Elapsed.TotalMilliseconds;
                 while (loadingClock.Elapsed.TotalSeconds < 12 && FallbackPanel.Visibility != Visibility.Visible
                     && ((name.EndsWith(".html") && HtmlView.Visibility != Visibility.Visible)
-                        || (name.EndsWith(".pdf") && (_pdfImages.Count == 0 || _pdfImages[0].Source == null))
+                        || (name.EndsWith(".pdf") && !_pdfRenderedPages.Contains(0))
                         || (name.EndsWith(".png") && _contentSize == null)
                         || (name.EndsWith(".mp4") && !_mediaReady)))
                     await Task.Delay(10);
@@ -177,6 +178,35 @@ public sealed partial class FilePreviewWindow
         }));
     }
 
+    private async Task CaptureVirtualPdfChecksAsync(string root)
+    {
+        var path = Path.Combine(root, "qa-virtualized.pdf");
+        if (!File.Exists(path)) return;
+        _paths = new[] { path };
+        _index = 0;
+        Present();
+        await LoadCurrentAsync();
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed.TotalSeconds < 8 && !_pdfRenderedPages.Contains(0)) await Task.Delay(25);
+        if (_pdf == null || !_pdfRenderedPages.Contains(0) || _pdfImages.Count >= _pdf.PageCount)
+            throw new InvalidOperationException("The first PDF page did not render with a bounded visual tree.");
+        var pageCount = _pdf.PageCount;
+        var initialImages = _pdfImages.Count;
+        PdfView.ChangeView(null, PdfView.ScrollableHeight, null, disableAnimation: true);
+        while (clock.Elapsed.TotalSeconds < 12 && !_pdfRenderedPages.Contains((int)pageCount - 1)) await Task.Delay(25);
+        if (!_pdfRenderedPages.Contains((int)pageCount - 1) || _pdfImages.ContainsKey(0))
+            throw new InvalidOperationException("The final PDF page did not render, or the first page was retained off screen.");
+        await CapturePreviewFrameAsync(root, "virtual-pdf-last-page.png");
+        var finalImages = _pdfImages.Count;
+        HideWindow(immediate: true);
+        if (_pdfImages.Count != 0 || PdfPages.Children.Count != 0)
+            throw new InvalidOperationException("Closing the PDF retained a page visual.");
+        File.WriteAllText(Path.Combine(root, "virtual-pdf-report.json"), JsonSerializer.Serialize(new
+        {
+            pageCount, initialImages, finalImages,
+        }));
+    }
+
     private async Task CapturePreviewSwitchChecksAsync(string root)
     {
         var pdf = Path.Combine(root, "sample.pdf");
@@ -187,8 +217,8 @@ public sealed partial class FilePreviewWindow
         var latest = LoadCurrentAsync();
         await Task.WhenAll(previous, latest);
         var deadline = Stopwatch.StartNew();
-        while (deadline.Elapsed.TotalSeconds < 3 && (_pdfImages.Count == 0 || _pdfImages[0].Source == null)) await Task.Delay(10);
-        var pdfReady = _pdfPath == pdf && _pdfImages.Count > 0 && _pdfImages[0].Source != null;
+        while (deadline.Elapsed.TotalSeconds < 3 && !_pdfRenderedPages.Contains(0)) await Task.Delay(10);
+        var pdfReady = _pdfPath == pdf && _pdfRenderedPages.Contains(0);
         var html = Path.Combine(root, "sample.html");
         var model = Path.Combine(root, "sample.obj");
         var modelReady = false;

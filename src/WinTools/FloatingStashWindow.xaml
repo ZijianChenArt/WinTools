@@ -56,7 +56,7 @@
                                         <Grid>
                                             <Image Source="{x:Bind Icon, Mode=OneWay}" Stretch="Uniform"
                                                    Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                            <Image Source="{x:Bind Preview, Mode=OneWay}" Stretch="Uniform"/>
+                                            <Image Source="{x:Bind Thumbnail, Mode=OneWay}" Stretch="Uniform"/>
                                         </Grid>
                                     </Border>
                                     <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
