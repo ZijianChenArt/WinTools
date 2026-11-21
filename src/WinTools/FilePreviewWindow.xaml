@@ -7,7 +7,7 @@
 <Window
     x:Class="WinTools.FilePreviewWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:WinTools"
     xmlns:controls="using:Microsoft.UI.Xaml.Controls"
     Title="文件预览">
 
@@ -30,7 +30,7 @@
                 <Button x:Name="WrapButton" Content="自动换行" Style="{StaticResource PreviewActionStyle}" Visibility="Collapsed"
                         Click="WrapButton_Click" ToolTipService.ToolTip="切换长行自动换行"/>
                 <Button x:Name="ListUpButton" Content="上一级" Style="{StaticResource PreviewActionStyle}" Visibility="Collapsed" Click="ListUpButton_Click"/>
-                <ComboBox x:Name="SheetSelector" Style="{StaticResource PreviewSheetSelectorStyle}" Visibility="Collapsed"
+                <local:RoundedComboBox x:Name="SheetSelector" Style="{StaticResource PreviewSheetSelectorStyle}" Visibility="Collapsed"
                           SelectionChanged="SheetSelector_SelectionChanged" AutomationProperties.Name="工作表"/>
             </StackPanel>
             <TextBlock x:Name="ViewStatus" Visibility="Collapsed" Grid.Column="1" Style="{StaticResource PreviewViewStatusStyle}"/>

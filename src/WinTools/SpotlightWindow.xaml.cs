@@ -209,23 +209,23 @@ public sealed partial class SpotlightWindow : Window, IUiStyleShell
             QueryBox.Text = "";
             _suppressTextChanged = false;
 
-            // 先按缓存索引渲染一次（通常已经有了），窗口立刻可用；
-            // 索引过期时后台重建完成后再刷新一次列表。
-            ApplyQuery("");
-
-            WindowHelper.SetWindowCloak(this, true);
             PositionWindow();
             Activate();
             _isVisible = true;
 
             // 全局快捷键触发时本进程拿得到前台权限，这一步保证输入框真的能收到按键。
             try { SetForegroundWindow(WindowNativeHandle); } catch { /* ignore */ }
-            WindowHelper.UncloakWhenRendered(this);
+            WindowHelper.SetWindowCloak(this, false);
 
             QueryBox.Focus(FocusState.Programmatic);
             QueryBox.SelectAll();
 
-            _ = RefreshIndexAsync();
+            WindowHelper.WhenRendered(this, () =>
+            {
+                if (!_isVisible) return;
+                ApplyQuery(QueryBox.Text);
+                _ = RefreshIndexAsync();
+            }, framesToWait: 1);
         }
         catch (Exception ex)
         {

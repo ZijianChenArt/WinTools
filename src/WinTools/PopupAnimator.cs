@@ -13,6 +13,7 @@ namespace WinTools;
 /// 任务栏弹出窗口的出现 / 收起动效：Win11 任务栏弹出面板的节奏——从下方滑入并淡入，收起时下沉淡出。
 /// 透明度必须做在窗口级（WS_EX_LAYERED + SetLayeredWindowAttributes）：弹窗的可见外观由 Mica 背景画出，
 /// 它在 XAML 内容之下，改 XAML Opacity 对它无效。分层样式与 Mica 不能共存，所以只在动画期间挂上。
+/// 需要全程保留 Mica 的窗口可以只移动窗口。
 /// </summary>
 internal sealed class PopupAnimator
 {
@@ -20,6 +21,7 @@ internal sealed class PopupAnimator
     private readonly int _closeDurationMs;
     private readonly int _slideDip;
     private readonly bool _independentOpacity;
+    private readonly bool _fade;
     private readonly object _opacityGate = new();
     private CancellationTokenSource? _opacityCancellation;
 
@@ -36,13 +38,15 @@ internal sealed class PopupAnimator
     private int _restY;
     private int _slidePx;
 
-    internal PopupAnimator(Window window, int openDurationMs = 250, int closeDurationMs = 150, int slideDip = 12, bool independentOpacity = false)
+    internal PopupAnimator(Window window, int openDurationMs = 250, int closeDurationMs = 150, int slideDip = 12,
+        bool independentOpacity = false, bool fade = true)
     {
         _window = window;
         _openDurationMs = openDurationMs;
         _closeDurationMs = closeDurationMs;
         _slideDip = slideDip;
         _independentOpacity = independentOpacity;
+        _fade = fade;
     }
 
     /// <summary>正在播放收起动画。</summary>
@@ -74,6 +78,7 @@ internal sealed class PopupAnimator
         _revealPending = true;
         _restY = restY;
         _slidePx = (int)Math.Round(_slideDip * scale);
+        if (!_fade) return;
         SetLayered(true);
         SetAlpha(initialAlpha);
     }
@@ -83,8 +88,8 @@ internal sealed class PopupAnimator
     {
         if (!_revealPending) return; // 期间已被 Reset 或收起，放弃这次入场
         _revealPending = false;
-        Animate(RevealStartY, _restY, _alpha, 255, _openDurationMs, EaseOut,
-            () => { SetLayered(false); Revealed?.Invoke(); }); // 终点不透明：立刻摘掉分层，把 Mica 还回来
+        Animate(_fade ? RevealStartY : _window.AppWindow.Position.Y, _restY, _alpha, 255, _openDurationMs, EaseOut,
+            () => { if (_fade) SetLayered(false); Revealed?.Invoke(); });
     }
 
     /// <summary>下沉淡出，结束后调用 <paramref name="hide"/> 真正隐藏窗口。</summary>
@@ -96,10 +101,11 @@ internal sealed class PopupAnimator
         _revealPending = false;
         _slidePx = (int)Math.Round(_slideDip * scale);
         IsHiding = true;
-        Animate(fromY, baseY + _slidePx, _alpha, 0, _closeDurationMs, EaseIn, () =>
+        Animate(fromY, baseY + _slidePx, _alpha, _fade ? (byte)0 : _alpha, _closeDurationMs, EaseIn, () =>
         {
             IsHiding = false;
             hide();
+            if (!_fade) return;
             // 隐藏之后再恢复不透明，顺序反了会在末尾闪一下完整弹窗。
             SetAlpha(255);
             SetLayered(false);
@@ -112,6 +118,7 @@ internal sealed class PopupAnimator
         Stop();
         _revealPending = false;
         IsHiding = false;
+        if (!_fade) return;
         try
         {
             SetAlpha(255);
@@ -147,9 +154,12 @@ internal sealed class PopupAnimator
         Stop();
         try
         {
-            SetLayered(true);
-            SetAlpha(fromAlpha);
-            if (_independentOpacity && fromY == toY)
+            if (_fade)
+            {
+                SetLayered(true);
+                SetAlpha(fromAlpha);
+            }
+            if (_fade && _independentOpacity && fromY == toY)
             {
                 AnimateOpacity(fromAlpha, toAlpha, durationMs, ease, completed);
                 return;

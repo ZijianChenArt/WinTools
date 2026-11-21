@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using WinTools.Services;
@@ -16,7 +17,8 @@ public sealed partial class MainWindow
     internal const string VoiceBallHotkeyKey = "VoiceBall";
 
     // 设置页文案与其他页一致：一句话、不带句号、不写实现细节（像素、缩放比例等）。
-    private const string VoiceBallHotkeyDescription = "点击小球时发送的快捷键，默认 Win+H 为 Windows 语音输入";
+    private const string VoiceBallHotkeyDescription = "两个入口共用的快捷键，默认 Win+H 为 Windows 语音输入";
+    private bool _loadingVoiceSwitches;
     private const string VoiceBallHotkeyInvalidDescription = "无法识别此快捷键，请使用 Ctrl+Shift+V 这样的格式";
     private const string VoiceBallPositionDefaultDescription = "默认显示在输入光标下方，拖动小球可调整位置";
     private const string VoiceBallPositionCustomDescription = "已使用自定义位置，拖动小球可重新调整";
@@ -32,25 +34,46 @@ public sealed partial class MainWindow
 
     private void LoadVoiceBallFromConfig()
     {
-        _isLoadingDragStashSettings = true;
-
-        if (VoiceBallToggle != null) VoiceBallToggle.IsOn = _config.EnableVoiceBall;
+        LoadVoiceInputSwitches();
         if (HotkeyVoiceBallBox != null) HotkeyVoiceBallBox.Text = GetVoiceBallHotkey();
         UpdateVoiceBallHotkeyStatus(GetVoiceBallHotkey());
         UpdateVoiceBallPositionCard();
+    }
 
-        _isLoadingDragStashSettings = false;
+    private void LoadVoiceInputSwitches()
+    {
+        _loadingVoiceSwitches = true;
+        try
+        {
+            TaskbarControl<ToggleSwitch>("VoiceInputToggle").IsOn = _config.EnableVoiceInput;
+            VoiceBallToggle.IsOn = _config.EnableVoiceBall;
+            VoiceBallToggle.IsEnabled = _config.EnableVoiceInput;
+            TaskbarControl<SettingsCard>("VoiceBallDisplayCard").Description =
+                _config.EnableVoiceInput ? "聚焦可编辑文本框时显示" : "需先启用语音输入";
+        }
+        finally { _loadingVoiceSwitches = false; }
+    }
+
+    internal void VoiceInputToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loadingVoiceSwitches || _isLoadingDragStashSettings) return;
+        _config.EnableVoiceInput = ((ToggleSwitch)sender).IsOn;
+        LoadVoiceInputSwitches();
+        ApplyVoiceInputPreferences();
     }
 
     internal void VoiceBallToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (_isLoadingDragStashSettings) return;
+        if (_loadingVoiceSwitches || _isLoadingDragStashSettings) return;
+        _config.EnableVoiceBall = ((ToggleSwitch)sender).IsOn;
+        ApplyVoiceInputPreferences();
+    }
 
-        var enabled = ((ToggleSwitch)sender).IsOn;
-        _config.EnableVoiceBall = enabled;
-        ConfigService.Update(c => c.EnableVoiceBall = enabled);
-
-        (App.Current as App)?.SetVoiceBallEnabled(enabled, GetVoiceBallHotkey(), GetVoiceBallOffset(_config));
+    private void ApplyVoiceInputPreferences()
+    {
+        SettingsService.Instance.FlushNow();
+        (App.Current as App)?.SetVoiceBallEnabled(
+            _config.EnableVoiceInput && _config.EnableVoiceBall, GetVoiceBallHotkey(), GetVoiceBallOffset(_config));
         UpdateNavStatusIndicators();
     }
 

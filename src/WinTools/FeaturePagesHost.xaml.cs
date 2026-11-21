@@ -20,9 +20,17 @@ public sealed partial class FeaturePagesHost : UserControl
     private void ClaudeComplete_Click(object sender, RoutedEventArgs e) => Owner?.ClaudeComplete_Click(sender, e);
     private void ClaudeDisconnect_Click(object sender, RoutedEventArgs e) => Owner?.ClaudeDisconnect_Click(sender, e);
     private void TaskbarEntry_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarEntry_Toggled(sender, e);
+    private void TaskbarShortcuts_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args) =>
+        Owner?.TaskbarShortcuts_DragItemsCompleted(sender, args);
+    private void ClipboardRecording_Toggled(object sender, RoutedEventArgs e) => Owner?.ClipboardRecording_Toggled(sender, e);
     private void TaskbarInfoToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarInfoToggle_Toggled(sender, e);
+    private void TaskbarShortcutsToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.TaskbarShortcutsToggle_Toggled(sender, e);
 
-    public FeaturePagesHost() => InitializeComponent();
+    public FeaturePagesHost()
+    {
+        InitializeComponent();
+        ListScrollbar.Attach(ZonesScrollBar, ZonesListView);
+    }
 
     /// <summary>内容列的最大宽度；超出部分平均分到左右两侧，使内容居中。</summary>
     private const double MaxContentWidth = 1000;
@@ -34,11 +42,10 @@ public sealed partial class FeaturePagesHost : UserControl
     private static readonly Thickness CompactPagePadding = new(20, 16, 20, 20);
 
     private bool? _compact;
+    private double _scrollOverhang = -1;
 
     /// <summary>
-    /// 窗口宽度变化时做两件事：
-    /// 1) 把多余宽度平分到内容列两侧 —— 窗口很宽时内容居中，而不是贴在左边；
-    /// 2) 窄窗口切换到紧凑排版（留白收紧、命令栏收成图标），否则标题、开关、命令栏会互相挤。
+    /// 窗口宽度变化时居中内容列，更新滚动条贴边距离，并按需切换紧凑排版。
     /// 这些必须用代码算：WinUI 的 Stretch + MaxWidth 会按内容宽度算居中偏移，每页都不一样。
     /// </summary>
     private void PageColumns_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -49,9 +56,28 @@ public sealed partial class FeaturePagesHost : UserControl
             ContentLeadingColumn.Width = new GridLength(leading);
 
         var compact = width < CompactWidth;
-        if (_compact == compact) return;
-        _compact = compact;
-        ApplyDensity(compact);
+        if (_compact != compact)
+        {
+            _compact = compact;
+            ApplyDensity(compact);
+        }
+
+        var padding = compact ? CompactPagePadding : RegularPagePadding;
+        var overhang = leading + padding.Right - 4;
+        if (Math.Abs(_scrollOverhang - overhang) < 0.5) return;
+        _scrollOverhang = overhang;
+        var scrollStyle = Application.Current.Resources["PageBodyScrollStyle"];
+        foreach (var child in PageColumns.Children)
+        {
+            if (child is not Grid page) continue;
+            foreach (var body in page.Children)
+            {
+                if (body is not ScrollViewer viewer || !ReferenceEquals(viewer.Style, scrollStyle)) continue;
+                // 负边距扩展滚动区域，等量内边距保持居中的正文宽度。
+                viewer.Margin = new Thickness(0, 0, -overhang, 0);
+                viewer.Padding = new Thickness(0, 0, overhang, viewer.Padding.Bottom);
+            }
+        }
     }
 
     private void ApplyDensity(bool compact)
@@ -152,6 +178,7 @@ public sealed partial class FeaturePagesHost : UserControl
     private void Spotlight_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_ApplyHotkey_Click(sender, e);
     private void Spotlight_RebuildIndex_Click(object sender, RoutedEventArgs e) => Owner?.Spotlight_RebuildIndex_Click(sender, e);
     private void VoiceBallToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.VoiceBallToggle_Toggled(sender, e);
+    private void VoiceInputToggle_Toggled(object sender, RoutedEventArgs e) => Owner?.VoiceInputToggle_Toggled(sender, e);
     private void VoiceBall_ApplyHotkey_Click(object sender, RoutedEventArgs e) => Owner?.VoiceBall_ApplyHotkey_Click(sender, e);
     private void VoiceBall_ResetPosition_Click(object sender, RoutedEventArgs e) => Owner?.VoiceBall_ResetPosition_Click(sender, e);
     private void ThemeRadioButtons_SelectionChanged(object sender, SelectionChangedEventArgs e) => Owner?.ThemeRadioButtons_SelectionChanged(sender, e);

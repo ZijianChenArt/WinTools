@@ -33,6 +33,12 @@ public sealed partial class FilePreviewWindow
         {
             _capturingPreviewLayouts = true;
             await Task.Delay(2500);
+            ShowPending();
+            await Task.Delay(100);
+            if (!IsPending || !AppWindow.IsVisible || !LoadingRing.IsActive || LoadingRing.Visibility != Visibility.Visible)
+                throw new InvalidOperationException("The loading shell was not visible while waiting for the selection.");
+            await CapturePreviewFrameAsync(root, "pending-selection.png");
+            HideWindow(immediate: true);
             await CaptureRasterChecksAsync(root);
             await CaptureVirtualPdfChecksAsync(root);
             foreach (var name in new[] { "sample.md", "sample.txt", "empty.txt", "sample.zip", "small.zip", "empty.zip", "sample-folder",

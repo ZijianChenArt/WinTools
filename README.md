@@ -126,7 +126,7 @@ flowchart TD
 | Windows SDK | 本机为 `10.0.26100.0`；原生项目默认指定 `10.0.22621.0`，所以必须显式覆盖 |
 | Inno Setup 6 | 打安装包用：`winget install JRSoftware.InnoSetup` |
 | GitHub CLI | 创建 Release 用：`gh auth status` 应显示已登录 `ZijianChenArt` |
-| 目标系统 | 主程序最低 Windows 10 1809（`TargetPlatformMinVersion` 10.0.17763.0），TFM `net10.0-windows10.0.22621.0` |
+| 目标系统 | 主程序最低 Windows 10 1809（`TargetPlatformMinVersion` 10.0.17763.0），TFM `net10.0-windows10.0.26100.0` |
 
 ### 2.2 Debug 构建（两步，缺一不可，顺序不能反）
 
@@ -145,7 +145,7 @@ dotnet build src/WinTools/WinTools.csproj -c Debug -p:Platform=x64
 
 - 命令在仓库根目录的 PowerShell 中执行。其它机器按已安装的 SDK 调整 `WindowsTargetPlatformVersion`；
   此覆盖只选择原生扩展的构建工具，不修改主程序的最低系统版本。
-- 调试产物：`src/WinTools/bin/x64/Debug/net10.0-windows10.0.22621.0/WinTools.exe`
+- 调试产物：`src/WinTools/bin/x64/Debug/net10.0-windows10.0.26100.0/WinTools.exe`
 - 机器没有联网时 `dotnet` 会输出 `NU1900`（拉不到漏洞数据）警告，可忽略。
 - **不要开启** `PublishTrimmed` / `PublishReadyToRun`：WinUI 3 会崩。
 
@@ -594,11 +594,10 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 
 | 用途 | 值 | 来源 |
 | --- | --- | --- |
-| 内容区（唯一的大圆角，只有左上角） | 12 | `MainWindow.xaml` 的 `ContentFrame` |
+| 主窗口内容区、悬停提示和浮层 | 12 | `App.xaml` 的 `OverlayCornerRadius` |
 | 卡片、列表容器、编辑面板 | 10 | `PageCardStyle` / `PageCardCornerRadius` |
 | 卡片内部的小块（磁贴、标签、拖放区、行内小按钮） | 8 | `PageTileStyle` / `PageInnerCornerRadius` |
 | 普通控件（按钮、输入框） | 10 | `App.xaml` 的 `ControlCornerRadius` |
-| 浮层窗口 | 12 | `App.xaml` 的 `OverlayCornerRadius` |
 
 所有可点击元素的悬浮、按下和焦点底框也必须服从同一层级：普通按钮、AppBar、菜单项、
 下拉按钮和超链接用 10px；`ListViewItem`、`GridViewItem`、`ComboBoxItem` 等卡片内部选择项
@@ -615,6 +614,8 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 `CornerRadius="0"`、`BorderThickness="0"`，不得再叠一层 XAML 圆角或描边。DWM 边缘颜色要与
 卡片表面 RGB 一致，不能用透明边框，否则部分多屏 / DPI 组合会在顶部圆角端点留下亮点。
 卡片内部磁贴仍用 8px。
+
+WinUI 纵向滚动条共用约 6 DIP 的圆角滑块，HTML 预览使用同宽的网页滑块。全宽设置页的滚动条靠主窗口内容区右边缘。桌面分区的卡片栏和剪贴板历史各用独立右侧列，滑块随对应列表移动。内容可滚动时滑块保持可见。
 
 ### 5.5.1 快捷键与元素取舍
 
@@ -641,7 +642,7 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 - [ ] 列表工具条是 `PageToolbarButtonStyle` 按钮 + 「更多」菜单，没有 `CommandBar`
 - [ ] 页面里没有写死的 `Margin` / `Padding` / `CornerRadius` / `FontSize`，也没有 `MaxWidth`
 - [ ] 列表撑满主体高度，且有空状态提示
-- [ ] 圆角：内容区 12（仅左上）、卡片 10、内部小块 8
+- [ ] 圆角：内容区及悬停提示 12、卡片 10、内部小块 8
 - [ ] **窗口最大化后逐页切换**，标题左边距、顶部位置不跳动
 - [ ] 内容区颜色只比外壳深一档，圆角缺口没有第三种颜色
 
@@ -738,6 +739,8 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
 
 图标拖动期间暂缓清空源卡片集合，拖动结束后再读取目录变化，以免破坏拖动状态。
 
+桌面图标处于显示状态时，系统正在编辑图标名称会暂缓同步。图标隐藏时，在桌面新建使用系统默认名称的文件夹，分区会在桌面仍处于前台时打开重命名输入框，确认后按新名称同步。
+
 `DesktopCardWindow.RefreshContent` 按路径复用旧的 `CardItem`，保留已加载的图标；图标解析
 结果另有一层进程内缓存（键为路径 + 最后写入时间，上限 512 条）。桌面动一个文件不该让
 整张卡片重新走一遍 Shell / `WScript.Shell` 图标解析（单个 `.lnk` 几十毫秒）。
@@ -777,7 +780,7 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   - 菜单**每次右键现建**，关闭即释放。**不要放回 DataTemplate**：每个图标各带一份菜单，
     71 个图标实测多占约 4MB。
 - **重命名**（2026-09-18）：弹出一个 240dip 宽的输入框（回车确认、Esc 取消），不做资源管理器式
-  的就地编辑——格子只有 76dip 宽看不全名字，按下去还会先被 GridView 当成拖动起手。编辑的是
+  的就地编辑——格子只有 76dip 宽看不全名字，按下去还会先被 GridView 当成拖动起手。弹层以图标为锚点，由系统按屏幕边缘安排位置，不受窄卡片边界约束；弹层无描边，四边留 4 DIP。编辑的是
   **不含扩展名**的名字（与卡片显示一致），提交时拼回原扩展名，`.lnk` 不会被改丢。实际改名走
   `SHFileOperation(FO_RENAME)`，但非法字符、重名、以空格/点结尾都先在托管侧校验，这样能给出
   不同的提示。改完要调 `CardItemOrderStore.Rename` 换掉顺序表里的旧文件名（顺序表按文件名记，
@@ -837,7 +840,7 @@ Mica 风格下**外壳层完全不铺色**（对齐 Windows 设置），只有�
   按矩形高度对齐内容会让最下面的留白被裁掉。`FitHeightToContent` 用 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 核对并向上加高。
   验证别靠肉眼：截图后沿窗口中线取像素，灰框底边下面应有约 8~10px 的窗口底色（深色下 28,30,33），而不是直接变成窗外的颜色。
 - 音频弹窗布局：窗口标题 14 粗体 > 内层淡卡片面板（`CardBackgroundFillColorDefaultBrush`，层级靠它体现，别去掉）> 分组小标题（`PageCaptionTextStyle`，12 次要色，不能与标题同字号）> 下拉框。窗口高度由 `MeasureHeight` 按内容测量，状态文字与「更多声音设置」同一行（不改变高度）。
-- 任务栏的「音频设备」入口恒显示、「记住所选设备」恒开启，设置页与弹窗里都没有对应开关。
+- 任务栏的「音频切换」入口默认开启，在「任务栏信息」的快捷入口中调整；音频设备选择会自动记住。
 - `WS_EX_LAYERED` 与 Mica **不能共存**：常驻分层样式会让卡片彻底失去材质（整窗变成纯色）。
   淡入淡出要用分层透明度，就只能在动画期间临时加、动画一结束立刻摘（见 7.5）。
 
@@ -1130,7 +1133,13 @@ v1.3.40 Debug 构建 0 警告 / 0 错误，Release 安装包构建成功，覆�
   打开所在位置，`Esc` 或失去焦点关闭；没有匹配结果时，`Enter` 直接执行输入内容。
 - 搜索窗口的图标解析复用桌面卡片的 `CardItem` 缓存和 STA 队列，不能另建一套同步 Shell 图标链路。
 
-### 语音小球
+### 剪贴板历史浮窗
+
+剪贴板浮窗把标题、操作状态、清空历史和关闭按钮放在顶部同一行。下方历史列表使用圆角内容区。从任务栏快捷栏或托盘菜单打开时，整扇窗口滑入。再次点击快捷图标、点关闭按钮、按 Esc、复制记录或失焦时下沉收起。Mica 在过渡期间随窗口移动，失焦后继续应用到窗口隐藏。动效遵循 Windows 的动画设置。
+
+### 语音输入
+
+「语音输入」页可分别开启快捷栏麦克风和光标旁的小球，两者共用听写快捷键。关闭语音输入总开关会暂停两个入口，重新开启后恢复各自的选择。麦克风的显示开关在「语音输入」和「任务栏与快捷栏」两页同步。
 
 文本框处于输入状态时，在**输入光标正下方**（放不下就正上方）显示麦克风小球，点一下模拟按下设置里的
 语音快捷键（默认 `Win+H`，可填输入法的组合，允许只有修饰键，如 `Ctrl+Win+Shift`），再点一下再按一次。默认关闭。
@@ -1281,6 +1290,10 @@ Word/PPT 页面转换由 `OfficePreviewRenderer` 启动独立 `--render-office` 
 总计 48 DIP，最大宽度 640 DIP；内容区窄于 480 DIP 时收起音量滑条，保留静音按钮。
 播放栏位于画面外，窗口按比例计算尺寸时计入这 48 DIP。关闭或切换时停止刷新并释放播放器，
 异步媒体事件校验播放器实例和文件加载代次，避免旧视频覆盖新预览。
+
+MP4 通过 FFmpegInteropX 从原文件读取。根据编码选择可用的系统解码器或 FFmpeg 解码，包含 H.264 High 10 支持。播放沿用现有进度和音量控件，关闭或切换文件会释放解码实例和读取流。
+
+FFmpegInteropX 2.1.0 采用 Apache-2.0，FFmpeg 构建 8.1.2 的许可证随程序保存在 `Licenses/FFmpeg`。 [FFmpegInteropX 源码与许可证](https://github.com/ffmpeginteropx/FFmpegInteropX/tree/841fc8e79346a235906f1dbd45be53034b2e2f52) · [FFmpeg 源码](https://git.ffmpeg.org/ffmpeg.git/commit/38b88335f99e76ed89ff3c93f877fdefce736c13)
 
 #### 揭示动画与资源释放
 
@@ -1675,6 +1688,8 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 
 ### 任务栏信息（2026-09-19）
 
+当前设置页名为「任务栏与快捷栏」。「显示快捷栏」与「在任务栏显示额度」分别控制常用功能入口和 Codex / Claude 额度。隐藏快捷栏后保留按钮的显示选择、排序及悬浮位置。旧配置沿用原来的可见状态。
+
 功能图标由 `FeatureIcons.cs` 统一定义，沿用 [Segoe Fluent Icons](https://learn.microsoft.com/en-us/windows/apps/design/iconography/segoe-fluent-icons-font)，缺少该字体时回退 MDL2。侧栏、托盘菜单、搜索与暂存浮窗、语音小球和任务栏使用同一功能映射；桌面卡片用分区网格、暂存用图钉、关联用链接、语音用麦克风；音频设备选择独立为宽文字按钮，不混入功能图标。通用新增、删除、刷新等动作保留原有标准图标。原生任务栏缓存字体矢量轮廓，只在 DPI 改变时重建，并在服务释放时回收。
 
 左侧独立「任务栏信息」功能页：默认开启 Codex / Claude 剩余额度，可整体关闭；不再提供显示内容或自定义文字选项。显示位置支持偏左、居中两个选项，默认偏左；透明线框，不提供底色或偏移设置（悬浮在图标上方时例外，自动加底卡，见下文「小分辨率避让」）。旧版位置字段被忽略，新位置使用 taskbarInfoAlignment 保存。主屏幕底部横向任务栏隐藏或前台全屏时，左侧信息也会隐藏。左侧仍是独立分层窗口，不注入 Explorer；信息区域响应点击，不抢前台输入焦点。
@@ -1715,7 +1730,7 @@ Debug 版，同一台机器交替各跑 2 轮，启动后第 40 秒读数（9 �
 
 `TaskbarInfoService.cs` 管理显示与两分钟刷新，`MainWindow.TaskbarInfo.cs` 管理设置。
 
-任务栏快捷入口：「任务栏信息」页的「快捷入口」可分别开关桌面库、语音小球、音频设备三个入口（配置项 `taskbarShowLibrary` / `taskbarShowStash` / `taskbarShowVoice` / `taskbarShowAudio`，默认全开）。桌面库入口还要求桌面分区已开启；语音小球的入口独立于功能本身，功能关着也能单独显示在任务栏（语音入口直接发送快捷键）。**悬浮暂存没有单独的入口开关（2026-09-30）**：「悬浮暂存」功能开关就是任务栏暂存图标的开关，开则显示图标并可拖文件到图标上方弹出的窗口，关则图标消失；`taskbarShowStash` 配置项已不再使用。入口附带状态：暂存图标右上角显示暂存文件数，语音图标在听写中显示红点，音频入口显示当前默认输出设备名。
+「任务栏信息」的快捷入口可分别开关并上下拖动排序。默认从左到右为桌面库、悬浮暂存、剪贴板、语音小球、音频切换。顺序保存在 `taskbarShortcutOrder`，桌面库和悬浮暂存入口还需要对应功能开启。暂存图标显示文件数，语音图标在听写中显示红点，音频入口用耳机图标打开扬声器和麦克风选择面板。
 
 任务栏按钮与额度分区（2026-11-01）：`TaskbarInfoService.Layout.cs` 每 3 秒（任务栏尺寸变化时立即）用 UI Automation 只读扫描图标位置。「悬浮快捷按钮」是独立开关（`taskbarInfoFloating`，默认开启），不再由 Windows 图标是否冲突决定。「显示位置」仍只有「偏左 / 居中」；Codex / Claude 额度始终留在任务栏，仅快捷按钮悬浮。
 

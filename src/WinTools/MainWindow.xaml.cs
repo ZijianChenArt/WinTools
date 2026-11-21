@@ -124,6 +124,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         public const string DesktopClick = "DesktopClick";
 
         public const string SpacePreview = "SpacePreview";
+        public const string Clipboard = "Clipboard";
 
         public const string Spotlight = "Spotlight";
 
@@ -276,6 +277,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         MainNav.MenuItems.Add(NavGroupFiles);
         MainNav.MenuItems.Add(NavItemSpacePreview);
         MainNav.MenuItems.Add(NavItemDragStash);
+        MainNav.MenuItems.Add(NavItemClipboard);
         MainNav.MenuItems.Add(NavItemSpotlight);
         MainNav.MenuItems.Add(NavItemProgramAssoc);
 
@@ -294,6 +296,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         _contentPanels[NavTags.DesktopOrganize] = ContentDesktopOrganize;
         _contentPanels[NavTags.DesktopClick] = ContentDesktopClick;
         _contentPanels[NavTags.SpacePreview] = ContentSpacePreview;
+        _contentPanels[NavTags.Clipboard] = FeaturePages.GetControl<Grid>("ContentClipboard");
         _contentPanels[NavTags.Spotlight] = ContentSpotlight;
         _contentPanels[NavTags.VoiceBall] = ContentVoiceBall;
         _contentPanels[NavTags.TaskbarInfo] = FeaturePages.GetControl<Grid>("ContentTaskbarInfo");
@@ -490,6 +493,10 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
                 break;
 
+            case NavTags.Clipboard:
+                LoadClipboardHistory();
+                break;
+
             case NavTags.Spotlight:
                 LoadSpotlightFromConfig();
 
@@ -548,7 +555,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         if (CardPreviewToggle != null) CardPreviewToggle.IsOn = _config.EnableCardPreview;
         if (SpotlightToggle != null) SpotlightToggle.IsOn = _config.EnableSpotlight;
         if (HotkeySpotlightBox != null) HotkeySpotlightBox.Text = GetSpotlightHotkey();
-        if (VoiceBallToggle != null) VoiceBallToggle.IsOn = _config.EnableVoiceBall;
+        LoadVoiceInputSwitches();
         if (HotkeyVoiceBallBox != null) HotkeyVoiceBallBox.Text = GetVoiceBallHotkey();
         if (AutoStartToggle != null) AutoStartToggle.IsOn = AutostartService.IsEnabled();
         LoadUpdateSettings();
@@ -795,6 +802,7 @@ public sealed partial class MainWindow : Window, IUiStyleShell
         SetNavDot(NavDotThreeFingerDrag, _config.EnableThreeFingerDrag, onBrush, offBrush);
 
         SetNavDot(NavDotDragStash, _config.EnableDragStash, onBrush, offBrush);
+        SetNavDot(NavDotClipboard, _config.EnableClipboardHistory, onBrush, offBrush);
 
         SetNavDot(NavDotProgramAssoc, _config.EnableProgramAssoc, onBrush, offBrush);
 
@@ -808,8 +816,8 @@ public sealed partial class MainWindow : Window, IUiStyleShell
 
         SetNavDot(NavDotSpotlight, _config.EnableSpotlight, onBrush, offBrush);
 
-        SetNavDot(NavDotVoiceBall, _config.EnableVoiceBall, onBrush, offBrush);
-        SetNavDot(NavDotTaskbarInfo, _config.EnableTaskbarInfo, onBrush, offBrush);
+        SetNavDot(NavDotVoiceBall, _config.EnableVoiceInput, onBrush, offBrush);
+        SetNavDot(NavDotTaskbarInfo, _config.EnableTaskbarInfo || _config.ShowTaskbarShortcuts, onBrush, offBrush);
         SyncTaskbarInfoEntries();
 
 

@@ -23,10 +23,10 @@ internal sealed partial class TaskbarInfoService
 
     private void DrawFeatureIcons(Graphics graphics, Brush brush, float scale, int height)
     {
-        if (_shownIcons.Length == 0 && _deviceWidth <= 0) return;
+        if (_shownIcons.Length == 0) return;
         if (_featureIconPaths == null)
         {
-            var glyphs = new[] { FeatureIcons.DesktopCards, FeatureIcons.DragStash, FeatureIcons.Voice, FeatureIcons.AudioDevices, FeatureIcons.More };
+            var glyphs = new[] { FeatureIcons.DesktopCards, FeatureIcons.DragStash, FeatureIcons.Voice, FeatureIcons.AudioDevices, FeatureIcons.More, FeatureIcons.Clipboard };
             _featureIconPaths = new GraphicsPath[glyphs.Length];
             using var font = new FontFamily(FeatureIcons.FontName);
             for (var index = 0; index < glyphs.Length; index++)
@@ -46,15 +46,7 @@ internal sealed partial class TaskbarInfoService
             var state = graphics.Save();
             graphics.TranslateTransform(_buttonStart + (slot + .5f) * _buttonWidth, height / 2f);
             graphics.ScaleTransform(scale, scale);
-            graphics.FillPath(brush, _featureIconPaths[id == MenuId ? 4 : id]);
-            graphics.Restore(state);
-        }
-        if (_deviceWidth > 0)
-        {
-            var state = graphics.Save();
-            graphics.TranslateTransform(_deviceIconCenter, height / 2f);
-            graphics.ScaleTransform(scale, scale);
-            graphics.FillPath(brush, _featureIconPaths[3]);
+            graphics.FillPath(brush, _featureIconPaths[id switch { MenuId => 4, ClipboardId => 5, _ => id }]);
             graphics.Restore(state);
         }
     }

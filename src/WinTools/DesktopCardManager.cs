@@ -37,6 +37,7 @@ public sealed class DesktopCardManager : IDisposable
     private readonly DispatcherQueueTimer _foregroundWatchTimer;
     private readonly DispatcherQueueTimer _layoutTimer;
     private FileSystemWatcher? _desktopWatcher;
+    private string? _newDesktopFolder;
     private bool _raisedByHotkey;
     /// <summary>这次是靠左时当分区库抬起来的：收起也要和分区库一样直接放回，不播动画。</summary>
     private bool _raisedAsLibrary;
@@ -133,6 +134,7 @@ public sealed class DesktopCardManager : IDisposable
         _scanVersion++;
         var transitionVersion = ++_enabledTransitionVersion;
         _enabled = enabled;
+        if (!enabled) _newDesktopFolder = null;
         if (_sourceManager == null) DesktopIconVisibilityService.SetHidden(enabled);
         if (enabled)
         {
@@ -236,7 +238,8 @@ public sealed class DesktopCardManager : IDisposable
     private async Task RefreshDesktopSnapshotAsync()
     {
         if (_disposed || !HasVisibleCards) return;
-        if (_scanningDesktop || _syncing)
+        if (_scanningDesktop || _syncing || (_enabled && !DesktopIconVisibilityService.AreIconsHidden
+            && DesktopIconVisibilityService.IsEditingIconName()))
         {
             _desktopChangeTimer.Start();
             return;
@@ -270,6 +273,16 @@ public sealed class DesktopCardManager : IDisposable
             {
                 DesktopIconVisibilityService.SetHidden(true);
                 SyncCards(sorted);
+                if (_newDesktopFolder is { } newFolder)
+                {
+                    _newDesktopFolder = null;
+                    await _revealTask;
+                    if (!_disposed && _enabled && DesktopClickService.IsDesktopForeground() && Directory.Exists(newFolder))
+                    {
+                        foreach (var card in _cards.Values)
+                            if (card.TryBeginNewFolderRename(newFolder)) break;
+                    }
+                }
             }
             else if (_libraryManager?._enabled == true)
                 _libraryManager.SyncCards(sorted);
@@ -441,7 +454,12 @@ public sealed class DesktopCardManager : IDisposable
             };
             FileSystemEventHandler changed = (_, _) => QueueDesktopSync();
             RenamedEventHandler renamed = (_, _) => QueueDesktopSync();
-            _desktopWatcher.Created += changed;
+            _desktopWatcher.Created += (_, args) =>
+            {
+                var path = args.FullPath;
+                var newFolder = DesktopIconVisibilityService.IsDefaultFolderName(Path.GetFileName(path)) && Directory.Exists(path);
+                QueueDesktopSync(newFolder ? path : null);
+            };
             _desktopWatcher.Deleted += changed;
             _desktopWatcher.Renamed += renamed;
         }
@@ -452,11 +470,13 @@ public sealed class DesktopCardManager : IDisposable
         }
     }
 
-    private void QueueDesktopSync()
+    private void QueueDesktopSync(string? newFolder = null)
     {
         _dispatcherQueue.TryEnqueue(() =>
         {
             if (_disposed) return;
+            if (newFolder != null && _enabled && DesktopIconVisibilityService.AreIconsHidden)
+                _newDesktopFolder = newFolder;
             _scanVersion++;
             _desktopChangeTimer.Stop();
             _desktopChangeTimer.Start();

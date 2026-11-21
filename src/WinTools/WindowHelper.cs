@@ -16,8 +16,20 @@ namespace WinTools;
 /// <summary>窗口通用辅助：标题栏、尺寸适配与 Mica 材质。</summary>
 public static class WindowHelper
 {
-    /// <summary>任务栏弹出窗口（暂存、音频设备）下沿到任务栏上沿的间距，统一取 Win11 弹出面板的 12 DIP。</summary>
+    /// <summary>任务栏弹出窗口下沿到任务栏上沿的间距，统一取 Win11 弹出面板的 12 DIP。</summary>
     internal const int TaskbarPopupGapDip = 12;
+
+    internal static double GetPopupScale(Window window, PointInt32 anchor)
+    {
+        var monitor = MonitorFromPoint(anchor, 2); // MONITOR_DEFAULTTONEAREST
+        if (monitor != IntPtr.Zero && GetDpiForMonitor(monitor, 0, out var dpi, out _) == 0 && dpi > 0)
+            return dpi / 96d;
+        return Math.Max(1, GetDpiForWindow(WindowNative.GetWindowHandle(window)) / 96d);
+    }
+
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(PointInt32 point, uint flags);
+    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
 
     private const int DwmwaBorderColor = 34;
     private const int DwmwaWindowCornerPreference = 33;

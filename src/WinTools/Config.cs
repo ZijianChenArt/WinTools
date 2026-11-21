@@ -153,7 +153,14 @@ public class Config : ObservableObject
     private bool _taskbarInfoActions = true;
     [JsonPropertyName("taskbarInfoActions")]
     public bool TaskbarInfoActions { get => _taskbarInfoActions; set => SetProperty(ref _taskbarInfoActions, value); }
-    // 任务栏快捷入口：每个入口单独开关；实际显示还要求对应功能本身已开启（音频设备除外）。
+    private bool? _showTaskbarShortcuts;
+    [JsonPropertyName("showTaskbarShortcuts")]
+    public bool ShowTaskbarShortcuts
+    {
+        get => _showTaskbarShortcuts ?? (EnableTaskbarInfo && TaskbarInfoActions);
+        set => SetProperty(ref _showTaskbarShortcuts, (bool?)value);
+    }
+    // 任务栏快捷入口各自保存显示偏好；部分入口还需要对应功能开启。
     private bool _taskbarShowLibrary = true, _taskbarShowStash = true, _taskbarShowVoice = true, _taskbarShowAudio = true;
     [JsonPropertyName("taskbarShowLibrary")]
     public bool TaskbarShowLibrary { get => _taskbarShowLibrary; set => SetProperty(ref _taskbarShowLibrary, value); }
@@ -161,8 +168,31 @@ public class Config : ObservableObject
     public bool TaskbarShowStash { get => _taskbarShowStash; set => SetProperty(ref _taskbarShowStash, value); }
     [JsonPropertyName("taskbarShowVoice")]
     public bool TaskbarShowVoice { get => _taskbarShowVoice; set => SetProperty(ref _taskbarShowVoice, value); }
+    private bool _taskbarShowClipboard = true;
+    [JsonPropertyName("taskbarShowClipboard")]
+    public bool TaskbarShowClipboard { get => _taskbarShowClipboard; set => SetProperty(ref _taskbarShowClipboard, value); }
+
+    private bool _enableClipboardHistory = true;
+    [JsonPropertyName("enableClipboardHistory")]
+    public bool EnableClipboardHistory { get => _enableClipboardHistory; set => SetProperty(ref _enableClipboardHistory, value); }
     [JsonPropertyName("taskbarShowAudio")]
     public bool TaskbarShowAudio { get => _taskbarShowAudio; set => SetProperty(ref _taskbarShowAudio, value); }
+    private static readonly string[] DefaultTaskbarShortcutOrder = ["library", "stash", "clipboard", "voice", "audio"];
+    private string[] _taskbarShortcutOrder = (string[])DefaultTaskbarShortcutOrder.Clone();
+    [JsonPropertyName("taskbarShortcutOrder")]
+    public string[] TaskbarShortcutOrder
+    {
+        get => _taskbarShortcutOrder;
+        set
+        {
+            var order = new List<string>(DefaultTaskbarShortcutOrder.Length);
+            foreach (var key in value ?? Array.Empty<string>())
+                if (Array.IndexOf(DefaultTaskbarShortcutOrder, key) >= 0 && !order.Contains(key)) order.Add(key);
+            foreach (var key in DefaultTaskbarShortcutOrder)
+                if (!order.Contains(key)) order.Add(key);
+            SetProperty(ref _taskbarShortcutOrder, order.ToArray());
+        }
+    }
     [JsonPropertyName("enableTaskbarInfo")]
     public bool EnableTaskbarInfo { get => _enableTaskbarInfo; set => SetProperty(ref _enableTaskbarInfo, value); }
 
@@ -280,6 +310,21 @@ public class Config : ObservableObject
     private bool _enableVoiceBall;
     [JsonPropertyName("enableVoiceBall")]
     public bool EnableVoiceBall { get => _enableVoiceBall; set => SetProperty(ref _enableVoiceBall, value); }
+
+    private bool? _enableVoiceInput;
+    [JsonPropertyName("enableVoiceInput")]
+    public bool EnableVoiceInput
+    {
+        get => _enableVoiceInput ?? (EnableVoiceBall || TaskbarShowVoice);
+        set => SetProperty(ref _enableVoiceInput, (bool?)value);
+    }
+
+    internal void InitializeDisplayPreferences()
+    {
+        // Keep the old visibility choices when loading a configuration without the new switches.
+        _showTaskbarShortcuts ??= ShowTaskbarShortcuts;
+        _enableVoiceInput ??= EnableVoiceInput;
+    }
 
     // 用户拖出来的小球位置：小球中心相对输入光标底端的偏移（DIP）。未拖过时用默认的光标正下方。
     private bool _voiceBallCustomOffset;
@@ -535,6 +580,7 @@ public static class ConfigService
 
     private static Config NormalizeConfig(Config config)
     {
+        config.InitializeDisplayPreferences();
         config.Entries ??= new List<ConfigEntry>();
         config.Hotkeys ??= new Dictionary<string, string>();
         // 旧版桌面分区默认键容易与其它软件冲突；只迁移旧默认值，不覆盖用户自定义值。
@@ -777,6 +823,7 @@ public static class ConfigService
             Entries = DetectInstalledApps(),
             ImeCategoryDefaultsInitialized = true
         };
+        config.InitializeDisplayPreferences();
         MergeRecommendedImeRules(config.PerAppImeRules);
         return config;
     }

@@ -53,11 +53,25 @@ public partial class App : Application, IWindowRegistry
     private ExplorerPreviewService? _explorerPreviewService;
     private SpotlightWindow? _spotlightWindow;
     private VoiceBallService? _voiceBallService;
+    private ClipboardHistoryService? _clipboardHistory;
+    private ClipboardHistoryWindow? _clipboardWindow;
+    internal ClipboardHistoryService ClipboardHistory
+    {
+        get
+        {
+            string? root = null;
+#if DEBUG
+            root = Environment.GetEnvironmentVariable("WINTOOLS_CLIPBOARD_QA_DIR");
+#endif
+            return _clipboardHistory ??= new(_uiQueue ?? throw new InvalidOperationException("UI 尚未就绪"),
+                string.IsNullOrWhiteSpace(root) ? null : root);
+        }
+    }
     internal TaskbarInfoService? TaskbarInfo { get; private set; }
 
     internal void ApplyTaskbarInfo(Config config)
     {
-        if (TaskbarInfo == null && config.EnableTaskbarInfo)
+        if (TaskbarInfo == null && (config.EnableTaskbarInfo || config.ShowTaskbarShortcuts))
         {
             TaskbarInfo = new TaskbarInfoService();
             TaskbarInfo.StashCountProvider = () => _stashManager?.ItemCount ?? 0;
@@ -70,9 +84,12 @@ public partial class App : Application, IWindowRegistry
             {
                 if (action == "library") (_window as MainWindow)?.ToggleDesktopLibrary();
                 else if (action == "stash") ToggleDragStashWindow();
+                else if (action == "clipboard") ToggleClipboardHistory();
                 else if (action == "voice")
                 {
-                    SettingsService.Instance.Current.Hotkeys.TryGetValue(MainWindow.VoiceBallHotkeyKey, out var hotkey);
+                    var preferences = SettingsService.Instance.Current;
+                    if (!preferences.EnableVoiceInput || !preferences.ShowTaskbarShortcuts || !preferences.TaskbarShowVoice) return;
+                    preferences.Hotkeys.TryGetValue(MainWindow.VoiceBallHotkeyKey, out var hotkey);
                     VoiceBallService.TriggerHotkey(hotkey);
                 }
                 else _trayIcon?.ShowQuickMenu();
@@ -246,6 +263,13 @@ public partial class App : Application, IWindowRegistry
         {
             TraceStartup("OnLaunchedCore: before EnsureTrayIcon");
             EnsureTrayIcon();
+            try { ClipboardHistory.SetRecording(startupConfig.EnableClipboardHistory); }
+            catch (Exception ex) { ErrorReporter.Log("App.ClipboardHistory", ex); }
+#if DEBUG
+            if (Environment.GetEnvironmentVariable("WINTOOLS_CLIPBOARD_QA_ROUNDTRIP") == "1"
+                && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WINTOOLS_CLIPBOARD_QA_DIR")))
+                _ = ClipboardHistory.RunDiagnosticsAsync();
+#endif
             try { SetSpacePreviewEnabled(startupConfig.EnableExplorerPreview, startupConfig.EnableCardPreview); }
             catch (Exception ex) { ErrorReporter.Log("App.InitExplorerPreview", ex); }
             try { ApplyTaskbarInfo(startupConfig); }
@@ -274,6 +298,8 @@ public partial class App : Application, IWindowRegistry
         _trayIcon.ShowMainRequested += (_, _) => BringWindowToForeground();
         _trayIcon.SpotlightRequested += (_, _) => ToggleSpotlight();
         _trayIcon.DragStashToggleRequested += (_, _) => ToggleDragStashWindow();
+        _trayIcon.ClipboardHistoryRequested += (_, _) => ToggleClipboardHistory();
+        _trayIcon.AudioDevicesRequested += (_, _) => TaskbarInfo?.ShowAudioDevices();
         _trayIcon.SyncDesktopRequested += (_, _) => (_window as MainWindow)?.SyncDesktopCardsFromTray();
         _trayIcon.ShowDesktopCardsRequested += (_, _) => (_window as MainWindow)?.ShowDesktopCardsFromTray(fromLeft: _trayIcon.QuickMenuFromLeft);
         _trayIcon.SettingsRequested += (_, _) => OpenSettingsWindow();
@@ -333,6 +359,16 @@ public partial class App : Application, IWindowRegistry
 
     /// <summary>任务栏图标 / 托盘菜单：已打开则收起，否则打开（与音频设备按钮一致）。</summary>
     internal void ToggleDragStashWindow() => _stashManager?.ToggleWindow();
+
+    private void ToggleClipboardHistory()
+    {
+        if (_clipboardWindow == null)
+        {
+            _clipboardWindow = new ClipboardHistoryWindow(ClipboardHistory);
+            RegisterWinToolsWindow(_clipboardWindow);
+        }
+        _clipboardWindow.Toggle(TaskbarInfo?.GetShortcutAnchor(TaskbarInfoService.ClipboardId));
+    }
 
     internal void RegisterWinToolsWindow(Window window)
     {
@@ -436,7 +472,7 @@ public partial class App : Application, IWindowRegistry
 
     private void InitVoiceBall(Config config)
     {
-        if (!config.EnableVoiceBall) return;
+        if (!config.EnableVoiceInput || !config.EnableVoiceBall) return;
         config.Hotkeys.TryGetValue(MainWindow.VoiceBallHotkeyKey, out var hotkey);
         SetVoiceBallEnabled(true, hotkey, MainWindow.GetVoiceBallOffset(config));
     }
@@ -446,6 +482,7 @@ public partial class App : Application, IWindowRegistry
     {
         if (_voiceBallService == null)
         {
+            if (!enabled) return;
             _voiceBallService = new VoiceBallService();
             // 拖动松手的回调来自小球的后台线程，配置与设置页都只能在 UI 线程上动。
             _voiceBallService.OffsetDragged += (x, y) =>
@@ -549,6 +586,7 @@ public partial class App : Application, IWindowRegistry
             SaveConfigOnExit();
             (Current as App)?.TaskbarInfo?.Dispose();
             (Current as App)?._explorerPreviewService?.Dispose();
+            (Current as App)?._clipboardHistory?.Dispose();
             RestoreDesktopIcons();
             // 托盘图标由 Shell 持有，进程直接结束会在通知区域留下幽灵图标。
             try { (Current as App)?._trayIcon?.Dispose(); }

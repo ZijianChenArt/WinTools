@@ -31,6 +31,30 @@
             <CornerRadius x:Key="ComboBoxDropDownButtonBackgroundCornerRadius">10</CornerRadius>
             <CornerRadius x:Key="HyperlinkFocusRectCornerRadius">10</CornerRadius>
             <CornerRadius x:Key="InfoBarActionButtonCornerRadius">10</CornerRadius>
+            <Style TargetType="ToolTip" BasedOn="{StaticResource DefaultToolTipStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}"/>
+            </Style>
+            <Style TargetType="ScrollBar" BasedOn="{StaticResource DefaultScrollBarStyle}">
+                <Setter Property="local:EdgeScrollbar.Enabled" Value="True"/>
+            </Style>
+            <Style TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}"/>
+            </Style>
+            <Style TargetType="PasswordBox" BasedOn="{StaticResource DefaultPasswordBoxStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}"/>
+            </Style>
+            <Style TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource ComboBoxItemCornerRadius}"/>
+            </Style>
+            <Style TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}"/>
+            </Style>
+            <Style TargetType="MenuFlyoutPresenter" BasedOn="{StaticResource DefaultMenuFlyoutPresenterStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}"/>
+            </Style>
+            <Style TargetType="FlyoutPresenter" BasedOn="{StaticResource DefaultFlyoutPresenterStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource OverlayCornerRadius}"/>
+            </Style>
             <!-- AppBarButton 等模板不会全部自动采用 ControlCornerRadius；直接设置控件圆角，
                  让默认、悬浮与按下背景使用同一个 10px 小圆角。 -->
             <Style TargetType="Button">

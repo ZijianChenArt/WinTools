@@ -305,7 +305,7 @@ public sealed class DesktopClickService : IDisposable
         return new ClickTarget(hwnd, className, isDesktop);
     }
 
-    private static bool IsDesktopForeground() =>
+    internal static bool IsDesktopForeground() =>
         GetForegroundWindowClassName() is "WorkerW" or "Progman" or "SHELLDLL_DefView" or "SysListView32";
 
     private static string GetForegroundWindowClassName() => GetClassName(GetForegroundWindow());

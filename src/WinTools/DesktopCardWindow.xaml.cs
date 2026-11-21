@@ -507,6 +507,7 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
     private const int ItemMarginDip = 4;
 
     private readonly ObservableCollection<CardItem> _items = new();
+    private Flyout? _renameFlyout;
     private readonly IntPtr _hwnd;
     private string _zoneName = "";
     private MicaController? _micaController;
@@ -1734,16 +1735,27 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
         DispatcherQueue.TryEnqueue(() => ShowRenameFlyout(item));
     }
 
+    internal bool TryBeginNewFolderRename(string path)
+    {
+        var item = _items.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (item == null || _renameFlyout != null || ItemsGrid.XamlRoot == null) return false;
+        Activate();
+        ItemsGrid.ScrollIntoView(item);
+        ItemsGrid.UpdateLayout();
+        ShowRenameFlyout(item);
+        return true;
+    }
+
     private void ShowRenameFlyout(CardItem item)
     {
         try
         {
-            if (ItemsGrid.ContainerFromItem(item) is not FrameworkElement anchor) return;
+            if (_renameFlyout != null || ItemsGrid.XamlRoot == null || !_items.Contains(item)) return;
+            var anchor = ItemsGrid.ContainerFromItem(item) as FrameworkElement ?? ItemsGrid;
 
             var box = new TextBox
             {
                 Text = item.DisplayName,
-                Width = 240,
                 SelectionStart = 0,
                 SelectionLength = item.DisplayName.Length,
             };
@@ -1753,14 +1765,17 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorCriticalBrush"],
             };
-            var panel = new StackPanel { Spacing = 6 };
+            var panel = new StackPanel { Width = 240, Spacing = 6 };
             panel.Children.Add(box);
             panel.Children.Add(error);
 
             var flyout = new Flyout
             {
                 Content = panel,
+                FlyoutPresenterStyle = (Style)ShellRoot.Resources["DesktopRenameFlyoutPresenterStyle"],
                 Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Bottom,
+                // A desktop card can be narrower than the editor and can sit at either screen edge.
+                ShouldConstrainToRootBounds = false,
             };
 
             void Commit()
@@ -1795,11 +1810,14 @@ public sealed partial class DesktopCardWindow : Window, IUiStyleShell
                 box.Focus(FocusState.Programmatic);
                 box.SelectAll();
             };
+            flyout.Closed += (_, _) => _renameFlyout = null;
 
+            _renameFlyout = flyout;
             flyout.ShowAt(anchor);
         }
         catch (Exception ex)
         {
+            _renameFlyout = null;
             Services.ErrorReporter.Log("DesktopCard.ShowRenameFlyout", ex);
             ShowTransientToast("打不开重命名输入框。");
         }

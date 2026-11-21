@@ -13,7 +13,7 @@ internal sealed partial class TaskbarInfoService
     /// 一档布局。Level 越大越省地方：
     /// 0 完整 → 1 额度文字缩成百分比 → 2 同上（音频入口始终只有耳机圆形图标，不再随级别变化）→ 3 去掉 Claude → 4 去掉全部额度 → 5 折叠成一个菜单按钮。
     /// </summary>
-    private readonly record struct Layout(int Level, int IconCount, int Audio, bool Menu, bool Compact, int Codex, int Claude, int Width);
+    private readonly record struct Layout(int Level, int IconCount, bool Menu, bool Compact, int Codex, int Claude, int Width);
 
     private const int LastLevel = 5;
     private const int DragHandleDip = 20;
@@ -26,25 +26,19 @@ internal sealed partial class TaskbarInfoService
         var gap = (int)(8 * scale);
         var icons = _iconIds.Length;
         if (level >= LastLevel)
-            return icons > 0 || _showAudio ? new Layout(level, 0, 0, true, true, 0, 0, pad + button) : default;
+            return icons > 0 ? new Layout(level, 0, true, true, 0, 0, pad + button) : default;
 
-        var audio = _showAudio ? 1 : 0; // 始终是只有耳机图标的圆形按钮，设备名在弹窗里看
         var compact = level >= 1;
         var showCodex = _quotaSource != null && level <= 3;
         // 没连接 Claude（读不到额度）时不占位。
         var showClaude = _quotaSource != null && level <= 2 && !_claudeText.Contains("暂不可用");
 
-        var width = 0;
-        if (icons > 0 || audio > 0)
-        {
-            width = pad + icons * button;
-            if (audio > 0) width += (icons > 0 ? (int)(4 * scale) : 0) + button;
-        }
+        var width = icons > 0 ? pad + icons * button : 0;
         var codex = showCodex ? MeasureInfoWidth(compact ? CompactQuota(_quotaText) : _quotaText, scale, compact) : 0;
         var claude = showClaude ? MeasureInfoWidth(compact ? CompactQuota(_claudeText) : _claudeText, scale, compact) : 0;
         if (codex > 0) width += (width > 0 ? gap : 0) + codex;
         if (claude > 0) width += (width > 0 ? gap : 0) + claude;
-        return width > 0 ? new Layout(level, icons, audio, false, compact, codex, claude, width) : default;
+        return width > 0 ? new Layout(level, icons, false, compact, codex, claude, width) : default;
     }
 
     /// <summary>在给定宽度内选最完整的一档；连折叠按钮也放不下时返回 default（Width == 0）。</summary>
@@ -88,7 +82,7 @@ internal sealed partial class TaskbarInfoService
         {
             var candidate = BuildLayout(level, scale);
             if (candidate.Width <= 0) break;
-            var quotaWidth = _quotaOverlay?.BuildLayout(level, scale).Width ?? 0;
+            var quotaWidth = _quotaOverlay is { _enabled: true } quota ? quota.BuildLayout(level, scale).Width : 0;
             var groupWidth = candidate.Width + (quotaWidth > 0 ? margin + quotaWidth : 0);
             var preferred = _centered ? bar.Left + (barWidth - groupWidth) / 2 : bar.Left + margin;
             if (!TaskbarStripPlacement.TryFind(bar.Left, bar.Right, clusters, groupWidth, preferred, margin, out x)) continue;
@@ -131,15 +125,7 @@ internal sealed partial class TaskbarInfoService
 
         float end = 0;
         if (layout.Menu) end = _buttonStart + _buttonWidth;
-        else if (layout.IconCount > 0 || layout.Audio > 0) end = _buttonStart + layout.IconCount * _buttonWidth;
-
-        _deviceWidth = layout.Audio > 0 ? _buttonWidth : 0;
-        if (_deviceWidth > 0)
-        {
-            _deviceStart = (int)(end + (layout.IconCount > 0 ? 4 * scale : 0));
-            _deviceIconCenter = _deviceStart + _deviceWidth / 2f;
-            end = _deviceStart + _deviceWidth;
-        }
+        else if (layout.IconCount > 0) end = _buttonStart + layout.IconCount * _buttonWidth;
         _codexDrawWidth = layout.Codex;
         _claudeDrawWidth = layout.Claude;
         if (layout.Codex > 0)

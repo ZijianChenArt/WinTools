@@ -31,10 +31,13 @@ public sealed class TrayIcon : IDisposable
     private MenuFlyoutItem? _syncDesktopItem;
     /// <summary>「悬浮搜索」项：功能在设置里关掉时置灰。</summary>
     private MenuFlyoutItem? _spotlightItem;
+    private MenuFlyoutItem? _quickAudioItem;
 
     public event EventHandler? ShowMainRequested;
     public event EventHandler? SpotlightRequested;
     public event EventHandler? DragStashToggleRequested;
+    public event EventHandler? ClipboardHistoryRequested;
+    public event EventHandler? AudioDevicesRequested;
     public event EventHandler? ShowDesktopCardsRequested;
     public event EventHandler? SyncDesktopRequested;
     public event EventHandler? SettingsRequested;
@@ -341,6 +344,8 @@ public sealed class TrayIcon : IDisposable
 
         _spotlightItem = AddItem(menu, "悬浮搜索", FeatureIcons.Create(FeatureIcons.Search), () => SpotlightRequested?.Invoke(this, EventArgs.Empty));
         AddItem(menu, "悬浮暂存", FeatureIcons.Create(FeatureIcons.DragStash), () => DragStashToggleRequested?.Invoke(this, EventArgs.Empty));
+        AddItem(menu, "剪贴板历史", FeatureIcons.Create(FeatureIcons.Clipboard), () => ClipboardHistoryRequested?.Invoke(this, EventArgs.Empty));
+        _quickAudioItem = AddItem(menu, "音频切换", FeatureIcons.Create(FeatureIcons.AudioDevices), () => AudioDevicesRequested?.Invoke(this, EventArgs.Empty));
         AddItem(menu, "显示桌面分区", FeatureIcons.Create(FeatureIcons.DesktopCards), () => ShowDesktopCardsRequested?.Invoke(this, EventArgs.Empty));
         // 与桌面分区页「更多」菜单里的同名项走同一条路径，文案保持一致。
         _syncDesktopItem = AddItem(menu, "同步桌面", new SymbolIcon(Symbol.Sync), () => SyncDesktopRequested?.Invoke(this, EventArgs.Empty));
@@ -385,6 +390,9 @@ public sealed class TrayIcon : IDisposable
 
             if (_spotlightItem is not null)
                 _spotlightItem.IsEnabled = config.EnableSpotlight;
+            if (_quickAudioItem is not null)
+                _quickAudioItem.Visibility = QuickMenuFromLeft && config.ShowTaskbarShortcuts && config.TaskbarShowAudio
+                    ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (Exception ex)
         {

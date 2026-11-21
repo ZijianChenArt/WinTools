@@ -8,6 +8,7 @@ public static class FeatureIcons
 {
     public static string ThreeFingerDrag => "\uE7C9";
     public static string DragStash => "\uE718";
+    public static string Clipboard => "\uE77F";
     public static string ProgramAssociation => "\uE71B";
     public static string InputMethod => "\uE765";
     public static string DesktopCards => "\uF0E2";

@@ -85,6 +85,7 @@ public sealed class SettingsService
     {
         var defaults = ConfigService.GetDefault();
         Current.EnableTaskbarInfo = defaults.EnableTaskbarInfo;
+        Current.ShowTaskbarShortcuts = defaults.ShowTaskbarShortcuts;
         Current.TaskbarInfoAlignment = defaults.TaskbarInfoAlignment;
         Current.TaskbarInfoFloating = defaults.TaskbarInfoFloating;
         Current.TaskbarFloatCenterX = defaults.TaskbarFloatCenterX;
@@ -113,6 +114,7 @@ public sealed class SettingsService
         Current.EnableExplorerPreview = defaults.EnableExplorerPreview;
         Current.EnableCardPreview = defaults.EnableCardPreview;
         Current.EnableVoiceBall = defaults.EnableVoiceBall;
+        Current.EnableVoiceInput = defaults.EnableVoiceInput;
         Current.VoiceBallCustomOffset = defaults.VoiceBallCustomOffset;
         Current.VoiceBallOffsetX = defaults.VoiceBallOffsetX;
         Current.VoiceBallOffsetY = defaults.VoiceBallOffsetY;

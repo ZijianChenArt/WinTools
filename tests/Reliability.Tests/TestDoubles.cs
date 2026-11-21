@@ -29,6 +29,7 @@ namespace WinTools
         public event PropertyChangedEventHandler? PropertyChanged;
         public void Change() => PropertyChanged?.Invoke(this, new("Sample"));
         public object? EnableTaskbarInfo { get; set; }
+        public object? ShowTaskbarShortcuts { get; set; }
         public object? TaskbarInfoAlignment { get; set; }
         public bool TaskbarInfoFloating { get; set; } = true;
         public int? TaskbarFloatCenterX { get; set; }
@@ -62,6 +63,7 @@ namespace WinTools
         public object? EnableExplorerPreview { get; set; }
         public object? EnableCardPreview { get; set; }
         public object? EnableVoiceBall { get; set; }
+        public object? EnableVoiceInput { get; set; }
         public object? VoiceBallCustomOffset { get; set; }
         public object? VoiceBallOffsetX { get; set; }
         public object? VoiceBallOffsetY { get; set; }

@@ -1,6 +1,6 @@
 <Window x:Class="WinTools.AudioDevicePickerWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="音频设备">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:WinTools" Title="音频设备">
     <!-- 窗口外框、标题栏与「悬浮暂存」窗口一致（同一套系统阴影 / 圆角 / 系统关闭按钮）。
          内容直接放在窗口上，不再套一层面板：窗口本身就是面板，多一层只会重复边框并占掉空间。 -->
     <Grid x:Name="ShellRoot" Background="Transparent" KeyDown="Root_KeyDown">
@@ -22,15 +22,15 @@
         <!-- 层级：窗口标题（14 粗体）> 面板 > 分组小标题（12 次要色）> 下拉框；面板用极淡卡片底色与窗口区分。 -->
         <Grid x:Name="Body" Grid.Row="1" Padding="8,0,8,8">
             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CodexBorderBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="12">
+                    BorderThickness="1" CornerRadius="{StaticResource PageInnerCornerRadius}" Padding="12">
                 <StackPanel Spacing="14">
                     <StackPanel Spacing="6">
                         <TextBlock Text="输出" Style="{StaticResource PageCaptionTextStyle}"/>
-                        <ComboBox x:Name="Output" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
+                        <local:RoundedComboBox x:Name="Output" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
                     </StackPanel>
                     <StackPanel Spacing="6">
                         <TextBlock Text="输入" Style="{StaticResource PageCaptionTextStyle}"/>
-                        <ComboBox x:Name="Input" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
+                        <local:RoundedComboBox x:Name="Input" HorizontalAlignment="Stretch" DisplayMemberPath="Name" SelectionChanged="Device_SelectionChanged"/>
                     </StackPanel>
                     <!-- 状态提示与链接同一行：它出现 / 消失不会改变窗口所需高度。 -->
                     <Grid>

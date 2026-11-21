@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -57,7 +56,7 @@ public sealed partial class AudioDevicePickerWindow : Window, IUiStyleShell
         var area = DisplayArea.GetFromPoint(new PointInt32(x, taskbarTop - 1), DisplayAreaFallback.Nearest).WorkArea;
         // 缩放取目标显示器的，而不是窗口当前所在显示器的：预热后窗口停在屏幕外（-10000），
         // 那里的 DPI 可能与任务栏所在显示器不同，按它算高度会让内容在目标显示器上被裁掉一截。
-        var scale = Math.Max(1, MonitorDpiAt(x, taskbarTop - 1) / 96.0);
+        var scale = WindowHelper.GetPopupScale(this, new PointInt32(x, taskbarTop - 1));
         var width = Math.Min(area.Width, (int)(360 * scale));
         var height = Math.Min(area.Height, MeasureHeight(scale));
         var restY = Math.Clamp(taskbarTop - height - (int)(WindowHelper.TaskbarPopupGapDip * scale), area.Y, area.Y + area.Height - height);
@@ -177,20 +176,6 @@ public sealed partial class AudioDevicePickerWindow : Window, IUiStyleShell
     { if (args.Key == Windows.System.VirtualKey.Escape) { HidePicker(); args.Handled = true; } }
     private void Settings_Click(object sender, RoutedEventArgs args)
     { Process.Start(new ProcessStartInfo("ms-settings:sound") { UseShellExecute = true }); }
-    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
-    [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(PointInt32 point, uint flags);
-    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
-
-    private uint MonitorDpiAt(int x, int y)
-    {
-        try
-        {
-            var monitor = MonitorFromPoint(new PointInt32(x, y), 2); // MONITOR_DEFAULTTONEAREST
-            if (monitor != IntPtr.Zero && GetDpiForMonitor(monitor, 0, out var dpi, out _) == 0 && dpi > 0) return dpi;
-        }
-        catch { /* 退回窗口自身 DPI */ }
-        return GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
-    }
     public void ApplyUiStyleSurfaces()
     {
         var theme = ThemeService.EffectiveTheme;

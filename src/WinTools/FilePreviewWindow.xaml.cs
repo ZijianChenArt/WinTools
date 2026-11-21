@@ -244,27 +244,38 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     {
         _paths = paths;
         _index = index;
-        Present();
-        _ = LoadCurrentAsync();
+        ShowLoadingShell(Path.GetFileName(paths[index]));
+        var token = _loadToken;
+        WindowHelper.WhenRendered(this, () =>
+        {
+            if (_isOpen && token == _loadToken) _ = LoadCurrentAsync();
+        }, framesToWait: 1);
     }
 
     /// <summary>
-    /// 预备复用窗口；读取选中项后由ShowAt填内容。慢读取在120ms后揭示加载壳，快读取直接显示正文。
+    /// 立刻显示窗口；资源管理器选区读取完成后由 ShowAt 填入内容。
     /// </summary>
     internal void ShowPending()
     {
-        _loadToken++;
-        ReleaseContent();
         _paths = Array.Empty<string>();
         _currentKind = Kind.Unsupported;
         _currentFileInfo = null;
         _index = 0;
+        ShowLoadingShell("正在读取…");
+    }
+
+    private void ShowLoadingShell(string title)
+    {
+        _loadToken++;
+        _contentCancellation.Cancel();
+        if (_mediaReady) _previewPlayer?.Pause();
         _contentSize = null;
-        Present();
-        ShowLoading();
-        TitleText.Text = "正在读取…";
+        TitleText.Text = title;
         MetaText.Text = "";
         FooterText.Text = "";
+        PreviewToolbar.Visibility = Visibility.Collapsed;
+        ShowLoading();
+        Present();
     }
 
     /// <summary>读取选中项失败或没有可预览的项目时，收起还停留在加载状态的窗口；已经换成真实内容的窗口不受影响。</summary>
@@ -277,7 +288,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
 
     /// <summary>
     /// 把窗口放到屏幕上并获得焦点，只做窗口层面的事，不碰内容。
-    /// 首次显示先隐藏（cloak）再展示，等第一帧渲染完再取消隐藏，避免白闪。
+    /// 窗口一旦激活即显示加载壳，文件读取不参加窗口显示调度。
     /// </summary>
     private void Present()
     {
@@ -286,7 +297,6 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             var wasOpen = _isOpen;
             if (!wasOpen)
             {
-                WindowHelper.SetWindowCloak(this, true);
                 PositionWindow();
             }
 
@@ -298,9 +308,9 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                 _previewAnimator.Reset();
                 _userSized = false;
                 _revealed = false;
-                _revealQueued = false;
                 _animationVersion++;
             }
+            RevealWhenReady();
             KeyCatcher.Focus(FocusState.Programmatic);
         }
         catch (Exception ex)
@@ -376,7 +386,6 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _mediaTimer?.Stop();
         _previewPlayer?.Pause();
         var version = ++_animationVersion;
-        _revealQueued = false;
         void Finish()
         {
             if (_isOpen || version != _animationVersion) return;
@@ -664,8 +673,14 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         _currentFileInfo = null;
         try
         {
-            _currentFileInfo = new FileInfo(path);
-            _currentFileInfo.Refresh();
+            var fileInfo = await Task.Run(() =>
+            {
+                var info = new FileInfo(path);
+                info.Refresh();
+                return info;
+            }, _contentCancellation.Token);
+            if (token != _loadToken) return;
+            _currentFileInfo = fileInfo;
             var attributes = _currentFileInfo.Attributes;
             if (attributes == (System.IO.FileAttributes)(-1))
             {
@@ -779,7 +794,10 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
                         catch { /* Decoder reports natural dimensions after opening. */ }
                     }
                     ShowOnly(MediaSurface);
-                    OpenMedia(file, token, path);
+                    if (Path.GetExtension(path).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                        await OpenMp4Async(file, path, token, _contentCancellation.Token);
+                    else
+                        OpenMedia(file, token, path);
                     break;
 
                 case Kind.Text:
@@ -845,6 +863,7 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
         {
             if (!IsCurrentMedia(sender)) return;
             var session = sender.PlaybackSession;
+            MediaView.SetMediaPlayer(sender);
             _mediaReady = true;
             var width = session.NaturalVideoWidth;
             var height = session.NaturalVideoHeight;
@@ -857,16 +876,6 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
             ShowOnly(MediaSurface);
             RevealWhenReady();
             if (_revealed && !_previewAnimator.IsBusy) TryStartMediaPlayback();
-        });
-    }
-
-    private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
-    {
-        ErrorReporter.Log("FilePreviewWindow.MediaFailed", args.ErrorMessage ?? args.Error.ToString());
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (IsCurrentMedia(sender))
-                ShowFallback(CurrentPath, "无法播放此文件", "缺少系统解码器。按 Enter 用默认程序打开。");
         });
     }
 
@@ -1251,8 +1260,8 @@ public sealed partial class FilePreviewWindow : Window, IUiStyleShell
     private void ShowLoading()
     {
         ShowOnly(null);
-        var token = _loadToken;
-        _ = ShowDelayedLoadingAsync(token);
+        LoadingRing.Visibility = Visibility.Visible;
+        LoadingRing.IsActive = true;
     }
 
     /// <summary>内容区只保留 <paramref name="view"/> 可见；传 null 表示只显示加载环。</summary>

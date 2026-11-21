@@ -1,4 +1,7 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
+using FFmpegInteropX;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -8,6 +11,8 @@ using Microsoft.UI.Xaml.Input;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage;
+using Windows.Storage.Streams;
+using WinTools.Services;
 
 namespace WinTools;
 
@@ -23,6 +28,8 @@ public sealed partial class FilePreviewWindow
     private bool _mediaMuted;
     private bool _mediaReady;
     private bool _autoPlayPending;
+    private FFmpegMediaSource? _mp4Source;
+    private IRandomAccessStream? _mp4Stream;
 
     private void InitializeMediaControls()
     {
@@ -35,7 +42,10 @@ public sealed partial class FilePreviewWindow
         SeekSlider.PointerCanceled += (_, _) => _seeking = false;
     }
 
-    private void OpenMedia(StorageFile file, int token, string path)
+    private void OpenMedia(StorageFile file, int token, string path) =>
+        OpenMedia(MediaSource.CreateFromStorageFile(file), token, path);
+
+    private void OpenMedia(IMediaPlaybackSource source, int token, string path)
     {
         _mediaLoadToken = token;
         _mediaPath = path;
@@ -45,8 +55,7 @@ public sealed partial class FilePreviewWindow
         _previewPlayer = player;
         player.MediaOpened += OnMediaOpened;
         player.MediaFailed += OnMediaFailed;
-        MediaView.SetMediaPlayer(player);
-        player.Source = MediaSource.CreateFromStorageFile(file);
+        player.Source = source;
         _mediaTimer?.Start();
         UpdateMediaProgress();
     }
@@ -63,13 +72,89 @@ public sealed partial class FilePreviewWindow
         _mediaReady = false;
         _autoPlayPending = false;
         _seeking = false;
-        if (player == null) return;
-        player.MediaOpened -= OnMediaOpened;
-        player.MediaFailed -= OnMediaFailed;
-        player.Pause();
-        MediaView.SetMediaPlayer(null);
-        player.Source = null;
-        player.Dispose();
+        try
+        {
+            if (player == null) return;
+            player.MediaOpened -= OnMediaOpened;
+            player.MediaFailed -= OnMediaFailed;
+            try
+            {
+                MediaView.SetMediaPlayer(null);
+                player.Source = null;
+            }
+            finally { player.Dispose(); }
+        }
+        finally
+        {
+            try { _mp4Source?.Dispose(); }
+            finally
+            {
+                _mp4Source = null;
+                _mp4Stream?.Dispose();
+                _mp4Stream = null;
+            }
+        }
+    }
+
+    private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
+    {
+        var error = args.Error;
+        var hresult = args.ExtendedErrorCode?.HResult ?? 0;
+        var message = args.ErrorMessage;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsCurrentMedia(sender)) return;
+            var path = _mediaPath;
+            ErrorReporter.Log("FilePreviewWindow.MediaFailed", $"{error} (0x{hresult:X8}) {message}");
+            ShowMediaFailure(path);
+        });
+    }
+
+    private async Task OpenMp4Async(StorageFile file, string path, int token, CancellationToken cancellation)
+    {
+        IRandomAccessStream? stream = null;
+        FFmpegMediaSource? source = null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            timeout.CancelAfter(TimeSpan.FromSeconds(12));
+            stream = await file.OpenAsync(FileAccessMode.Read).AsTask(timeout.Token);
+            var config = new MediaSourceConfig();
+            // Feed the selected file to the MP4 demuxer, even if another format uses an .mp4 extension.
+            config.FFmpegOptions["format_whitelist"] = "mov";
+            config.FFmpegOptions["protocol_whitelist"] = "file";
+            config.Video.VideoDecoderMode = VideoDecoderMode.AutomaticSystemDecoder;
+            config.Video.SystemDecoderH264MaxProfile = 100; // High 10 needs FFmpeg decoding.
+            config.Video.MaxDecoderThreads = 4;
+            source = await FFmpegMediaSource.CreateFromStreamAsync(stream, config, AppWindow.Id.Value).AsTask(timeout.Token);
+            if (!_isOpen || token != _loadToken || cancellation.IsCancellationRequested) return;
+
+            var item = source.CreateMediaPlaybackItem();
+            _mp4Source = source;
+            _mp4Stream = stream;
+            source = null;
+            stream = null;
+            OpenMedia(item, token, path);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (!_isOpen || token != _loadToken) return;
+            ErrorReporter.Log("FilePreviewWindow.Mp4", ex);
+            ShowMediaFailure(path);
+        }
+        finally
+        {
+            try { source?.Dispose(); }
+            finally { stream?.Dispose(); }
+        }
+    }
+
+    private void ShowMediaFailure(string path)
+    {
+        try { ReleaseMedia(); }
+        catch (Exception ex) { ErrorReporter.Log("FilePreviewWindow.ReleaseMedia", ex); }
+        ShowFallback(path, "无法播放此文件", "无法读取文件，或其视频／音频编码不受支持。按 Enter 用默认程序打开。");
     }
 
     private void UpdateMediaProgress()

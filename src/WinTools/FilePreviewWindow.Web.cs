@@ -36,7 +36,7 @@ public sealed partial class FilePreviewWindow
         await HtmlView.EnsureCoreWebView2Async();
         var core = HtmlView.CoreWebView2 ?? throw new InvalidOperationException("WebView2 unavailable");
         core.NewWindowRequested += (_, args) => args.Handled = true;
-        await core.AddScriptToExecuteOnDocumentCreatedAsync(HtmlKeyScript);
+        await core.AddScriptToExecuteOnDocumentCreatedAsync(HtmlPreviewScript);
         core.WebMessageReceived += OnPreviewWebMessage;
         core.NavigationStarting += (_, args) =>
         {
@@ -203,7 +203,23 @@ public sealed partial class FilePreviewWindow
         finally { _modelActive = false; _modelReady = false; _modelSession = _modelUri = _webUri = null; }
     }
 
-    private const string HtmlKeyScript = @"
+    private const string HtmlPreviewScript = @"
+if (window.top === window && location.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', function () {
+    var style = document.createElement('style');
+    style.textContent = `
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(127, 127, 127, 0.65);
+        background-clip: padding-box;
+        border: 1px solid transparent;
+        border-radius: 4px;
+      }
+    `;
+    document.head.appendChild(style);
+  }, {once: true});
+}
 document.addEventListener('keydown', function (e) {
   var target = e.target;
   if (e.key !== 'Escape' && target && (target.isContentEditable || target.closest('input,textarea,select,button,a,[role=""slider""]'))) return;

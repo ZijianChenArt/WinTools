@@ -25,13 +25,10 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly IntPtr _hwnd;
     private bool _enabled, _reading, _disposed;
-    private bool _actions;
     private bool _centered;
     private float _codexStart, _claudeStart;
     private readonly SubclassProc _subclass;
     private int _buttonStart, _buttonWidth;
-    private int _deviceStart, _deviceWidth;
-    private float _deviceIconCenter;
     private string _claudeText = "Claude 额度暂不可用";
     private DateTime _nextClaudeRefresh;
     private bool _readingClaude;
@@ -40,11 +37,12 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private int _codexDrawWidth, _claudeDrawWidth;
 
     // 入口：每项 = 该入口自己的开关 && 对应功能已开启（Apply 里合成）。
-    private int[] _iconIds = Array.Empty<int>();   // 0 桌面库 / 1 暂存 / 2 语音，按显示顺序
+    private int[] _iconIds = Array.Empty<int>();
     private int[] _shownIcons = Array.Empty<int>(); // 当前布局实际画出的图标；折叠成单按钮时为 { MenuId }
-    private bool _showAudio;
     private Layout _layout;
     private const int MenuId = 6;
+    internal const int AudioId = 3;
+    internal const int ClipboardId = 7;
 
     // 入口上的附加状态
     internal Func<int>? StashCountProvider { get; set; }
@@ -55,7 +53,8 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private int _hoveredButton = -1;
     private bool _trackingMouse;
     internal event Action<string>? ActionRequested;
-    private string _quotaText = "Codex 正在读取额度…";
+    private const string PendingCodexText = "Codex 正在读取额度…";
+    private string _quotaText = PendingCodexText;
     private string? _lastDrawing;
     private string? _lastPlacement;
     private IntPtr _taskbarOwner;
@@ -68,7 +67,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     private (int X, int Y, int Width, int Height)? _bounds;
     private DateTime _nextRefresh = DateTime.MinValue;
     internal string Status { get; private set; } = "正在读取 Codex 额度";
-    internal string CodexDisplayText => _quotaText.Replace("Codex", "").Trim();
+    internal string? CodexDisplayText => _quotaText == PendingCodexText ? null : _quotaText.Replace("Codex", "").Trim();
     internal event Action? StatusChanged;
 
     internal TaskbarInfoService() : this(null) { }
@@ -98,31 +97,43 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         StopFloatingDrag();
         ResetHover();
-        _enabled = config.EnableTaskbarInfo;
-        _actions = _quotaSource == null && config.TaskbarInfoActions;
+        _enabled = config.EnableTaskbarInfo || (_quotaSource == null && config.ShowTaskbarShortcuts);
         _centered = config.TaskbarInfoAlignment == "center";
-        _floatingEnabled = _quotaSource == null && config.TaskbarInfoFloating;
         _floatCenterX = config.TaskbarFloatCenterX;
         _floatBottomY = config.TaskbarFloatBottomY;
         _floatGap = config.TaskbarFloatGap;
-        _iconIds = new[]
-        {
-            _actions && config.TaskbarShowLibrary && config.EnableDesktopCard ? 0 : -1,
-            _actions && config.EnableDragStash ? 1 : -1,
-            _actions && config.TaskbarShowVoice ? 2 : -1,
-        }.Where(id => id >= 0).ToArray();
-        _showAudio = _actions; // 音频设备入口恒显示，没有单独的开关
+        _iconIds = _quotaSource == null && config.ShowTaskbarShortcuts ? GetShortcutIds(config) : Array.Empty<int>();
+        _floatingEnabled = _iconIds.Length > 0 && config.TaskbarInfoFloating;
         _lastDrawing = null;
         _bounds = null;
-        if (_quotaSource != null) return;
-        _quotaOverlay ??= new TaskbarInfoService(this);
-        _quotaOverlay.Apply(config);
+        if (_quotaSource != null)
+        {
+            if (!_enabled) Hide();
+            return;
+        }
+        if (config.EnableTaskbarInfo) _quotaOverlay ??= new TaskbarInfoService(this);
+        _quotaOverlay?.Apply(config);
         if (_enabled) { _timer.Start(); SafeTick(); }
         else { _timer.Stop(); Hide(); }
         StatusChanged?.Invoke();
     }
 
-    internal void Refresh() { _nextRefresh = DateTime.MinValue; if (_enabled) _ = RefreshAsync(); }
+    internal static int[] GetShortcutIds(Config config) => config.TaskbarShortcutOrder.Select(key => key switch
+    {
+        "library" when config.TaskbarShowLibrary && config.EnableDesktopCard => 0,
+        "stash" when config.TaskbarShowStash && config.EnableDragStash => 1,
+        "voice" when config.EnableVoiceInput && config.TaskbarShowVoice => 2,
+        "audio" when config.TaskbarShowAudio => AudioId,
+        "clipboard" when config.TaskbarShowClipboard => ClipboardId,
+        _ => -1,
+    }).Where(id => id >= 0).ToArray();
+
+    internal void Refresh()
+    {
+        if (_quotaOverlay?._enabled != true) return;
+        _nextRefresh = DateTime.MinValue;
+        _ = RefreshAsync();
+    }
 
     private (RECT Bar, MONITORINFO Monitor, float Scale, bool Dark)? _overlayEnvironment;
 
@@ -164,7 +175,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
     {
         if (_disposed || !_enabled) return;
         if (_quotaSource != null) CopyQuotaState();
-        else
+        else if (_quotaOverlay?._enabled == true)
         {
             if (DateTime.UtcNow >= _nextClaudeRefresh && !_readingClaude) _ = RefreshClaudeAsync();
             if (DateTime.UtcNow >= _nextRefresh) _ = RefreshAsync();
@@ -302,7 +313,7 @@ internal sealed partial class TaskbarInfoService : IDisposable
         if (_buttonWidth <= 0) return -1;
         if (_shownIcons.Length > 0 && x >= _buttonStart && x < _buttonStart + _shownIcons.Length * _buttonWidth)
             return _shownIcons[(x - _buttonStart) / _buttonWidth];
-        return _deviceWidth > 0 && x >= _deviceStart && x < _deviceStart + _deviceWidth ? 3 : -1;
+        return -1;
     }
 
     private int HitAt(int x) => _codexDrawWidth > 0 && x >= _codexStart && x < _codexStart + _codexDrawWidth ? 4
@@ -316,10 +327,12 @@ internal sealed partial class TaskbarInfoService : IDisposable
     /// Screen position of the stash shortcut: horizontal centre of its icon and the top edge of the taskbar.
     /// Null while the shortcut is not on screen (overlay hidden, entry turned off, or collapsed).
     /// </summary>
-    internal (int CenterX, int Top)? GetStashAnchor()
+    internal (int CenterX, int Top)? GetStashAnchor() => GetShortcutAnchor(1);
+
+    internal (int CenterX, int Top)? GetShortcutAnchor(int button)
     {
         if (_disposed || !_visible || _buttonWidth <= 0 || _taskbarOwner == IntPtr.Zero) return null;
-        var slot = Array.IndexOf(_shownIcons, 1);
+        var slot = Array.IndexOf(_shownIcons, button);
         if (slot < 0) return null;
         if (!GetWindowRect(_hwnd, out var rect) || !GetWindowRect(_taskbarOwner, out var bar)) return null;
         return (rect.Left + _buttonStart + _buttonWidth * slot + _buttonWidth / 2, Math.Min(rect.Top, bar.Top));
@@ -379,13 +392,13 @@ internal sealed partial class TaskbarInfoService : IDisposable
                 SafeTick();
                 return IntPtr.Zero;
             }
-            var action = button switch { 0 => "library", 1 => "stash", 2 => "voice", 3 => "audio", _ => "menu" };
+            var action = button switch { 0 => "library", 1 => "stash", 2 => "voice", AudioId => "audio", ClipboardId => "clipboard", _ => "menu" };
             DispatcherQueue.GetForCurrentThread().TryEnqueue(() =>
             {
                 if (_disposed) return;
                 try
                 {
-                    if (action == "audio") _ = ShowAudioDevicesAsync();
+                    if (action == "audio") ShowAudioDevices();
                     else (_quotaSource ?? this).ActionRequested?.Invoke(action);
                 }
                 catch (Exception ex) { ErrorReporter.Log("TaskbarInfo.Action", ex); }
@@ -505,10 +518,6 @@ internal sealed partial class TaskbarInfoService : IDisposable
                 DrawChip(graphics, new RectangleF(_claudeStart, 2 * scale, _claudeDrawWidth, height - 4 * scale), scale, dark, _hoveredButton == 5);
                 var text = _hoveredButton == 5 ? (_readingClaude ? "刷新中…" : "刷新") : layout.Compact ? CompactQuota(_claudeText) : _claudeText;
                 graphics.DrawString(text, font, foreground, new RectangleF(_claudeStart + 12 * scale, 0, Math.Max(1, _claudeDrawWidth - 24 * scale), height), _hoveredButton == 5 ? refreshFormat : format);
-            }
-            if (_deviceWidth > 0)
-            {
-                DrawChip(graphics, new RectangleF(_deviceStart, 2 * scale, _deviceWidth, height - 4 * scale), scale, dark, _hoveredButton == 3);
             }
             for (var slot = 0; slot < _shownIcons.Length; slot++)
             {

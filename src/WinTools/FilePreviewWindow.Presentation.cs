@@ -26,7 +26,6 @@ public sealed partial class FilePreviewWindow
     private readonly Windows.UI.ViewManagement.UISettings _animationSettings = new();
     private CancellationTokenSource _contentCancellation = new();
     private int _animationVersion;
-    private bool _revealQueued;
     private bool _revealed;
     private bool _userSized;
     private int _automaticWidth, _automaticHeight;
@@ -212,39 +211,12 @@ public sealed partial class FilePreviewWindow
         if (TextBody.Text.Length == 0) { TextBody.Text = "此文件为空。"; ViewStatus.Text = "空文件"; }
     }
 
-    private async Task ShowDelayedLoadingAsync(int token)
-    {
-        await Task.Delay(120);
-        if (!_isOpen || token != _loadToken || _views.Any(v => v.Visibility == Visibility.Visible && v != ImageSurface && v != HtmlView && v != MediaSurface)
-            || ImageSurface.Visibility == Visibility.Visible && _contentSize != null
-            || MediaSurface.Visibility == Visibility.Visible && _mediaReady) return;
-        LoadingRing.Visibility = Visibility.Visible;
-        LoadingRing.IsActive = true;
-        RevealWhenReady();
-    }
-
     private void RevealWhenReady()
     {
-        if (!_isOpen || _revealed || _revealQueued) return;
-        _revealQueued = true;
-        var version = _animationVersion;
-        WindowHelper.WhenRendered(this, () =>
-        {
-            if (!_isOpen || version != _animationVersion) return;
-            UpdateFrameInsets();
-            _revealQueued = false;
-            // Prime the real DWM surface at an imperceptible alpha before starting the animation clock.
-            // Otherwise the first visible frame can spend >100ms initializing the native surface mid-fade.
-            if (AnimationsEnabled) _previewAnimator.PrepareReveal(AppWindow.Position.Y, CurrentScale(), initialAlpha: 1);
-            WindowHelper.SetWindowCloak(this, false);
-            _revealed = true;
-            if (AnimationsEnabled)
-                WindowHelper.WhenRendered(this, () =>
-                {
-                    if (_isOpen && version == _animationVersion) _previewAnimator.PlayReveal();
-                }, framesToWait: 3);
-            else TryStartMediaPlayback();
-        }, framesToWait: 4);
+        if (!_isOpen || _revealed) return;
+        WindowHelper.SetWindowCloak(this, false);
+        _revealed = true;
+        TryStartMediaPlayback();
     }
 
     private void UpdateShortcutHints()

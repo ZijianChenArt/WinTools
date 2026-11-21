@@ -118,11 +118,12 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
                     <TextBlock Text="悬浮暂存" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="开启后任务栏显示「悬浮暂存」图标，拖动文件时在图标上方弹出暂存窗口，稍后再拖到需要的位置。"
+                    <TextBlock Text="拖动文件时可以自动弹出暂存窗口，也可以从托盘手动打开。"
                                Style="{StaticResource PageDescriptionTextStyle}"/>
                 </StackPanel>
                 <ToggleSwitch x:Name="DragStashToggle" Grid.Column="1" OnContent="开" OffContent="关"
-                              VerticalAlignment="Center" Toggled="DragStashToggle_Toggled"/>
+                              VerticalAlignment="Center" Toggled="DragStashToggle_Toggled"
+                              AutomationProperties.Name="拖文件时自动弹出" ToolTipService.ToolTip="拖文件时自动弹出"/>
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
@@ -217,28 +218,23 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
-                    <TextBlock Text="任务栏信息" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="在任务栏查看剩余额度，快速打开常用功能。"
+                    <TextBlock Text="任务栏与快捷栏" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="管理常用功能入口和任务栏上的额度显示。"
                                Style="{StaticResource PageDescriptionTextStyle}"/>
                 </StackPanel>
-                <ToggleSwitch x:Name="TaskbarInfoToggle" Grid.Column="1" OnContent="开" OffContent="关"
-                              VerticalAlignment="Center" Toggled="TaskbarInfoToggle_Toggled"/>
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
                 <StackPanel>
-                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <TextBlock Text="快捷栏" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
                     <StackPanel Style="{StaticResource PageCardStackStyle}">
-                        <tk:SettingsCard Header="显示位置" Description="选择额度信息在任务栏上的位置；悬浮按钮可独立拖动">
+                        <tk:SettingsCard Header="显示快捷栏" Description="隐藏时保留各按钮的显示偏好和顺序">
                             <tk:SettingsCard.HeaderIcon>
-                                <FontIcon Glyph="&#xE8B9;"/>
+                                <FontIcon Glyph="&#xE8A7;"/>
                             </tk:SettingsCard.HeaderIcon>
-                            <ComboBox x:Name="TaskbarAlignmentBox" Style="{StaticResource PageSettingComboBoxStyle}" SelectionChanged="TaskbarAlignment_Changed">
-                                <ComboBoxItem Content="偏左"/>
-                                <ComboBoxItem Content="居中"/>
-                            </ComboBox>
+                            <ToggleSwitch x:Name="TaskbarShortcutsToggle" OnContent="开" OffContent="关" Toggled="TaskbarShortcutsToggle_Toggled"/>
                         </tk:SettingsCard>
-                        <tk:SettingsCard Header="悬浮快捷按钮" Description="开启后按钮独立悬浮，可拖动最左侧把手调整位置；关闭后按钮放回任务栏。额度信息仍留在任务栏">
+                        <tk:SettingsCard Header="悬浮快捷栏" Description="开启后可拖动整排按钮，关闭后按钮显示在任务栏内">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE8A7;"/>
                             </tk:SettingsCard.HeaderIcon>
@@ -256,23 +252,55 @@
                     </StackPanel>
 
                     <TextBlock Text="快捷入口" Style="{StaticResource PageSectionHeaderTextStyle}"/>
-                    <StackPanel Style="{StaticResource PageCardStackStyle}">
-                        <tk:SettingsCard x:Name="TaskbarLibraryCard" Header="桌面库" Description="在任务栏显示入口，点击展开或收起">
+                    <TextBlock Text="上下拖动调整任务栏上的显示顺序" Style="{StaticResource PageCaptionTextStyle}"/>
+                    <ListView x:Name="TaskbarShortcutList" SelectionMode="None" CanReorderItems="True" CanDragItems="True"
+                              AllowDrop="True" DragItemsCompleted="TaskbarShortcuts_DragItemsCompleted"
+                              ScrollViewer.VerticalScrollMode="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0,0,0,6"/>
+                                <Setter Property="CornerRadius" Value="{StaticResource PageInnerCornerRadius}"/>
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <tk:SettingsCard x:Name="TaskbarLibraryCard" Tag="library" Header="桌面分区" Description="点击展开或收起桌面分区">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xF0E2;"/>
                             </tk:SettingsCard.HeaderIcon>
                             <ToggleSwitch x:Name="TaskbarLibraryToggle" Tag="library" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
                         </tk:SettingsCard>
-                        <tk:SettingsCard x:Name="TaskbarVoiceCard" Header="语音小球" Description="在任务栏显示入口和听写状态">
-                            <tk:SettingsCard.HeaderIcon>
-                                <FontIcon Glyph="&#xE720;"/>
-                            </tk:SettingsCard.HeaderIcon>
+                        <tk:SettingsCard x:Name="TaskbarStashCard" Tag="stash" Header="悬浮暂存" Description="点击打开悬浮暂存">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="{x:Bind local:FeatureIcons.DragStash}"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarStashToggle" Tag="stash" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="TaskbarClipboardCard" Tag="clipboard" Header="剪贴板" Description="点击打开剪贴板历史">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE77F;"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarClipboardToggle" Tag="clipboard" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="TaskbarVoiceCard" Tag="voice" Header="语音输入" Description="点击麦克风发送听写快捷键">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE720;"/></tk:SettingsCard.HeaderIcon>
                             <ToggleSwitch x:Name="TaskbarVoiceToggle" Tag="voice" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
                         </tk:SettingsCard>
-                    </StackPanel>
+                        <tk:SettingsCard x:Name="TaskbarAudioCard" Tag="audio" Header="音频切换" Description="点击切换扬声器和麦克风">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="{x:Bind local:FeatureIcons.AudioDevices}"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarAudioToggle" Tag="audio" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                    </ListView>
 
-                    <TextBlock Text="额度账户" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                    <TextBlock Text="额度显示" Style="{StaticResource PageSectionHeaderTextStyle}"/>
                     <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="在任务栏显示额度" Description="显示 Codex 和已连接的 Claude 账户额度">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE9D9;"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="TaskbarInfoToggle" OnContent="开" OffContent="关" Toggled="TaskbarInfoToggle_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard Header="任务栏内的显示位置" Description="适用于额度和嵌在任务栏内的快捷栏">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE8B9;"/></tk:SettingsCard.HeaderIcon>
+                            <local:RoundedComboBox x:Name="TaskbarAlignmentBox" Style="{StaticResource PageSettingComboBoxStyle}" SelectionChanged="TaskbarAlignment_Changed">
+                                <ComboBoxItem Content="偏左"/>
+                                <ComboBoxItem Content="居中"/>
+                            </local:RoundedComboBox>
+                        </tk:SettingsCard>
                         <tk:SettingsCard x:Name="CodexConnectionCard" Header="Codex" Description="连接账户以查看剩余额度">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE77B;"/>
@@ -691,6 +719,34 @@
             </ScrollViewer>
         </Grid>
 
+        <Grid x:Name="ContentClipboard" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <Grid Style="{StaticResource PageHeaderStyle}">
+                <StackPanel Style="{StaticResource PageHeaderTextStackStyle}">
+                    <TextBlock Text="剪贴板" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="在本机查看和再次使用复制过的内容。" Style="{StaticResource PageDescriptionTextStyle}"/>
+                </StackPanel>
+            </Grid>
+            <Grid Grid.Row="1" Style="{StaticResource PageBodyGridStyle}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                <tk:SettingsCard Grid.Row="1" Header="记录剪贴板" Description="保存文本、富文本、图片和复制的文件列表">
+                    <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE77F;"/></tk:SettingsCard.HeaderIcon>
+                    <ToggleSwitch x:Name="ClipboardRecordingToggle" OnContent="开" OffContent="关" Toggled="ClipboardRecording_Toggled"/>
+                </tk:SettingsCard>
+                <TextBlock Grid.Row="2" Text="历史" Style="{StaticResource PageSectionHeaderTextStyle}"/>
+                <local:ClipboardHistoryView x:Name="ClipboardHistoryPanel" Grid.Row="3"/>
+            </Grid>
+        </Grid>
+
         <!-- ============ 悬浮搜索 ============ -->
         <Grid x:Name="ContentSpotlight" Grid.Column="1" Style="{StaticResource PageRootStyle}" Visibility="Collapsed">
             <Grid.RowDefinitions>
@@ -779,20 +835,30 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Style="{StaticResource PageHeaderTextStackStyle}">
-                    <TextBlock Text="语音小球" Style="{StaticResource PageTitleTextStyle}"/>
-                    <TextBlock Text="在文本框旁显示麦克风按钮，点击即可开始或停止语音输入。"
+                    <TextBlock Text="语音输入" Style="{StaticResource PageTitleTextStyle}"/>
+                    <TextBlock Text="通过快捷栏麦克风或输入光标旁的小球触发听写。"
                                Style="{StaticResource PageDescriptionTextStyle}"/>
                 </StackPanel>
-                <ToggleSwitch x:Name="VoiceBallToggle" Grid.Column="1" OnContent="开" OffContent="关"
-                              VerticalAlignment="Center" Toggled="VoiceBallToggle_Toggled"/>
             </Grid>
 
             <ScrollViewer Grid.Row="1" Style="{StaticResource PageBodyScrollStyle}">
                 <StackPanel>
-                    <TextBlock Text="常规" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
+                    <TextBlock Text="入口与快捷键" Style="{StaticResource PageSectionHeaderFirstTextStyle}"/>
                     <StackPanel Style="{StaticResource PageCardStackStyle}">
+                        <tk:SettingsCard Header="启用语音输入" Description="关闭时暂停两个入口，重新开启后恢复之前的选择">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE720;"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="VoiceInputToggle" OnContent="开" OffContent="关" Toggled="VoiceInputToggle_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="VoiceShortcutCard" Header="在快捷栏显示麦克风">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE720;"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="VoiceShortcutToggle" Tag="voice" OnContent="开" OffContent="关" Toggled="TaskbarEntry_Toggled"/>
+                        </tk:SettingsCard>
+                        <tk:SettingsCard x:Name="VoiceBallDisplayCard" Header="在输入光标旁显示小球" Description="聚焦可编辑文本框时显示">
+                            <tk:SettingsCard.HeaderIcon><FontIcon Glyph="&#xE7B7;"/></tk:SettingsCard.HeaderIcon>
+                            <ToggleSwitch x:Name="VoiceBallToggle" OnContent="开" OffContent="关" Toggled="VoiceBallToggle_Toggled"/>
+                        </tk:SettingsCard>
                         <tk:SettingsCard x:Name="VoiceBallHotkeyCard" Header="快捷键"
-                                         Description="点击小球时发送的快捷键，默认 Win+H 为 Windows 语音输入">
+                                         Description="两个入口共用的快捷键，默认 Win+H 为 Windows 语音输入">
                             <tk:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE765;"/>
                             </tk:SettingsCard.HeaderIcon>
@@ -877,10 +943,10 @@
                         </tk:SettingsExpander.HeaderIcon>
                         <tk:SettingsExpander.Items>
                             <tk:SettingsCard Header="位置" Description="卡片排在屏幕的哪一侧">
-                                <ComboBox x:Name="DesktopCardAlignmentBox" Style="{StaticResource PageSettingComboBoxStyle}" SelectionChanged="DesktopCardAlignment_Changed">
+                                <local:RoundedComboBox x:Name="DesktopCardAlignmentBox" Style="{StaticResource PageSettingComboBoxStyle}" SelectionChanged="DesktopCardAlignment_Changed">
                                     <ComboBoxItem Content="靠左"/>
                                     <ComboBoxItem Content="靠右"/>
-                                </ComboBox>
+                                </local:RoundedComboBox>
                             </tk:SettingsCard>
                             <tk:SettingsCard Header="边距" Description="卡片与屏幕左、右、上边缘的距离">
                                 <NumberBox x:Name="DesktopCardMarginBox" Minimum="0" Maximum="600" SmallChange="4" Style="{StaticResource PageSettingNumberBoxStyle}" ValueChanged="DesktopCardGap_ValueChanged"/>
@@ -931,8 +997,13 @@
 
                 <Grid Grid.Row="3" Style="{StaticResource PageWorkAreaStyle}">
                     <Border Style="{StaticResource PageListPanelStyle}">
-                        <Grid>
+                        <Grid ColumnSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                            </Grid.ColumnDefinitions>
                             <ListView x:Name="ZonesListView" SelectionMode="Single" CanReorderItems="True" CanDragItems="True" AllowDrop="True"
+                                      ScrollViewer.VerticalScrollBarVisibility="Hidden"
                                       DragItemsCompleted="Zones_DragItemsCompleted" RightTapped="Zones_RightTapped"
                                       SizeChanged="Zones_SizeChanged">
                                 <ListView.ItemsPanel>
@@ -977,6 +1048,8 @@
                             </ListView>
                             <TextBlock x:Name="ZoneEmptyHint" Style="{StaticResource PageEmptyHintTextStyle}"
                                        Text="尚无分区。选择“新建”创建分区，或在“更多”中恢复默认分区。"/>
+                            <ScrollBar x:Name="ZonesScrollBar" Grid.Column="1" Orientation="Vertical" Visibility="Collapsed" IsTabStop="False"
+                                       AutomationProperties.Name="分区卡片滚动条"/>
                         </Grid>
                     </Border>
                 </Grid>

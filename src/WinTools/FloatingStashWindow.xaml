@@ -30,7 +30,7 @@
             <Border x:Name="ContentBorder" Grid.Row="0"
                     Background="{ThemeResource CodexSurfaceBrush}"
                     BorderBrush="{ThemeResource CodexBorderBrush}" BorderThickness="1"
-                    CornerRadius="8" Padding="4">
+                    CornerRadius="{StaticResource PageInnerCornerRadius}" Padding="4">
                 <Grid>
                     <ListView x:Name="ItemsList" ItemsSource="{x:Bind Items}"
                               CanDragItems="True" DragItemsStarting="ItemsList_DragItemsStarting" DragItemsCompleted="ItemsList_DragItemsCompleted"
@@ -51,7 +51,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Border CornerRadius="8" Width="40" Height="40"
+                                    <Border CornerRadius="{StaticResource PageInnerCornerRadius}" Width="40" Height="40"
                                             Background="{ThemeResource CodexSurfaceBrush}">
                                         <Grid>
                                             <Image Source="{x:Bind Icon, Mode=OneWay}" Stretch="Uniform"

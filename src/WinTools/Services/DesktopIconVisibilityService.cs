@@ -31,6 +31,15 @@ internal static class DesktopIconVisibilityService
     private const uint WM_COMMAND = 0x0111;
     private const int ToggleDesktopIconsCommand = 0x7402;
     private const uint SMTO_ABORTIFHUNG = 0x0002;
+    private const uint LvmGetEditControl = 0x1018;
+    private const uint NewFolderNameResource = 16888;
+    private static readonly Lazy<string> NewFolderName = new(ReadNewFolderName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr GetModuleHandleW(string moduleName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int LoadStringW(IntPtr module, uint id, StringBuilder text, int capacity);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr FindWindowW(string? className, string? windowName);
@@ -66,6 +75,34 @@ internal static class DesktopIconVisibilityService
                 return false;
             }
         }
+    }
+
+    internal static bool IsEditingIconName()
+    {
+        var view = FindDefView();
+        if (view == IntPtr.Zero) return false;
+        var list = FindWindowExW(view, IntPtr.Zero, "SysListView32", null);
+        return list != IntPtr.Zero && SendMessageTimeoutW(list, LvmGetEditControl, IntPtr.Zero,
+            IntPtr.Zero, SMTO_ABORTIFHUNG, 100, out var editor) != IntPtr.Zero && editor != IntPtr.Zero;
+    }
+
+    internal static bool IsDefaultFolderName(string name)
+    {
+        var baseName = NewFolderName.Value;
+        if (string.Equals(name, baseName, StringComparison.OrdinalIgnoreCase)) return true;
+        // Explorer appends " (2)", " (3)", and so on when a default name already exists.
+        return name.StartsWith(baseName + " (", StringComparison.OrdinalIgnoreCase)
+            && name.EndsWith(')')
+            && int.TryParse(name.AsSpan()[(baseName.Length + 2)..^1], out var number) && number >= 2;
+    }
+
+    private static string ReadNewFolderName()
+    {
+        var text = new StringBuilder(260);
+        var shell = GetModuleHandleW("shell32.dll");
+        if (shell != IntPtr.Zero && LoadStringW(shell, NewFolderNameResource, text, text.Capacity) > 0)
+            return text.ToString();
+        return System.Globalization.CultureInfo.CurrentUICulture.Name is "zh-CN" ? "新建文件夹" : "New folder";
     }
 
     /// <summary>把桌面图标设为隐藏 / 显示。已经是目标状态时不做任何事。</summary>
